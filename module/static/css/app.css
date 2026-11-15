@@ -535,6 +535,12 @@ main {
 .table td {
   padding: 10px 14px;
   border-bottom: 1px solid var(--border);
+  /* Top-aligned: the ID cell stacks two lines, so centring would push its first
+     line above the single-line cells beside it. */
+  vertical-align: top;
+}
+
+.table th {
   vertical-align: middle;
 }
 
@@ -549,7 +555,7 @@ main {
 }
 
 .col-id {
-  width: 92px;
+  width: 136px;
 }
 
 .col-size,
@@ -559,7 +565,7 @@ main {
 }
 
 .col-time {
-  width: 128px;
+  width: 120px;
   white-space: nowrap;
 }
 
@@ -568,12 +574,12 @@ main {
 }
 
 .col-actions {
-  width: 190px;
+  width: 150px;
   text-align: right;
 }
 
 .col-path {
-  width: 34%;
+  width: 30%;
 }
 
 .cell-id {
@@ -583,12 +589,9 @@ main {
 
 .cell-id .sub {
   display: block;
-  max-width: 84px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   color: var(--text-faint);
   font-size: 11px;
+  white-space: nowrap;
 }
 
 .cell-name {
@@ -1275,7 +1278,15 @@ main {
   }
 
   .col-id {
-    width: 68px;
+    width: 100px;
+  }
+
+  /* Narrow screens keep the chat id but shorten it instead of letting the
+     column push the action buttons off-screen. */
+  .cell-id .sub {
+    max-width: 96px;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .btn-mini {

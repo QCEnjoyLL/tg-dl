@@ -230,7 +230,7 @@ MOCK_JS = """
       return Promise.resolve(respond(pageVersion, 'text/plain'));
     }
     if (u.indexOf('/get_download_status') !== -1) {
-      return Promise.resolve(respond(JSON.stringify({ download_speed: '4.28 MB/s', upload_speed: '0.00 B/s', state: paused ? 'paused' : 'running' })));
+      return Promise.resolve(respond(JSON.stringify({ download_speed: '4.28 MB/s', upload_speed: '0.00 B/s', state: paused ? 'paused' : 'running', completed: data.downloaded.length })));
     }
     if (u.indexOf('already_down=false') !== -1) {
       return Promise.resolve(respond(JSON.stringify(data.downloading)));

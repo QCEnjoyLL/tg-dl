@@ -127,7 +127,11 @@ class WebApiTestCase(unittest.TestCase):
         self.assertEqual(len(response.get_json()), 2)
 
     def test_download_status_is_json(self):
-        with mock.patch.object(web, "get_total_download_speed", return_value=1024):
+        with mock.patch.object(
+            web, "get_total_download_speed", return_value=1024
+        ), mock.patch.object(
+            web, "get_completed_downloads", return_value=SAMPLE_COMPLETED
+        ):
             response = self.client.get("/get_download_status")
 
         self.assertEqual(response.status_code, 200)
@@ -135,6 +139,8 @@ class WebApiTestCase(unittest.TestCase):
         payload = response.get_json()
         self.assertEqual(payload["download_speed"], "1.0KB/s")
         self.assertEqual(payload["state"], "running")
+        # The tab badge reads this without fetching the whole list.
+        self.assertEqual(payload["completed"], 1)
 
     def test_set_download_state_rejects_unknown_values(self):
         response = self.client.post(

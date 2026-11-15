@@ -279,6 +279,8 @@ def get_download_speed():
                 if get_download_state() is DownloadState.Downloading
                 else "paused"
             ),
+            # Keeps the "已完成" tab badge fresh without polling the full list.
+            "completed": len(get_completed_downloads()),
         }
     )
 

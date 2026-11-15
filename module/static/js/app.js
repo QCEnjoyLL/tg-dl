@@ -40,6 +40,7 @@
     statFailed: $("#stat-failed"),
     statState: $("#stat-state"),
     badgeDownloading: $("#badge-downloading"),
+    badgeDone: $("#badge-done"),
     badgeFailed: $("#badge-failed"),
     updated: $("#updated"),
     liveDot: $("#live-dot"),
@@ -140,8 +141,9 @@
   }
 
   function chatLabel(chat) {
-    const text = String(chat === null || chat === undefined ? "" : chat);
-    return text.length > 12 ? "…" + text.slice(-8) : text;
+    // Show the full chat id; the column is wide enough on desktop and truncates
+    // through CSS only on narrow screens.
+    return String(chat === null || chat === undefined ? "" : chat);
   }
 
   function pctValue(value) {
@@ -330,9 +332,9 @@
       '<td class="cell-name" title="' +
       esc(row.filename) +
       '">' +
-      nameHtml(row.filename) +
-      " " +
       uploadChip +
+      " " +
+      nameHtml(row.filename) +
       "</td>" +
       '<td class="cell-size">' +
       esc(row.total_size) +
@@ -346,7 +348,7 @@
       esc(row.save_path) +
       "</td>" +
       '<td class="col-actions"><div class="row-actions">' +
-      actionButton("copy", "复制路径", ICON_COPY) +
+      actionButton("copy", "复制", ICON_COPY) +
       actionButton("delete", "删除", ICON_TRASH, "danger") +
       "</div></td>";
     return tr;
@@ -408,6 +410,8 @@
       updateDownloadedRow
     );
     setText(el.statDone, state.downloaded.length);
+    setText(el.badgeDone, state.downloaded.length);
+    if (el.badgeDone) el.badgeDone.hidden = state.downloaded.length === 0;
     renderEmpty();
   }
 
@@ -491,6 +495,11 @@
   async function loadStatus() {
     const res = await api("/get_download_status");
     renderSpeed(res && res.download_speed ? res.download_speed : "");
+    if (res && typeof res.completed === "number") {
+      setText(el.statDone, res.completed);
+      setText(el.badgeDone, res.completed);
+      if (el.badgeDone) el.badgeDone.hidden = res.completed === 0;
+    }
     setText(el.updated, "更新于 " + clockText());
   }
 
