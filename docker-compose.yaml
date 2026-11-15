@@ -1,0 +1,21 @@
+services:
+  tg-dl:
+    image: ghcr.io/qcenjoyll/tg-dl:latest
+    container_name: tg-dl
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      - TZ=Asia/Shanghai
+    volumes:
+      - ./downloads:/app/downloads
+      - ./config.yaml:/app/config.yaml
+      - ./data.yaml:/app/data.yaml
+      - ./log:/app/log
+      - ./sessions:/app/sessions
+      - ./temp:/app/temp
+      # rclone config, adjust to your user if not running as root
+      - ${HOME}/.config/rclone:/root/.config/rclone
+    # Let the downloader save data.yaml on stop instead of being killed
+    stop_signal: SIGINT
+    stop_grace_period: 2m

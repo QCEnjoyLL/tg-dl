@@ -1,0 +1,122 @@
+name: Build and Publish Docker Image
+
+on:
+  push:
+    branches: [master, main]
+    tags: ["v*"]
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: "Target platforms, comma separated (arm64 compiles PyTgCrypto under QEMU and is slow)"
+        required: false
+        default: "linux/amd64"
+      push_image:
+        description: "Push the built image to GHCR (true/false)"
+        required: false
+        default: "true"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  python-syntax:
+    name: Python syntax check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile all sources
+        run: python -m compileall -q media_downloader.py module utils
+
+  docker:
+    name: Build image
+    runs-on: ubuntu-latest
+    needs: python-syntax
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve build settings
+        id: cfg
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_PLATFORMS: ${{ github.event.inputs.platforms }}
+          INPUT_PUSH: ${{ github.event.inputs.push_image }}
+        run: |
+          set -eu
+          if [ -n "${INPUT_PLATFORMS:-}" ]; then
+            PLATFORMS="$INPUT_PLATFORMS"
+          else
+            PLATFORMS="linux/amd64"
+          fi
+
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            PUSH="false"
+          elif [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            PUSH="${INPUT_PUSH:-true}"
+          else
+            PUSH="true"
+          fi
+
+          # GHCR rejects uppercase paths, GITHUB_REPOSITORY keeps the owner case
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
+
+          echo "platforms=$PLATFORMS" >> "$GITHUB_OUTPUT"
+          echo "push=$PUSH" >> "$GITHUB_OUTPUT"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+          echo "building $IMAGE for $PLATFORMS (push=$PUSH)"
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: steps.cfg.outputs.push == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.cfg.outputs.image }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=short
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ steps.cfg.outputs.platforms }}
+          push: ${{ steps.cfg.outputs.push == 'true' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Summary
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+          PLATFORMS: ${{ steps.cfg.outputs.platforms }}
+          PUSHED: ${{ steps.cfg.outputs.push }}
+        run: |
+          {
+            echo "### Image tags"
+            echo '```'
+            echo "$TAGS"
+            echo '```'
+            echo ""
+            echo "- platforms: \`$PLATFORMS\`"
+            echo "- pushed: \`$PUSHED\`"
+          } >> "$GITHUB_STEP_SUMMARY"

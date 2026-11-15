@@ -1,0 +1,117 @@
+/* login screen */
+
+.auth {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 380px;
+  padding: 32px 28px 28px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: var(--bg-elev);
+  box-shadow: var(--shadow-md);
+  text-align: center;
+}
+
+.auth .brand-mark {
+  width: 52px;
+  height: 52px;
+  margin: 0 auto 18px;
+  border-radius: 15px;
+}
+
+.auth .brand-mark svg {
+  width: 28px;
+  height: 28px;
+}
+
+.auth h1 {
+  margin: 0 0 6px;
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.auth p {
+  margin: 0 0 24px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.field {
+  position: relative;
+  margin-bottom: 12px;
+  text-align: left;
+}
+
+.field input {
+  width: 100%;
+  height: 46px;
+  padding: 0 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 11px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.field input::placeholder {
+  color: var(--text-faint);
+}
+
+.field input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+
+.auth .btn {
+  width: 100%;
+  height: 44px;
+  margin-top: 6px;
+  font-size: 14px;
+}
+
+.auth-error {
+  min-height: 18px;
+  margin-top: 12px;
+  color: var(--danger);
+  font-size: 12.5px;
+  text-align: center;
+}
+
+.auth-hint {
+  margin-top: 18px;
+  color: var(--text-faint);
+  font-size: 11.5px;
+}
+
+.auth-theme {
+  position: fixed;
+  top: 18px;
+  right: 18px;
+}
+
+.shake {
+  animation: shake 0.32s ease;
+}
+
+@keyframes shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-5px);
+  }
+  75% {
+    transform: translateX(5px);
+  }
+}

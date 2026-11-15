@@ -1,0 +1,62 @@
+api_hash: your_api_hash
+api_id: your_api_id
+
+# 频道/群组列表，支持 -1001234567890、@username
+# 每个 chat 可单独设置 download_filter / upload_telegram_chat_id
+chat:
+- chat_id: telegram_chat_id
+  last_read_message_id: 0
+
+media_types:
+- audio
+- photo
+- video
+- document
+- voice
+- video_note
+
+file_formats:
+  audio:
+  - all
+  document:
+  - all
+  video:
+  - all
+
+file_path_prefix:
+- chat_title
+- media_datetime
+file_name_prefix:
+- message_id
+- file_name
+
+# 同时下载的文件数，建议 2-3，太大容易 FloodWait
+max_download_task: 2
+# Pyrogram 并发传输槽位，默认是 max_download_task * 5
+max_concurrent_transmissions: 4
+
+# 本地保存目录，容器内保持 /app/downloads
+# save_path: /app/downloads
+
+upload_drive:
+  enable_upload_file: false
+  upload_adapter: rclone
+  remote_dir: "115:Telegram"
+  rclone_path: /app/rclone/rclone
+  # 会额外生成 zip，建议关闭
+  before_upload_file_zip: false
+  # 上传成功（rclone 返回码 0）后删除本地文件
+  after_upload_file_delete: true
+
+# bot_token: "your_bot_token"
+# allowed_user_ids:
+# - "me"
+
+web_host: 0.0.0.0
+web_port: 5000
+# 未设置密码时 Web UI 会被强制只监听 127.0.0.1（避免无鉴权暴露到局域网）。
+# 需要远程访问必须设置密码，并建议放在 HTTPS 反向代理之后。
+# 也可以填 werkzeug 的 pbkdf2: 哈希，而不是明文。
+# web_login_secret: "change-me"
+
+language: ZH

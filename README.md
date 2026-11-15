@@ -1,0 +1,328 @@
+# tg-dl
+
+> 基于 [tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader) 的修复分支。
+> 保留原项目的全部功能（Telegram bot 指令、Web UI、rclone 上传、受保护内容下载），修掉了长期困扰实际使用的四个问题。
+
+[![Docker](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+---
+
+## 为什么有这个分支
+
+上游项目最后一次实质更新停在 v2.2.6（2026-03），但几个影响日常使用的问题一直没有修：
+
+| 现象 | 根因 |
+| --- | --- |
+| Web 页面任务列表越堆越长，大量 0% 任务，失败任务不能重试也不能删除 | 进度表是一个只增不减的内存字典，失败记录永远停在最后百分比，页面也没有任何操作接口 |
+| Telegram bot 的进度消息更新一阵子后彻底不动 | 进度卡片把所有任务拼进一条消息，超过 4096 字符后 `edit_message_text` 报错被静默吞掉，且失败前就已经把「已发送内容」写进缓存，之后不再重试 |
+| 上传到网盘后本地文件不删除，硬盘被塞满 | 内置上传用 `rclone copy --ignore-existing`，远端已有同名文件时 rclone 直接跳过、不打印用于判定成功的那行输出，于是永远判定失败，永远不删本地 |
+| 停止容器后失败任务丢失 | 仅在 `KeyboardInterrupt` 分支写 `data.yaml`，Docker 默认的 `SIGTERM` 会直接杀掉进程 |
+
+这个分支把这四个问题都修了，并且把镜像构建改成了可用的 GitHub Actions 多架构流水线。
+
+---
+
+## 修复清单
+
+### 1. rclone 上传后正确删除本地文件
+
+`module/cloud_drive.py`
+
+```diff
+- rclone copy "<file>" "<remote_dir>/" --create-empty-src-dirs --ignore-existing --progress
+- if "Transferred" in s and "100%" in s and "1 / 1" in s: os.remove(local)
++ rclone copyto "<file>" "<remote_dir>/<name>" --no-traverse --progress
++ if retcode == 0: os.remove(local)
+```
+
+- 改用 `copyto`，目标文件名明确，不再依赖目录语义
+- 去掉 `--ignore-existing`，同名不同大小的文件会被正确覆盖，而不是被当成"已存在"
+- 去掉 `--size-only`：同名同大小但内容不同的远端文件不会被误判为已上传后删掉本地
+- 成功判定改为 **rclone 返回码**，不再解析进度文本；小文件秒传也能正确删除本地
+- 子进程参数改为 argv 列表（不经过 shell），避免频道标题/文件名里的 `$()`、反引号造成命令注入
+- 失败时打印 rclone 退出码和输出尾部，便于排查
+
+### 2. bot 进度卡片不再假死
+
+`module/pyrogram_extension.py` + `module/app.py`
+
+- 下载、上传、云盘上传三个区块各自最多显示 5 条，其余折叠为 `… +N`
+- 整体长度硬限制在 4000 字符以内
+- **只有 Telegram 确认接收后才更新本地缓存**；编辑失败下一轮会重试，不会永久停更
+- 单独处理 `MessageNotModified`，避免无意义告警
+- 进度卡片刷新间隔由 1 秒放宽到 3 秒，显著减少 FloodWait
+
+### 3. 失败任务可见、可重试、可删除
+
+`module/download_stat.py` / `module/web.py` / `media_downloader.py` / `templates/index.html`
+
+- 下载失败时立刻从「下载中」列表移除，不再留下永远 0% 的僵尸行
+- 失败记录写入独立登记表，Web UI 新增 **Failed** 标签页，每 3 秒刷新
+- 每一行可以 **重试**（重新入队，无需重启）或 **删除**（仅清除记录）
+- 新增接口：`/get_failed_list`、`/retry_failed`、`/clear_failed`
+
+### 4. 停止容器不再丢任务状态
+
+- Dockerfile 增加 `STOPSIGNAL SIGINT`，`docker stop` 走 `KeyboardInterrupt` 分支，正常写回 `data.yaml`
+- `docker-compose.yaml` 增加 `stop_signal: SIGINT` 和 `stop_grace_period: 2m`
+- 失败任务同时保留在 `data.yaml` 的 `ids_to_retry` 中，下次启动仍会自动重排
+
+---
+
+## 快速开始
+
+### 方式一：Docker（推荐）
+
+```bash
+docker pull ghcr.io/qcenjoyll/tg-dl:latest
+
+mkdir -p ~/tg-dl/{downloads,log,sessions,temp}
+cd ~/tg-dl
+cp config.yaml.example config.yaml 2>/dev/null || curl -fsSLO https://raw.githubusercontent.com/QCEnjoyLL/tg-dl/master/config.yaml
+curl -fsSLO https://raw.githubusercontent.com/QCEnjoyLL/tg-dl/master/data.yaml
+
+# 编辑 config.yaml 填入 api_id / api_hash / chat
+vi config.yaml
+
+# 首次登录：前台运行，输入手机号和验证码，然后 Ctrl+C
+docker run --rm -it \
+  -v $PWD/config.yaml:/app/config.yaml \
+  -v $PWD/data.yaml:/app/data.yaml \
+  -v $PWD/sessions:/app/sessions \
+  ghcr.io/qcenjoyll/tg-dl:latest
+
+# 之后后台运行
+docker run -d --name tg-dl --restart unless-stopped \
+  -p 5000:5000 \
+  -e TZ=Asia/Shanghai \
+  -v $PWD/config.yaml:/app/config.yaml \
+  -v $PWD/data.yaml:/app/data.yaml \
+  -v $PWD/downloads:/app/downloads \
+  -v $PWD/log:/app/log \
+  -v $PWD/sessions:/app/sessions \
+  -v $PWD/temp:/app/temp \
+  -v $HOME/.config/rclone:/root/.config/rclone \
+  --stop-signal SIGINT \
+  ghcr.io/qcenjoyll/tg-dl:latest
+```
+
+> 若要通过 `http://<host>:5000` 远程打开 Web UI，请在 `config.yaml` 里设置 `web_login_secret`；未设置时进程只会监听容器内的 `127.0.0.1`，端口映射不会生效。建议再套一层 HTTPS 反向代理。
+
+### 方式二：docker compose
+
+```bash
+git clone https://github.com/QCEnjoyLL/tg-dl.git
+cd tg-dl
+vi config.yaml        # 填 api_id / api_hash / chat
+docker compose run --rm tg-dl     # 首次登录
+docker compose up -d
+```
+
+`docker-compose.yaml` 已包含 `stop_signal: SIGINT` 和 rclone 配置挂载。
+
+### 方式三：源码运行
+
+```bash
+git clone https://github.com/QCEnjoyLL/tg-dl.git
+cd tg-dl
+pip3 install -r requirements.txt
+python3 media_downloader.py
+```
+
+Web UI 默认监听 `http://<host>:5000`。**未设置 `web_login_secret` 时只会监听 `127.0.0.1`**，避免把无鉴权的下载队列暴露到局域网；需要远程访问请先设置密码（并建议放在 HTTPS 反向代理之后）。
+
+---
+
+## 配置说明
+
+完整模板见仓库根目录 [`config.yaml`](config.yaml)。
+
+### 必填
+
+| 配置 | 说明 |
+| --- | --- |
+| `api_id` / `api_hash` | 在 [my.telegram.org/apps](https://my.telegram.org/apps) 申请 |
+| `chat` | 要下载的频道/群组，`chat_id` 支持 `-1001234567890`、`@username` |
+| `save_path` | 本地保存目录，容器内默认 `/app/downloads` |
+| `media_types` | `video` / `photo` / `document` / `audio` / `voice` / `video_note` |
+
+### 并发（最容易踩坑的两项）
+
+```yaml
+# 同时下载的文件数。设太大会频繁 FloodWait，建议 2-3
+max_download_task: 2
+
+# Pyrogram 层的并发传输槽位，默认是 max_download_task * 5
+# 想让整体更慢更稳，显式调小
+max_concurrent_transmissions: 4
+```
+
+### 上传到网盘
+
+```yaml
+upload_drive:
+  enable_upload_file: true
+  upload_adapter: rclone
+  remote_dir: "115:Telegram"      # rclone remote 名
+  rclone_path: /app/rclone/rclone # Docker 镜像内已内置
+  after_upload_file_delete: true  # 已修复，上传成功后一定删除
+  before_upload_file_zip: false   # 建议关闭，避免额外汇总文件
+```
+
+> 上传成功后删除本地是**已修复**的逻辑；如果 rclone 返回非 0，文件会被保留并在日志中记录退出码，方便重试。
+
+### bot
+
+```yaml
+bot_token: "your_bot_token"
+allowed_user_ids:
+  - "me"
+```
+
+bot 进度卡片已限制长度，不会再因为任务多而停止更新。
+
+### Web
+
+```yaml
+web_host: 0.0.0.0
+web_port: 5000
+web_login_secret: "改成你的密码"
+```
+
+> **安全提示**：登录密码现在由浏览器直接提交到后端比较（旧的 AES 加密 key 硬编码在前端，只是混淆），所以务必通过 HTTPS 反向代理访问。`web_login_secret` 也支持 werkzeug 的 `pbkdf2:` 哈希。会话签名密钥默认每个进程随机生成；需要重启后保持登录可设置 `TDL_WEB_SECRET_KEY` 环境变量。
+
+---
+
+## Web UI
+
+界面完全重写过，不再依赖 layui，静态资源从 ~880KB 降到 ~35KB（CSS/JS 合计，不含 logo 等文档图片）。
+
+**浅色**
+
+![浅色主题](docs/ui-light.png)
+
+**深色**
+
+![深色主题](docs/ui-dark.png)
+
+功能：
+
+- **明暗主题**：默认跟随系统，右上角可手动切换，选择记在 `localStorage`，刷新不丢
+- **顶部概览**：下载中数量、失败数量、当前速度、运行/暂停状态
+- **三个标签**：下载中、已完成、失败；支持深链，`http://host:5000/#failed` 直接打开失败页
+- **失败可操作**：每行「重试」直接重新入队（无需重启）、「删除」清除记录
+- **已完成**：点一下保存路径即可复制
+- **移动端适配**：窄屏自动隐藏次要列，表格自适应
+- **登录页**：同样的明暗主题和卡片风格，支持回车提交、错误抖动提示
+
+接口（需要登录态）：
+
+| 接口 | 方法 | 说明 |
+| --- | --- | --- |
+| `/get_failed_list` | GET | 失败任务 JSON |
+| `/retry_failed?chat_id=&message_id=` | POST | 重试单条，省略 `message_id` 则重试该 chat 全部 |
+| `/clear_failed?chat_id=&message_id=` | POST | 删除失败记录 |
+
+> 重试是把消息重新放回下载队列，需要进程仍在运行。配置了 `bot_token` 时进程常驻，可以随时重试；纯一次性下载模式请直接重启程序，会从 `data.yaml` 的 `ids_to_retry` 重新排队。
+
+### 本地预览界面
+
+没有 Telegram 会话也能调 UI：
+
+```bash
+python preview/build.py
+python -m http.server 8123 --directory .
+# 打开 http://127.0.0.1:8123/preview/index.html?theme=dark
+```
+
+预览页用 mock 数据填充，`preview/` 和 `docs/` 都不会进镜像。
+
+---
+
+## 停止服务
+
+**请务必优雅停止**，否则当前批次的失败任务不会写回 `data.yaml`：
+
+```bash
+docker stop tg-dl            # 镜像已设置 STOPSIGNAL SIGINT
+# 或
+systemctl stop tg-dl         # 服务里配置 KillSignal=SIGINT
+```
+
+宿主机直接跑源码时用 `Ctrl+C`，不要 `kill -9`。
+
+---
+
+## 构建与发布镜像
+
+仓库自带 [`.github/workflows/docker-publish.yml`](.github/workflows/docker-publish.yml)：
+
+- 推送到 `master` / `main`、打 `v*` tag、或在 Actions 页面手动触发时构建
+- 自动推送到 **GHCR**：`ghcr.io/qcenjoyll/tg-dl`
+- 标签规则：`latest`（默认分支）、分支名、`v1.2.3`、`1.2`、`sha-xxxxxxx`
+- Prompt 拉取 PR 时只构建不推送
+- 构建前先跑 `python -m compileall` 做语法检查
+
+### 多架构
+
+默认只构建 `linux/amd64`，因为 arm64 下 PyTgCrypto 需要在 QEMU 中编译，耗时很长。需要时在 Actions 里手动触发并填写：
+
+```
+linux/amd64,linux/arm64
+```
+
+### 拉取私有镜像
+
+GHCR 包默认是私有的，二选一：
+
+1. 在 GitHub → Packages → `tg-dl` → Package settings 里改为 Public
+2. 先登录再拉取：
+
+```bash
+echo <你的PAT> | docker login ghcr.io -u QCEnjoyLL --password-stdin
+```
+
+PAT 需要 `read:packages` 权限。
+
+---
+
+## 常见问题
+
+**Q：下载任务一直 0%，是不是卡住了？**
+看 `log/tdl.log`。Web 的 Downloading 标签只反映开始过下载的消息，队列里的大量消息不会同时推进；把 `max_download_task` 控制在 2-3 更稳。
+
+**Q：上传成功但本地没删？**
+检查日志里是否有 `rclone upload failed, exit code ...`。修复后的逻辑只在返回码为 0 时删除；非 0 会保留文件并打印 rclone 输出尾部，按报错处理即可（常见是 WebDAV 423、磁盘配额、token 过期）。
+
+**Q：重启后会不会重复下载？**
+不会。`last_read_message_id` 和 `ids_to_retry` 存在 `data.yaml`，已完成的跳过，失败的重新排队。
+
+**Q：支持 115 / OpenList / WebDAV 吗？**
+支持。任何 rclone 能写的后端都可以，包括 WebDAV 挂载的 OpenList、115、阿里云盘等。
+
+---
+
+## 与上游的差异
+
+- 修复上述四个问题（见上文修复清单）
+- 重写 Web UI 与登录页：明暗主题、概览卡片、失败重试/删除、移动端适配、深链；移除 layui，静态资源从 ~880KB 降到 ~35KB（CSS/JS 合计）
+- 重写 Dockerfile：加 `tzdata`、`PYTHONUNBUFFERED`、OCI 标签、`STOPSIGNAL SIGINT`
+- 重写镜像工作流：GHCR + buildx 缓存 + 语法检查，移除上游依赖 Docker Hub secrets 的旧流水线
+- 上游单测在本环境未全部通过，因此 `Tests (non-blocking)` 只作为参考运行，不会把分支标红；真正卡关的是 `Build and Publish Docker Image`
+- 移除上游的 Windows PyInstaller 发布流水线（依赖已废弃的 `actions/create-release@v1`）
+- 清理上游遗留配置：`dependabot.yml`（会自动开一堆依赖 PR）、`stale.yml`、`issue_label_bot.yaml`、issue 模板、`codecov.yml`、赞赏二维码图片
+
+功能、配置项和 Telegram 侧行为与上游保持一致，可以直接替换使用；已有的 `config.yaml` / `data.yaml` / session 文件可以继续复用。
+
+---
+
+## 致谢
+
+- 原始项目：[Dineshkarthik/telegram_media_downloader](https://github.com/Dineshkarthik/telegram_media_downloader)
+- 中文增强与 bot/Web UI：[tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader)
+- Telegram 客户端：[Pyrogram](https://github.com/pyrogram/pyrogram)（本分支使用 tangyoha 的 patch 版）
+
+## License
+
+MIT，与上游一致。请只下载你有权保存的内容，并遵守 Telegram 服务条款与当地法律。
