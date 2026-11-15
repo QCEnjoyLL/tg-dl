@@ -25,7 +25,9 @@ OUT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 from module import config_form  # noqa: E402  pylint: disable = wrong-import-position
 
-URL_FOR = re.compile(r"\{\{\s*url_for\('static',\s*filename='([^']+)'\)\s*\}\}")
+URL_FOR = re.compile(
+    r"\{\{\s*url_for\('static',\s*filename='([^']+)'(?:,\s*v=version)?\)\s*\}\}"
+)
 VERSION_RE = re.compile(r'__version__\s*=\s*"([^"]+)"')
 
 NOW = 1763000000
@@ -218,11 +220,15 @@ MOCK_JS = """
   var data = %s;
   var configText = %s;
   var formPayload = %s;
+  var pageVersion = %s;
   function respond(body, type) {
     return new Response(body, { status: 200, headers: { 'content-type': type || 'application/json' } });
   }
   window.fetch = function (url, options) {
     var u = String(url);
+    if (u.indexOf('/get_app_version') !== -1) {
+      return Promise.resolve(respond(pageVersion, 'text/plain'));
+    }
     if (u.indexOf('/get_download_status') !== -1) {
       return Promise.resolve(respond(JSON.stringify({ download_speed: '4.28 MB/s', upload_speed: '0.00 B/s', state: paused ? 'paused' : 'running' })));
     }
@@ -264,12 +270,15 @@ MOCK_JS = """
     ),
     json.dumps(MOCK_CONFIG, ensure_ascii=False),
     json.dumps(FORM_PAYLOAD, ensure_ascii=False, default=str),
+    json.dumps(VERSION),
 )
 
 
 def render(name: str, state: str = "pause") -> str:
     html = (TEMPLATES / name).read_text(encoding="utf-8")
-    html = URL_FOR.sub(lambda m: f"../module/static/{m.group(1)}", html)
+    html = URL_FOR.sub(
+        lambda m: f"../module/static/{m.group(1)}?v={VERSION}", html
+    )
     html = html.replace("{{ version }}", VERSION)
     html = html.replace("{{ download_state }}", state)
     # The preview has no session, so pretend the login is enabled to show the

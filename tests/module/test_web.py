@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from unittest import mock
 
+import utils
 from module import web
 from module.download_stat import DownloadState, set_download_state
 
@@ -376,6 +377,43 @@ class ConfigFormTestCase(_ConfigFixture):
         self.assertEqual(saved["proxy"]["hostname"], "10.0.0.1")
         self.assertEqual(saved["proxy"]["port"], 8080)
         self.assertEqual(saved["proxy"]["password"], "should-not-leak")
+
+
+class WebAssetTestCase(unittest.TestCase):
+    """The UI must never run a cached script against newer markup."""
+
+    def setUp(self):
+        flask_app = web.get_flask_app()
+        flask_app.config.update(TESTING=True, LOGIN_DISABLED=True)
+        self.client = flask_app.test_client()
+
+    def test_index_uses_versioned_assets_and_no_store(self):
+        response = self.client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        self.assertIn('data-version="%s"' % utils.__version__, html)
+        self.assertIn("app.css?v=", html)
+        self.assertIn("app.js?v=", html)
+        self.assertIn("no-store", response.headers.get("Cache-Control", ""))
+
+    def test_static_assets_are_long_lived(self):
+        response = self.client.get("/static/js/app.js?v=1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("immutable", response.headers.get("Cache-Control", ""))
+
+    def test_login_page_is_versioned_too(self):
+        response = self.client.get("/login")
+
+        html = response.get_data(as_text=True)
+        self.assertIn("data-version=", html)
+        self.assertIn("login.css?v=", html)
+
+    def test_app_version_endpoint(self):
+        response = self.client.get("/get_app_version")
+
+        self.assertEqual(response.get_data(as_text=True).strip(), utils.__version__)
 
 
 class WebLoginTestCase(unittest.TestCase):

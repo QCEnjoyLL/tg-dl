@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-version="{{ version }}">
 
 <head>
   <meta charset="utf-8">
@@ -8,7 +8,7 @@
   <title>tg-dl · 后台</title>
   <link rel="icon"
     href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%232f5fe0'/%3E%3Cpath d='M16 8v11m0 0 4.5-4.5M16 19l-4.5-4.5M10 23h12' stroke='white' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E">
-  <link href="{{ url_for('static', filename='css/app.css') }}" rel="stylesheet">
+  <link href="{{ url_for('static', filename='css/app.css', v=version) }}" rel="stylesheet">
   <script>
     /* Apply the theme before first paint so there is no white flash. */
     (function () {
@@ -233,7 +233,7 @@
 
   <div class="toasts" id="toasts" role="status" aria-live="polite"></div>
 
-  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/app.js', v=version) }}"></script>
 </body>
 
 </html>

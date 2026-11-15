@@ -1138,6 +1138,24 @@ main {
   pointer-events: none;
 }
 
+/* Shown when the page assets and the backend disagree (stale browser cache). */
+.fatal-banner {
+  position: fixed;
+  inset: 0 0 auto 0;
+  z-index: 60;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  border-bottom: 1px solid var(--danger);
+  font-size: 13px;
+  text-align: center;
+}
+
 .toast {
   padding: 10px 14px;
   border-radius: var(--radius-sm);

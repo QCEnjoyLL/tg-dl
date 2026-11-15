@@ -3,11 +3,20 @@
 > 基于 [tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader) 的修复分支。
 > 保留原项目的全部功能（Telegram bot 指令、Web UI、rclone 上传、受保护内容下载），并持续修复实际使用中的问题。
 
-当前版本：**v2.7.0**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
+当前版本：**v2.7.1**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
 
 [![Docker](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml)
 [![Tests](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/unittest.yml/badge.svg)](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/unittest.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+---
+
+## v2.7.1 更新内容
+
+- **修复旧静态缓存导致后台空白**：升级镜像后如果浏览器还在用上一版 `app.js`，会出现「连接异常：Cannot set properties of null」并且配置 / 退出按钮点不动。现在静态资源带 `?v=<版本号>`、HTML 禁止缓存，页面与后端版本不一致时会直接提示强制刷新。
+- 界面初始化失败时顶部会显示错误原因和「重新加载」按钮，而不是静默失效。
+
+> 升级后若仍显示旧界面，按一次 `Ctrl+F5`（Mac：`Cmd+Shift+R`）即可。
 
 ---
 
@@ -350,6 +359,12 @@ v2.6.6 已修：任务结束时会把记录从「下载中」移到「已完成�
 
 **Q：改配置会不会重启？**
 大部分下载/上传行为项立即生效；`api_id`、`bot_token`、`chat`、`save_path`、端口等需要重启，保存后 Web UI 会列出需要重启的项。
+
+**Q：后台一直显示「连接异常：Cannot set properties of null」，按钮也点不动？**
+浏览器缓存了旧版 `app.js` 而后端已经升级。v2.7.1 起静态资源带版本号不会再发生；如果仍遇到，按一次 `Ctrl+F5`（Mac：`Cmd+Shift+R`）强制刷新即可，页面顶部也会出现同样的提示和「重新加载」按钮。
+
+**Q：左上角有个「跳到主要内容」是什么？**
+这是无障碍的跳过导航链接，只有用键盘 Tab 聚焦时才会出现，平时不会显示；回车会把焦点移到主内容区。
 
 **Q：上传成功但本地没删？**
 检查日志里是否有 `rclone upload failed, exit code ...`。修复后的逻辑只在返回码为 0 时删除；非 0 会保留文件并打印 rclone 输出尾部，按报错处理即可（常见是 WebDAV 423、磁盘配额、token 过期）。

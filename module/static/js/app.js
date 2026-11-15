@@ -85,6 +85,50 @@
     );
   }
 
+  /* Every DOM write goes through a helper: a stale cached script running next to
+     newer markup must degrade instead of throwing and killing the whole page. */
+  function setText(node, text) {
+    if (node) node.textContent = text;
+    return node;
+  }
+
+  function showFatalBanner(message) {
+    if (!document.body || document.getElementById("fatal-banner")) return;
+    const banner = document.createElement("div");
+    banner.id = "fatal-banner";
+    banner.className = "fatal-banner";
+    banner.setAttribute("role", "alert");
+    const label = document.createElement("span");
+    label.textContent = message;
+    const button = document.createElement("button");
+    button.className = "btn btn-ghost";
+    button.type = "button";
+    button.textContent = "重新加载";
+    button.addEventListener("click", () => window.location.reload());
+    banner.appendChild(label);
+    banner.appendChild(button);
+    document.body.prepend(banner);
+  }
+
+  async function checkVersion() {
+    const expected = document.documentElement.dataset.version || "";
+    if (!expected) return;
+    try {
+      const serverVersion = String(await api("/get_app_version")).trim();
+      if (serverVersion && serverVersion !== expected) {
+        showFatalBanner(
+          "页面资源是 v" +
+            expected +
+            "，后端是 v" +
+            serverVersion +
+            "：请按 Ctrl+F5（Mac 用 Cmd+Shift+R）强制刷新。"
+        );
+      }
+    } catch (e) {
+      /* older backends do not expose the version endpoint */
+    }
+  }
+
   function nameHtml(name) {
     const text = String(name === null || name === undefined ? "" : name);
     const dot = text.lastIndexOf(".");
@@ -138,6 +182,7 @@
     node.className = "toast";
     node.dataset.tone = tone || "info";
     node.textContent = message;
+    if (!el.toasts) return;
     el.toasts.appendChild(node);
     // Force a frame so the entrance transition runs.
     requestAnimationFrame(() => node.classList.add("is-visible"));
@@ -348,9 +393,9 @@
       buildDownloadingRow,
       updateDownloadingRow
     );
-    el.statActive.textContent = state.downloading.length;
-    el.badgeDownloading.textContent = state.downloading.length;
-    el.badgeDownloading.hidden = state.downloading.length === 0;
+    setText(el.statActive, state.downloading.length);
+    setText(el.badgeDownloading, state.downloading.length);
+    if (el.badgeDownloading) el.badgeDownloading.hidden = state.downloading.length === 0;
     renderEmpty();
   }
 
@@ -362,7 +407,7 @@
       buildDownloadedRow,
       updateDownloadedRow
     );
-    el.statDone.textContent = state.downloaded.length;
+    setText(el.statDone, state.downloaded.length);
     renderEmpty();
   }
 
@@ -389,29 +434,35 @@
         : state.tab === "downloaded"
         ? state.downloaded
         : state.failed;
-    el.empty.hidden = rows.length > 0;
-    el.emptyText.textContent = messages[state.tab] || "";
+    if (el.empty) el.empty.hidden = rows.length > 0;
+    setText(el.emptyText, messages[state.tab] || "");
   }
 
   function renderStatus() {
     const running = state.action === "pause";
-    el.statState.textContent = running ? "运行中" : "已暂停";
-    el.statState.classList.toggle("is-running", running);
-    el.statState.classList.toggle("is-paused", !running);
-    el.liveDot.classList.toggle("is-paused", !running);
+    setText(el.statState, running ? "运行中" : "已暂停");
+    if (el.statState) {
+      el.statState.classList.toggle("is-running", running);
+      el.statState.classList.toggle("is-paused", !running);
+    }
+    if (el.liveDot) el.liveDot.classList.toggle("is-paused", !running);
 
-    el.pauseBtn.dataset.value = state.action;
-    el.pauseBtn.innerHTML =
-      (running ? ICON_PAUSE : ICON_PLAY) +
-      '<span class="pause-label">' +
-      (running ? "暂停" : "继续") +
-      "</span>";
-    el.pauseBtn.setAttribute("aria-label", running ? "暂停全部下载" : "继续全部下载");
+    if (el.pauseBtn) {
+      el.pauseBtn.dataset.value = state.action;
+      el.pauseBtn.innerHTML =
+        (running ? ICON_PAUSE : ICON_PLAY) +
+        '<span class="pause-label">' +
+        (running ? "暂停" : "继续") +
+        "</span>";
+      el.pauseBtn.setAttribute(
+        "aria-label",
+        running ? "暂停全部下载" : "继续全部下载"
+      );
+    }
   }
 
   function renderSpeed(speed) {
-    const text = speed || "--";
-    if (el.speed) el.speed.textContent = text;
+    setText(el.speed, speed || "--");
   }
 
   /* --------------------------------------------------------------- loading */
@@ -431,16 +482,16 @@
   async function loadFailed() {
     const rows = await api("/get_failed_list");
     state.failed = Array.isArray(rows) ? rows : [];
-    el.statFailed.textContent = state.failed.length;
-    el.badgeFailed.textContent = state.failed.length;
-    el.badgeFailed.hidden = state.failed.length === 0;
+    setText(el.statFailed, state.failed.length);
+    setText(el.badgeFailed, state.failed.length);
+    if (el.badgeFailed) el.badgeFailed.hidden = state.failed.length === 0;
     if (state.tab === "failed") renderFailed();
   }
 
   async function loadStatus() {
     const res = await api("/get_download_status");
     renderSpeed(res && res.download_speed ? res.download_speed : "");
-    el.updated.textContent = "更新于 " + clockText();
+    setText(el.updated, "更新于 " + clockText());
   }
 
   function refreshActive() {
@@ -720,7 +771,7 @@
   }
 
   function setConfigError(message) {
-    el.configError.textContent = message || "";
+    setText(el.configError, message || "");
   }
 
   function clearFieldErrors() {
@@ -1003,7 +1054,7 @@
     clearFieldErrors();
     el.configSave.disabled = true;
     el.configLoading.hidden = false;
-    el.configLoading.textContent = "正在读取 config.yaml…";
+    setText(el.configLoading, "正在读取 config.yaml…");
     el.configForm.innerHTML = "";
     state.configTab = "form";
     paintConfigTab();
@@ -1018,7 +1069,7 @@
       const res = await api("/get_config_form");
       if (!res || res.code !== "1") throw new Error((res && res.msg) || "读取失败");
       configSchema = res;
-      el.configPath.textContent = res.path;
+      setText(el.configPath, res.path);
       el.configText.value = res.text;
       el.configText.scrollTop = 0;
       renderConfigForm(res);
@@ -1027,7 +1078,7 @@
       const first = el.configForm.querySelector(".cfg-input, input, select, textarea");
       if (first) first.focus({ preventScroll: true });
     } catch (err) {
-      el.configLoading.textContent = "读取配置失败：" + err.message;
+      setText(el.configLoading, "读取配置失败：" + err.message);
       setConfigError(err.message);
     }
   }
@@ -1114,7 +1165,7 @@
   function notifyError(err) {
     errorCount += 1;
     if (errorCount === 1 || errorCount % 15 === 0) {
-      el.updated.textContent = "连接异常：" + err.message;
+      setText(el.updated, "连接异常：" + err.message);
     }
   }
 
@@ -1233,7 +1284,7 @@
     });
   }
 
-  function boot() {
+  function start() {
     initTheme();
     bind();
     renderStatus();
@@ -1249,9 +1300,30 @@
     loadDownloaded().catch(() => {});
     if (state.tab !== "downloading") loadDownloading().catch(() => {});
     refreshActive().catch(notifyError);
+    checkVersion();
 
     setInterval(tick, STATUS_REFRESH);
   }
+
+  function boot() {
+    // A cached script from another release used to throw here and leave every
+    // button dead with no explanation. Show what happened and how to fix it.
+    try {
+      start();
+    } catch (err) {
+      showFatalBanner(
+        "界面初始化失败：" + err.message + "。请按 Ctrl+F5 强制刷新。"
+      );
+    }
+  }
+
+  window.addEventListener("error", (event) => {
+    if (event && event.message) {
+      showFatalBanner(
+        "页面脚本出错：" + event.message + "。请按 Ctrl+F5 强制刷新。"
+      );
+    }
+  });
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", boot);

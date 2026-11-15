@@ -179,6 +179,19 @@ def _set_security_headers(response):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "same-origin")
+    response.headers.setdefault("X-TDL-Version", utils.__version__)
+
+    # A cached index.html served next to a cached app.js from another release is
+    # how the UI ended up dead ("Cannot set properties of null"): the old script
+    # looked for an element the new markup no longer has. Never store the pages,
+    # and let the versioned static URLs be cached forever instead.
+    if response.mimetype == "text/html":
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+    elif request.endpoint == "static" and request.args.get("v"):
+        # Only versioned URLs may be cached forever; an unversioned request keeps
+        # Flask's normal revalidation.
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+
     return response
 
 
@@ -226,7 +239,7 @@ def login():
 
         return jsonify({"code": "0"})
 
-    return render_template("login.html")
+    return render_template("login.html", version=utils.__version__)
 
 
 @_flask_app.route("/logout", methods=["POST", "GET"])
