@@ -3,11 +3,19 @@
 > 基于 [tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader) 的修复分支。
 > 保留原项目的全部功能（Telegram bot 指令、Web UI、rclone 上传、受保护内容下载），并持续修复实际使用中的问题。
 
-当前版本：**v2.6.6**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
+当前版本：**v2.7.0**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
 
 [![Docker](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml)
 [![Tests](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/unittest.yml/badge.svg)](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/unittest.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+---
+
+## v2.7.0 更新内容
+
+- **配置表单**：Web UI 的配置编辑从纯 YAML 文本框改成带中文说明的表单，已填写的项自动回填、未填写的留空；
+  另保留「YAML 原文」标签页用于表单没覆盖的高级配置
+- 字段级校验与逐项报错，保存时原子写入并保留未在表单中暴露的字段
 
 ---
 
@@ -236,7 +244,9 @@ web_login_secret: "改成你的密码"
 - **失败可操作**：每行「重试」直接重新入队（无需重启）、「删除」清除记录（并同步从 `ids_to_retry` 移除，重启后不会再排队）
 - **已完成**：显示完成时间与保存路径，可一键复制路径或删除记录
 - **登录 / 退出登录**：配置了 `web_login_secret` 时右上角出现退出按钮
-- **在线改配置**：齿轮按钮打开 `config.yaml` 编辑器，保存即校验 YAML 并原子写入；`api_hash` / `bot_token` / `web_login_secret` 以掩码显示，不修改就不会被覆盖
+- **在线改配置**：齿轮按钮打开配置面板，默认是带中文解释的表单（已填写的自动回填、未填写的留空），
+  可按分组修改常见参数；顶部可切到「YAML 原文」编辑特殊配置。保存前校验，空值即删除该项，
+  `api_hash` / `bot_token` / `web_login_secret` / 代理密码以掩码显示，不修改就不会覆盖；需要重启的项会在保存后列出
 - **移动端适配**：窄屏自动隐藏次要列，表格自适应
 - **可访问性**：键盘可完成全部操作（Tab 导航、方向键切换标签页、Esc 关闭配置面板、危险操作二次确认），焦点环、对比度和 `prefers-reduced-motion` 均已处理
 
@@ -252,8 +262,10 @@ web_login_secret: "改成你的密码"
 | `/delete_task?chat_id=&message_id=` | POST | 删除任务（下载中会中止该文件） |
 | `/retry_failed?chat_id=&message_id=` | POST | 重试单条，省略 `message_id` 则重试该 chat 全部 |
 | `/clear_failed?chat_id=&message_id=` | POST | 删除失败记录 |
-| `/get_config` | GET | 读取 `config.yaml`（密钥掩码） |
-| `/set_config` | POST | 校验并保存 `config.yaml`，返回已生效 / 需重启的配置项 |
+| `/get_config` | GET | 读取 `config.yaml` 原文（密钥掩码） |
+| `/set_config` | POST | 校验并保存 YAML 原文，返回已生效 / 需重启的配置项 |
+| `/get_config_form` | GET | 配置表单的字段定义、当前值和 YAML 原文 |
+| `/set_config_form` | POST | 保存配置表单，返回字段级错误或已生效 / 需重启的配置项 |
 | `/logout` | POST | 退出登录 |
 
 > 重试是把消息重新放回下载队列，需要进程仍在运行。配置了 `bot_token` 时进程常驻，可以随时重试；纯一次性下载模式请直接重启程序，会从 `data.yaml` 的 `ids_to_retry` 重新排队。

@@ -50,6 +50,10 @@ api_hash: real-hash-value
 bot_token: 123:real-token
 media_types:
 - video
+chat:
+- chat_id: -100123
+  last_read_message_id: 7
+  download_filter: "id > 10"
 web_login_secret: real-secret
 proxy:
   scheme: socks5
@@ -183,7 +187,7 @@ class WebApiTestCase(unittest.TestCase):
         self.assertEqual(payload["retried"], 2)
 
 
-class WebConfigTestCase(unittest.TestCase):
+class _ConfigFixture(unittest.TestCase):
     def setUp(self):
         flask_app = web.get_flask_app()
         flask_app.config.update(TESTING=True, LOGIN_DISABLED=True)
@@ -209,6 +213,15 @@ class WebConfigTestCase(unittest.TestCase):
         self.path_patch.stop()
         self.app_patch.stop()
         self.tempdir.cleanup()
+
+    def saved_config(self) -> dict:
+        from ruamel import yaml
+
+        with open(self.config_path, encoding="utf-8") as config_file:
+            return yaml.YAML().load(config_file.read())
+
+
+class WebConfigTestCase(_ConfigFixture):
 
     def test_get_config_masks_secrets(self):
         response = self.client.get("/get_config")
@@ -245,6 +258,124 @@ class WebConfigTestCase(unittest.TestCase):
 
         self.assertEqual(payload["code"], "0")
         self.assertIn("api_hash", payload["msg"])
+
+
+class ConfigFormTestCase(_ConfigFixture):
+    def base_form(self, **overrides):
+        data = {
+            "api_id": "12345",
+            "api_hash": web.CONFIG_MASK,
+            "media_types": ["video"],
+            "chat": "-100123",
+        }
+        # The browser always renders the presence marker for switches and
+        # checkbox groups; without it the server keeps the stored value.
+        for field in web.config_form.FIELDS:
+            if field["type"] in ("bool", "multiselect"):
+                data[field["name"] + "__present"] = "1"
+        data.update(overrides)
+        return data
+
+    def test_form_payload_has_schema_values_and_masked_secrets(self):
+        response = self.client.get("/get_config_form")
+        payload = response.get_json()
+
+        self.assertEqual(payload["code"], "1")
+        self.assertIn("基础", payload["groups"])
+        names = [field["name"] for field in payload["fields"]]
+        self.assertIn("media_types", names)
+        self.assertIn("upload_drive.enable_upload_file", names)
+
+        values = payload["values"]
+        self.assertEqual(values["api_id"], "12345")
+        self.assertEqual(values["api_hash"], web.CONFIG_MASK)
+        self.assertEqual(values["bot_token"], web.CONFIG_MASK)
+        self.assertEqual(values["chat"], "-100123")
+        self.assertEqual(values["media_types"], ["video"])
+        self.assertNotIn("real-hash-value", response.get_data(as_text=True))
+
+    def test_form_save_applies_values_and_keeps_masked_secrets(self):
+        response = self.client.post(
+            "/set_config_form",
+            data=self.base_form(
+                media_types=["video", "document"],
+                max_download_task="3",
+                hide_file_name="1",
+                chat="-100123\n@new_channel",
+            ),
+        )
+        payload = response.get_json()
+        self.assertEqual(payload["code"], "1", payload)
+
+        saved = self.saved_config()
+        self.assertEqual(saved["api_hash"], "real-hash-value")
+        self.assertEqual(saved["bot_token"], "123:real-token")
+        self.assertEqual(saved["max_download_task"], 3)
+        self.assertTrue(saved["hide_file_name"])
+        self.assertEqual(saved["media_types"], ["video", "document"])
+
+        chats = saved["chat"]
+        self.assertEqual(len(chats), 2)
+        # Per-chat settings survive an edit of the chat list.
+        self.assertEqual(chats[0]["chat_id"], -100123)
+        self.assertEqual(chats[0]["download_filter"], "id > 10")
+        self.assertEqual(chats[0]["last_read_message_id"], 7)
+        self.assertEqual(chats[1]["chat_id"], "@new_channel")
+
+    def test_form_save_clears_blank_keys(self):
+        response = self.client.post(
+            "/set_config_form",
+            data=self.base_form(web_port="", save_path=""),
+        )
+        self.assertEqual(response.get_json()["code"], "1")
+
+        saved = self.saved_config()
+        self.assertNotIn("save_path", saved)
+
+    def test_form_rejects_empty_required_field(self):
+        response = self.client.post("/set_config_form", data=self.base_form(api_id=""))
+        payload = response.get_json()
+
+        self.assertEqual(payload["code"], "0")
+        self.assertIn("api_id", payload["errors"])
+
+    def test_form_rejects_bad_number_and_empty_media_types(self):
+        response = self.client.post(
+            "/set_config_form",
+            data=self.base_form(max_download_task="abc", media_types=[]),
+        )
+        errors = response.get_json()["errors"]
+
+        self.assertIn("max_download_task", errors)
+        self.assertIn("media_types", errors)
+
+    def test_form_rejects_out_of_range_number(self):
+        response = self.client.post(
+            "/set_config_form", data=self.base_form(web_port="70000")
+        )
+        errors = response.get_json()["errors"]
+
+        self.assertIn("web_port", errors)
+
+    def test_form_updates_proxy_block(self):
+        data = self.base_form()
+        data.update(
+            {
+                "proxy.scheme": "http",
+                "proxy.hostname": "10.0.0.1",
+                "proxy.port": "8080",
+                "proxy.username": "user",
+                "proxy.password": web.CONFIG_MASK,
+            }
+        )
+        response = self.client.post("/set_config_form", data=data)
+        self.assertEqual(response.get_json()["code"], "1")
+
+        saved = self.saved_config()
+        self.assertEqual(saved["proxy"]["scheme"], "http")
+        self.assertEqual(saved["proxy"]["hostname"], "10.0.0.1")
+        self.assertEqual(saved["proxy"]["port"], 8080)
+        self.assertEqual(saved["proxy"]["password"], "should-not-leak")
 
 
 class WebLoginTestCase(unittest.TestCase):

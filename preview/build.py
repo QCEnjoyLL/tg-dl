@@ -13,11 +13,17 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 TEMPLATES = ROOT / "module" / "templates"
 OUT = Path(__file__).resolve().parent
+
+# The config schema is pure stdlib, so the preview can reuse the real one
+# instead of duplicating every field.
+sys.path.insert(0, str(ROOT))
+from module import config_form  # noqa: E402  pylint: disable = wrong-import-position
 
 URL_FOR = re.compile(r"\{\{\s*url_for\('static',\s*filename='([^']+)'\)\s*\}\}")
 VERSION_RE = re.compile(r'__version__\s*=\s*"([^"]+)"')
@@ -153,12 +159,65 @@ web_port: 5000
 language: ZH
 """
 
+FORM_VALUES = {
+    "api_id": "12345678",
+    "api_hash": config_form.MASK,
+    "bot_token": "",
+    "chat": "-1001234567890\n@some_channel",
+    "media_types": ["video", "document"],
+    "save_path": "/app/downloads",
+    "language": "ZH",
+    "allowed_user_ids": "me",
+    "max_download_task": "2",
+    "max_concurrent_transmissions": "4",
+    "start_timeout": "60",
+    "forward_limit": "33",
+    "file_formats.audio": "all",
+    "file_formats.document": "all",
+    "file_formats.video": "all",
+    "file_path_prefix": ["chat_title", "media_datetime"],
+    "file_name_prefix": ["message_id", "file_name"],
+    "file_name_prefix_split": " - ",
+    "date_format": "%Y_%m",
+    "hide_file_name": False,
+    "enable_download_txt": False,
+    "after_upload_telegram_delete": True,
+    "drop_no_audio_video": False,
+    "upload_drive.enable_upload_file": True,
+    "upload_drive.upload_adapter": "rclone",
+    "upload_drive.remote_dir": "115:Telegram",
+    "upload_drive.rclone_path": "/app/rclone/rclone",
+    "upload_drive.before_upload_file_zip": False,
+    "upload_drive.after_upload_file_delete": True,
+    "proxy.scheme": "",
+    "proxy.hostname": "",
+    "proxy.port": "",
+    "proxy.username": "",
+    "proxy.password": "",
+    "web_host": "0.0.0.0",
+    "web_port": "5000",
+    "web_login_secret": config_form.MASK,
+    "log_level": "INFO",
+    "filter_advertisement_list": "",
+    "replace_advertisement_list": "",
+}
+
+FORM_PAYLOAD = {
+    "code": "1",
+    "path": "/app/config.yaml",
+    "fields": config_form.FIELDS,
+    "groups": config_form.GROUPS,
+    "values": FORM_VALUES,
+    "text": MOCK_CONFIG,
+}
+
 MOCK_JS = """
 <script>
 (function () {
   var paused = false;
   var data = %s;
   var configText = %s;
+  var formPayload = %s;
   function respond(body, type) {
     return new Response(body, { status: 200, headers: { 'content-type': type || 'application/json' } });
   }
@@ -180,11 +239,14 @@ MOCK_JS = """
       paused = !paused;
       return Promise.resolve(respond(paused ? 'continue' : 'pause', 'text/plain'));
     }
+    if (u.indexOf('/get_config_form') !== -1) {
+      return Promise.resolve(respond(JSON.stringify(formPayload)));
+    }
     if (u.indexOf('/get_config') !== -1) {
       return Promise.resolve(respond(JSON.stringify({ code: '1', path: '/app/config.yaml', text: configText })));
     }
     if (u.indexOf('/set_config') !== -1) {
-      return Promise.resolve(respond(JSON.stringify({ code: '1', applied: ['media_types'], restart_required: ['chat'] })));
+      return Promise.resolve(respond(JSON.stringify({ code: '1', applied: ['media_types'], restart_required: ['chat'], values: formPayload.values, text: configText })));
     }
     if (u.indexOf('/pause_task') !== -1) { paused = true; }
     if (u.indexOf('/resume_task') !== -1) { paused = false; }
@@ -201,6 +263,7 @@ MOCK_JS = """
         ensure_ascii=False,
     ),
     json.dumps(MOCK_CONFIG, ensure_ascii=False),
+    json.dumps(FORM_PAYLOAD, ensure_ascii=False, default=str),
 )
 
 

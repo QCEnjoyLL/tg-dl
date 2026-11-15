@@ -27,6 +27,7 @@
   const state = {
     tab: "downloading",
     action: $("#pause-btn") ? $("#pause-btn").dataset.value : "pause",
+    configTab: "form",
     downloading: [],
     downloaded: [],
     failed: [],
@@ -56,6 +57,10 @@
     configSave: $("#config-save"),
     configCancel: $("#config-cancel"),
     configClose: $("#config-close"),
+    configForm: $("#config-form"),
+    configLoading: $("#config-loading"),
+    formPane: $("#config-form-pane"),
+    yamlPane: $("#config-yaml-pane"),
     tables: {
       downloading: $("#table-downloading"),
       downloaded: $("#table-downloaded"),
@@ -708,33 +713,322 @@
   /* ---------------------------------------------------------------- config */
 
   let configSaving = false;
+  let configSchema = null;
+
+  function cfgId(prefix, name) {
+    return prefix + "-" + name.replace(/\./g, "-");
+  }
 
   function setConfigError(message) {
     el.configError.textContent = message || "";
   }
 
+  function clearFieldErrors() {
+    $$(".cfg-field.has-error", el.configForm).forEach((node) => {
+      node.classList.remove("has-error");
+      const error = node.querySelector(".cfg-error");
+      if (error) {
+        error.hidden = true;
+        error.textContent = "";
+      }
+      const control = node.querySelector(".cfg-input, input, select, textarea");
+      if (control) control.removeAttribute("aria-invalid");
+    });
+  }
+
+  function showFieldErrors(errors) {
+    let firstControl = null;
+    Object.keys(errors || {}).forEach((name) => {
+      const node = el.configForm.querySelector(
+        '[data-field="' + name.replace(/"/g, '\\"') + '"]'
+      );
+      if (!node) return;
+      node.classList.add("has-error");
+      const error = node.querySelector(".cfg-error");
+      if (error) {
+        error.textContent = errors[name];
+        error.hidden = false;
+      }
+      const control = node.querySelector(".cfg-input, input, select, textarea");
+      if (control) {
+        control.setAttribute("aria-invalid", "true");
+        if (!firstControl) firstControl = control;
+      }
+    });
+    if (firstControl) {
+      firstControl.focus({ preventScroll: true });
+      firstControl.scrollIntoView({ block: "center" });
+    }
+  }
+
+  function hintText(field) {
+    let text = field.hint || "";
+    if (field.default !== undefined && field.default !== null && field.default !== "") {
+      text += (text ? " " : "") + "默认：" + String(field.default);
+    }
+    return text;
+  }
+
+  function buildField(field, value) {
+    const name = field.name;
+    const id = cfgId("f", name);
+    const wrap = document.createElement("div");
+    wrap.className = "cfg-field" + (field.span === 2 ? " cfg-span-2" : "");
+    wrap.dataset.field = name;
+
+    const hint = hintText(field);
+    const hintHtml = hint
+      ? '<p class="cfg-hint" id="' + cfgId("h", name) + '">' + esc(hint) + "</p>"
+      : "";
+    const errorHtml =
+      '<p class="cfg-error" id="' + cfgId("e", name) + '" role="alert" hidden></p>';
+    const describedBy = hint ? ' aria-describedby="' + cfgId("h", name) + '"' : "";
+    const requiredMark = field.required
+      ? ' <span class="req" aria-hidden="true">*</span>'
+      : "";
+    const requiredAttr = field.required ? ' aria-required="true"' : "";
+
+    if (field.type === "bool") {
+      wrap.classList.add("cfg-switch");
+      wrap.innerHTML =
+        '<div class="cfg-switch-row">' +
+        '<label class="cfg-label" for="' +
+        id +
+        '">' +
+        esc(field.label) +
+        "</label>" +
+        '<span class="switch"><input type="hidden" name="' +
+        esc(name) +
+        '__present" value="1"><input id="' +
+        id +
+        '" name="' +
+        esc(name) +
+        '" type="checkbox" value="1"' +
+        describedBy +
+        '><span class="switch-track" aria-hidden="true"></span></span>' +
+        "</div>" +
+        hintHtml +
+        errorHtml;
+      wrap.querySelector('input[type="checkbox"]').checked = Boolean(value);
+      return wrap;
+    }
+
+    if (field.type === "multiselect") {
+      const chosen = Array.isArray(value) ? value : [];
+      const options = (field.options || [])
+        .map(
+          (option) =>
+            '<label class="cfg-option"><input type="checkbox" name="' +
+            esc(name) +
+            '" value="' +
+            esc(option[0]) +
+            '"' +
+            (chosen.indexOf(option[0]) !== -1 ? " checked" : "") +
+            "><span>" +
+            esc(option[1]) +
+            "</span></label>"
+        )
+        .join("");
+      wrap.classList.add("cfg-checks");
+      wrap.innerHTML =
+        '<fieldset class="cfg-fieldset"><legend class="cfg-label">' +
+        esc(field.label) +
+        requiredMark +
+        "</legend>" +
+        '<input type="hidden" name="' +
+        esc(name) +
+        '__present" value="1">' +
+        '<div class="cfg-options"' +
+        describedBy +
+        ">" +
+        options +
+        "</div></fieldset>" +
+        hintHtml +
+        errorHtml;
+      return wrap;
+    }
+
+    if (field.type === "select") {
+      const options = (field.options || [])
+        .map(
+          (option) =>
+            '<option value="' +
+            esc(option[0]) +
+            '">' +
+            esc(option[1]) +
+            "</option>"
+        )
+        .join("");
+      wrap.innerHTML =
+        '<label class="cfg-label" for="' +
+        id +
+        '">' +
+        esc(field.label) +
+        requiredMark +
+        "</label>" +
+        '<select id="' +
+        id +
+        '" name="' +
+        esc(name) +
+        '" class="cfg-input"' +
+        describedBy +
+        requiredAttr +
+        '><option value="">（未设置）</option>' +
+        options +
+        "</select>" +
+        hintHtml +
+        errorHtml;
+      wrap.querySelector("select").value =
+        value === undefined || value === null ? "" : String(value);
+      return wrap;
+    }
+
+    const isTextarea = ["lines", "chat_list", "textarea"].indexOf(field.type) !== -1;
+    const inputType =
+      field.type === "number"
+        ? "number"
+        : field.type === "password"
+        ? "password"
+        : "text";
+    const placeholder = String(field.placeholder || "").replace(/\n/g, " / ");
+    const bounds =
+      field.type === "number"
+        ? (field.min !== undefined ? ' min="' + field.min + '"' : "") +
+          (field.max !== undefined ? ' max="' + field.max + '"' : "")
+        : "";
+    const autocomplete = field.type === "password" ? ' autocomplete="new-password"' : "";
+
+    wrap.innerHTML =
+      '<label class="cfg-label" for="' +
+      id +
+      '">' +
+      esc(field.label) +
+      requiredMark +
+      "</label>" +
+      (isTextarea
+        ? '<textarea id="' +
+          id +
+          '" name="' +
+          esc(name) +
+          '" class="cfg-input cfg-textarea" rows="' +
+          (field.type === "chat_list" ? 4 : 3) +
+          '" placeholder="' +
+          esc(placeholder) +
+          '" spellcheck="false"' +
+          describedBy +
+          requiredAttr +
+          "></textarea>"
+        : '<input id="' +
+          id +
+          '" name="' +
+          esc(name) +
+          '" class="cfg-input" type="' +
+          inputType +
+          '" placeholder="' +
+          esc(placeholder) +
+          '"' +
+          bounds +
+          autocomplete +
+          describedBy +
+          requiredAttr +
+          ">") +
+      hintHtml +
+      errorHtml;
+
+    const control = wrap.querySelector(".cfg-input");
+    control.value = value === undefined || value === null ? "" : String(value);
+    return wrap;
+  }
+
+  function renderConfigForm(payload) {
+    const fields = (payload && payload.fields) || [];
+    const values = (payload && payload.values) || {};
+    const groups = (payload && payload.groups) || [];
+    el.configForm.innerHTML = "";
+
+    groups.forEach((group) => {
+      const groupFields = fields.filter((field) => field.group === group);
+      if (!groupFields.length) return;
+
+      const section = document.createElement("section");
+      section.className = "cfg-group";
+      const title = document.createElement("h3");
+      title.className = "cfg-group-title";
+      title.textContent = group;
+      section.appendChild(title);
+
+      const grid = document.createElement("div");
+      grid.className = "cfg-grid";
+      groupFields.forEach((field) => {
+        grid.appendChild(buildField(field, values[field.name]));
+      });
+      section.appendChild(grid);
+      el.configForm.appendChild(section);
+    });
+  }
+
+  function labelForConfigKey(key) {
+    if (!configSchema) return key;
+    const match = (configSchema.fields || []).find(
+      (field) => field.path && field.path[0] === key
+    );
+    return match ? match.label : key;
+  }
+
+  function paintConfigTab() {
+    $$("[data-cfg-tab]").forEach((btn) => {
+      const on = btn.dataset.cfgTab === state.configTab;
+      btn.classList.toggle("is-active", on);
+      btn.setAttribute("aria-selected", on ? "true" : "false");
+      btn.tabIndex = on ? 0 : -1;
+    });
+    el.formPane.hidden = state.configTab !== "form";
+    el.yamlPane.hidden = state.configTab !== "yaml";
+  }
+
+  function switchConfigTab(tab, focus) {
+    state.configTab = tab;
+    paintConfigTab();
+    if (focus) {
+      const target = $$("[data-cfg-tab]").find((btn) => btn.dataset.cfgTab === tab);
+      if (target) target.focus();
+    }
+    if (tab === "yaml") {
+      el.configText.scrollTop = 0;
+    }
+  }
+
   async function openConfig() {
     setConfigError("");
+    clearFieldErrors();
     el.configSave.disabled = true;
-    el.configText.value = "正在读取 config.yaml…";
+    el.configLoading.hidden = false;
+    el.configLoading.textContent = "正在读取 config.yaml…";
+    el.configForm.innerHTML = "";
+    state.configTab = "form";
+    paintConfigTab();
+
     if (typeof el.dialog.showModal === "function") {
       el.dialog.showModal();
     } else {
       el.dialog.setAttribute("open", "");
     }
+
     try {
-      const res = await api("/get_config");
+      const res = await api("/get_config_form");
       if (!res || res.code !== "1") throw new Error((res && res.msg) || "读取失败");
+      configSchema = res;
       el.configPath.textContent = res.path;
       el.configText.value = res.text;
       el.configText.scrollTop = 0;
-      el.configText.focus({ preventScroll: true });
-      el.configText.setSelectionRange(0, 0);
-      el.configText.scrollTop = 0;
+      renderConfigForm(res);
+      el.configLoading.hidden = true;
       el.configSave.disabled = false;
+      const first = el.configForm.querySelector(".cfg-input, input, select, textarea");
+      if (first) first.focus({ preventScroll: true });
     } catch (err) {
-      el.configText.value = "";
-      setConfigError("读取配置失败：" + err.message);
+      el.configLoading.textContent = "读取配置失败：" + err.message;
+      setConfigError(err.message);
     }
   }
 
@@ -744,31 +1038,54 @@
     if (el.configBtn) el.configBtn.focus();
   }
 
+  function afterConfigSaved(res) {
+    const applied = (res.applied || []).length;
+    const restart = (res.restart_required || []).map(labelForConfigKey);
+    if (res.text !== undefined) el.configText.value = res.text;
+    if (res.values) {
+      renderConfigForm({ fields: configSchema.fields, groups: configSchema.groups, values: res.values });
+    }
+    toast(
+      "配置已保存。" +
+        (applied ? "已生效 " + applied + " 项。" : "") +
+        (restart.length ? "需要重启：" + restart.join("、") : ""),
+      "success"
+    );
+    closeConfig();
+    lastTabFetch = 0;
+    refreshActive().catch(() => {});
+  }
+
   async function saveConfig() {
     if (configSaving) return;
     configSaving = true;
     setConfigError("");
+    clearFieldErrors();
     el.configSave.disabled = true;
     el.configSave.textContent = "保存中…";
 
     try {
-      const body = new URLSearchParams();
-      body.set("text", el.configText.value);
-      const res = await api("/set_config", { method: "POST", body: body });
-      if (!res || res.code !== "1") {
-        throw new Error((res && res.msg) || "保存失败");
+      let res;
+      if (state.configTab === "yaml") {
+        const body = new URLSearchParams();
+        body.set("text", el.configText.value);
+        res = await api("/set_config", { method: "POST", body: body });
+        if (res && res.code === "1") {
+          if (res.text !== undefined) el.configText.value = res.text;
+          afterConfigSaved(res);
+          return;
+        }
+      } else {
+        const body = new FormData(el.configForm);
+        res = await api("/set_config_form", { method: "POST", body: body });
+        if (res && res.code === "1") {
+          afterConfigSaved(res);
+          return;
+        }
       }
-      const applied = (res.applied || []).length;
-      const restart = res.restart_required || [];
-      toast(
-        "配置已保存。" +
-          (applied ? "已生效 " + applied + " 项。" : "") +
-          (restart.length ? "需要重启：" + restart.join(", ") : ""),
-        "success"
-      );
-      closeConfig();
-      lastTabFetch = 0;
-      refreshActive().catch(() => {});
+
+      if (res && res.errors) showFieldErrors(res.errors);
+      setConfigError((res && res.msg) || "保存失败");
     } catch (err) {
       setConfigError(err.message);
     } finally {
@@ -867,6 +1184,29 @@
     if (el.configClose) el.configClose.addEventListener("click", closeConfig);
     if (el.configCancel) el.configCancel.addEventListener("click", closeConfig);
     if (el.configSave) el.configSave.addEventListener("click", saveConfig);
+
+    $$("[data-cfg-tab]").forEach((btn) => {
+      btn.addEventListener("click", () => switchConfigTab(btn.dataset.cfgTab, false));
+    });
+
+    const cfgTablist = $(".dialog-tabs");
+    if (cfgTablist) {
+      const cfgTabs = $$("[data-cfg-tab]");
+      cfgTablist.addEventListener("keydown", (event) => {
+        const keys = ["ArrowLeft", "ArrowRight", "Home", "End"];
+        if (keys.indexOf(event.key) === -1) return;
+        event.preventDefault();
+        const index = cfgTabs.indexOf(document.activeElement);
+        if (index === -1) return;
+        let next = index;
+        if (event.key === "ArrowLeft") next = (index - 1 + cfgTabs.length) % cfgTabs.length;
+        if (event.key === "ArrowRight") next = (index + 1) % cfgTabs.length;
+        if (event.key === "Home") next = 0;
+        if (event.key === "End") next = cfgTabs.length - 1;
+        switchConfigTab(cfgTabs[next].dataset.cfgTab, true);
+      });
+    }
+
     if (el.logoutBtn) el.logoutBtn.addEventListener("click", logout);
 
     if (el.dialog) {

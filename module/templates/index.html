@@ -186,7 +186,7 @@
     </section>
   </main>
 
-  <dialog class="dialog" id="config-dialog" aria-labelledby="config-title">
+  <dialog class="dialog dialog-wide" id="config-dialog" aria-labelledby="config-title">
     <div class="dialog-head">
       <div>
         <h2 class="dialog-title" id="config-title">编辑配置</h2>
@@ -200,14 +200,27 @@
       </button>
     </div>
 
-    <label class="sr-only" for="config-text">config.yaml 内容</label>
-    <textarea class="config-text" id="config-text" spellcheck="false" autocomplete="off"
-      aria-describedby="config-hint" wrap="off"></textarea>
+    <div class="dialog-tabs" role="tablist" aria-label="配置编辑方式">
+      <button class="tab is-active" role="tab" aria-selected="true" data-cfg-tab="form" id="cfg-tab-form"
+        type="button">表单</button>
+      <button class="tab" role="tab" aria-selected="false" data-cfg-tab="yaml" id="cfg-tab-yaml"
+        type="button">YAML 原文</button>
+    </div>
 
-    <p class="dialog-hint" id="config-hint">
-      api_hash / bot_token / web_login_secret 以 <code>********</code> 显示，保持原样即不会覆盖。
-      保存后部分配置立即生效，需要重启的项会在保存后提示。
-    </p>
+    <div class="dialog-body" id="config-form-pane">
+      <p class="dialog-loading" id="config-loading">正在读取 config.yaml…</p>
+      <form id="config-form" novalidate></form>
+    </div>
+
+    <div class="dialog-body" id="config-yaml-pane" hidden>
+      <label class="sr-only" for="config-text">config.yaml 内容</label>
+      <textarea class="config-text" id="config-text" spellcheck="false" autocomplete="off"
+        aria-describedby="config-hint" wrap="off"></textarea>
+      <p class="dialog-hint" id="config-hint">
+        api_hash / bot_token / web_login_secret / 代理密码以 <code>********</code> 显示，保持原样即不会覆盖。
+        保存会先校验 YAML，再原子写入文件。
+      </p>
+    </div>
 
     <div class="dialog-foot">
       <span class="dialog-error" id="config-error" role="alert"></span>

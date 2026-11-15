@@ -748,8 +748,8 @@ main {
 /* ------------------------------------------------------------------ dialog */
 
 .dialog {
-  width: min(880px, calc(100vw - 32px));
-  max-height: calc(100vh - 80px);
+  width: min(920px, calc(100vw - 32px));
+  max-height: calc(100vh - 56px);
   padding: 0;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -757,6 +757,10 @@ main {
   color: var(--text);
   box-shadow: var(--shadow-2);
   overflow: hidden;
+}
+
+.dialog-wide {
+  width: min(980px, calc(100vw - 32px));
 }
 
 .dialog::backdrop {
@@ -789,6 +793,277 @@ main {
   font-family: var(--font-mono);
   font-size: 12px;
   word-break: break-all;
+}
+
+.dialog-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 18px 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.dialog-tabs .tab {
+  height: 32px;
+  border-radius: 8px 8px 0 0;
+}
+
+.dialog-tabs .tab.is-active {
+  box-shadow: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-bottom-color: var(--surface);
+  margin-bottom: -1px;
+}
+
+.dialog-body {
+  flex: 1;
+  min-height: 260px;
+  max-height: 62vh;
+  padding: 16px 18px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.dialog-body[hidden] {
+  display: none;
+}
+
+.dialog-loading {
+  color: var(--text-faint);
+  font-size: 13px;
+}
+
+/* ------------------------------------------------------------ config form */
+
+.cfg-group + .cfg-group {
+  margin-top: 22px;
+}
+
+.cfg-group-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.cfg-group-title::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.cfg-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 18px;
+}
+
+.cfg-fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+.dialog-body .config-text {
+  min-height: 280px;
+  border: 1px solid var(--border-input);
+  border-radius: var(--radius-sm);
+}
+
+@media (max-width: 720px) {
+  .cfg-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .dialog-body {
+    max-height: 60vh;
+  }
+}
+
+.cfg-field {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.cfg-field.cfg-span-2 {
+  grid-column: 1 / -1;
+}
+
+.cfg-label {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  font-weight: 550;
+}
+
+.req {
+  color: var(--danger);
+}
+
+.cfg-input {
+  width: 100%;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--border-input);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  appearance: none;
+  -moz-appearance: textfield;
+}
+
+/* A number input's spinner adds noise to a settings form and has no keyboard
+   value beyond the native arrow-key behaviour we keep. */
+.cfg-input::-webkit-outer-spin-button,
+.cfg-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.cfg-input::placeholder {
+  color: var(--text-faint);
+}
+
+.cfg-input:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+  border-color: var(--focus);
+}
+
+.cfg-textarea {
+  height: auto;
+  min-height: 76px;
+  padding: 8px 10px;
+  line-height: 1.55;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  resize: vertical;
+}
+
+.cfg-hint {
+  margin-top: 4px;
+  color: var(--text-faint);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.cfg-error {
+  margin-top: 4px;
+  color: var(--danger);
+  font-size: 11.5px;
+}
+
+.cfg-error[hidden] {
+  display: none;
+}
+
+.cfg-field.has-error .cfg-input,
+.cfg-field.has-error .switch-track {
+  border-color: var(--danger);
+}
+
+.cfg-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+}
+
+.cfg-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.cfg-option input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--accent-solid);
+}
+
+/* switch */
+.cfg-switch-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.switch {
+  position: relative;
+  display: inline-flex;
+  width: 38px;
+  height: 22px;
+  flex: none;
+  margin-left: auto;
+}
+
+.switch input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.switch-track {
+  position: relative;
+  display: block;
+  width: 38px;
+  height: 22px;
+  border: 1px solid var(--border-input);
+  border-radius: var(--radius-pill);
+  background: var(--surface-3);
+  transition: background-color var(--dur) var(--ease-out),
+    border-color var(--dur) var(--ease-out);
+}
+
+.switch-track::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  transition: transform var(--dur) var(--ease-out),
+    background-color var(--dur) var(--ease-out);
+}
+
+.switch input:checked + .switch-track {
+  background: var(--accent-solid);
+  border-color: var(--accent-solid);
+}
+
+.switch input:checked + .switch-track::after {
+  transform: translateX(16px);
+  background: var(--on-accent);
+}
+
+.switch input:focus-visible + .switch-track {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .switch-track,
+  .switch-track::after {
+    transition: none;
+  }
 }
 
 .config-text {

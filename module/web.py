@@ -1,6 +1,7 @@
 """web ui for media download"""
 
 import hmac
+import io
 import logging
 import os
 import re
@@ -15,6 +16,7 @@ from ruamel import yaml
 from werkzeug.security import check_password_hash
 
 import utils
+from module import config_form
 from module.app import Application
 from module.download_stat import (
     DownloadState,
@@ -597,6 +599,103 @@ def get_config():
             "path": path,
             "text": _mask_config_text(text),
             "masked_keys": list(SECRET_CONFIG_KEYS),
+        }
+    )
+
+
+def _load_current_config(path: str):
+    """Read and parse config.yaml, returning ``(config, error_response)``."""
+    with open(path, encoding="utf-8") as config_file:
+        text = config_file.read()
+
+    try:
+        config = _yaml.load(text)
+    except Exception as parse_err:  # pylint: disable = W0703
+        return None, jsonify({"code": "0", "msg": f"YAML 解析失败：{parse_err}"})
+
+    if not isinstance(config, dict):
+        return None, jsonify({"code": "0", "msg": "配置必须是 YAML 映射（key: value）"})
+
+    return config, None
+
+
+@_flask_app.route("/get_config_form")
+@login_required
+def get_config_form():
+    """Return the form schema, the current values (masked) and the raw YAML."""
+    path = _config_path()
+    if not path or not os.path.exists(path):
+        return jsonify({"code": "0", "msg": "config.yaml not found"})
+
+    config, error = _load_current_config(path)
+    if error is not None:
+        return error
+
+    with open(path, encoding="utf-8") as config_file:
+        text = config_file.read()
+
+    payload = config_form.schema()
+    payload.update(
+        {
+            "code": "1",
+            "path": path,
+            "values": config_form.read_values(config),
+            "text": _mask_config_text(text),
+        }
+    )
+    return jsonify(payload)
+
+
+@_flask_app.route("/set_config_form", methods=["POST"])
+@login_required
+def set_config_form():
+    """Validate the submitted form, write config.yaml and hot-reload it."""
+    path = _config_path()
+    if not path or not os.path.exists(path):
+        return jsonify({"code": "0", "msg": "config.yaml not found"})
+
+    config, error = _load_current_config(path)
+    if error is not None:
+        return error
+
+    values, errors = config_form.parse_form(request.form, config)
+    if errors:
+        return jsonify(
+            {"code": "0", "errors": errors, "msg": "请检查标红的设置项"}
+        )
+
+    config_form.apply_values(config, values)
+    errors = config_form.validate(config)
+    if errors:
+        return jsonify(
+            {"code": "0", "errors": errors, "msg": "请检查标红的设置项"}
+        )
+
+    stream = io.StringIO()
+    try:
+        _yaml.dump(config, stream)
+    except Exception as dump_err:  # pylint: disable = W0703
+        return jsonify({"code": "0", "msg": f"生成 YAML 失败：{dump_err}"})
+
+    new_text = stream.getvalue()
+    try:
+        _write_config_atomic(path, new_text)
+    except OSError as write_err:
+        return jsonify({"code": "0", "msg": f"写入失败：{write_err}"})
+
+    applied, restart_required = [], []
+    if _application is not None:
+        applied, restart_required = _application.reload_hot_config(config)
+        _refresh_login_config(_application)
+
+    app_log.info("config.yaml updated from the Web UI form: %s", applied)
+    return jsonify(
+        {
+            "code": "1",
+            "applied": applied,
+            "restart_required": restart_required,
+            "values": config_form.read_values(config),
+            "text": _mask_config_text(new_text),
         }
     )
 

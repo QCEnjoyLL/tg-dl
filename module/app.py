@@ -872,7 +872,13 @@ class Application:
                 self.app_data["chat"].append({})
 
             if value.finish_task:
-                self.config["chat"][idx]["last_read_message_id"] = (
+                # The Web UI form can change the chat list without a restart;
+                # the running task nodes still refer to the old order, so align
+                # the config list defensively instead of indexing out of range.
+                config_chats = self.config.setdefault("chat", [])
+                while len(config_chats) <= idx:
+                    config_chats.append({})
+                config_chats[idx]["last_read_message_id"] = (
                     value.last_read_message_id + 1
                 )
 
