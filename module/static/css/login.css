@@ -55,6 +55,13 @@ body {
   font-size: 13px;
 }
 
+.auth-card > .auth-tagline {
+  margin-top: -8px;
+  color: var(--text-faint);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+
 .field {
   display: flex;
   flex-direction: column;

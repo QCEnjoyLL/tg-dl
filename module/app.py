@@ -1,6 +1,7 @@
 """Application module"""
 
 import asyncio
+import functools
 import os
 import time
 from asyncio import Lock
@@ -167,6 +168,7 @@ class TaskNode:
         self.is_running: bool = False
         self.client = None
         self.upload_success_count: int = 0
+        self.upload_skipped_count: int = 0
         self.is_stop_transmission = False
         self.media_group_ids: dict = {}
         self.media_group_ids_lock: Lock = Lock()
@@ -712,13 +714,18 @@ class Application:
         local_file_path: str,
         progress_callback: Callable = None,
         progress_args: tuple = (),
-    ) -> bool:
-        """Upload file"""
+    ) -> Optional[str]:
+        """Upload file and report whether it was new or already on the remote.
+
+        Returns ``module.cloud_drive.UPLOAD_NEW`` when bytes were transferred,
+        ``UPLOAD_EXISTS`` when the remote already had an identical file, and
+        ``None`` on failure.
+        """
 
         if not self.cloud_drive_config.enable_upload_file:
-            return False
+            return None
 
-        ret: bool = False
+        ret: Optional[str] = None
         if self.cloud_drive_config.upload_adapter == "rclone":
             ret = await CloudDrive.rclone_upload_file(
                 self.cloud_drive_config,
@@ -728,10 +735,16 @@ class Application:
                 progress_args,
             )
         elif self.cloud_drive_config.upload_adapter == "aligo":
+            # partial(): calling the sync adapter inside run_in_executor's
+            # argument list used to run it on the event loop and then hand the
+            # bool result to the executor as a callable.
             ret = await self.loop.run_in_executor(
                 self.executor,
-                CloudDrive.aligo_upload_file(
-                    self.cloud_drive_config, self.save_path, local_file_path
+                functools.partial(
+                    CloudDrive.aligo_upload_file,
+                    self.cloud_drive_config,
+                    self.save_path,
+                    local_file_path,
                 ),
             )
 

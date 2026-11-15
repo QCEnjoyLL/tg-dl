@@ -2,6 +2,24 @@
 
 版本号规则：MAJOR（破坏性改动或核心重写）/ MINOR（新增功能）/ PATCH（修复、依赖、文档、UI 打磨）。
 
+## v2.8.0
+
+### 新增
+
+- **Web UI 品牌升级为 TeleVault**，配新的圆形归档 + 下载箭头 Logo（含 favicon 与登录页），
+  页面标题、顶栏、登录卡片同步更新
+- **上传结果区分「新文件」和「云端已有」**：
+  - rclone 以 `-v` 运行并解析每文件结果：`Copied (new)` → 新上传，`Unchanged skipping` → 云端已有
+  - 「已完成」列表的标签改为 `已上传` / `云端已有` / `仅本地` 三种
+  - bot 进度卡片的上传统计拆成 `新文件 N` 与 `云端已有 M`
+  - 日志同样区分：`upload new file ... success` 与 `remote already has ..., upload skipped`
+- 上传成功后删除本地仍然保留（云端已有也视为成功，会删除本地）
+
+### 修复
+
+- `aligo` 上传适配器此前会把同步调用放在事件循环里执行，并把返回值当回调传给线程池
+  （必然抛 `TypeError`）；已改为 `run_in_executor` + `functools.partial`
+
 ## v2.7.4
 
 ### 修复

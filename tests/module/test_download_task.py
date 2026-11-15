@@ -76,5 +76,50 @@ class DownloadTaskFinalizeTestCase(unittest.IsolatedAsyncioTestCase):
         # ... and it must leave the in-progress list, otherwise the Web UI keeps
         # showing a finished task at 100% forever.
         completed_mock.assert_called_once_with(
-            -100123, 43, "/tmp/finished.mp4", 123, False
+            -100123, 43, "/tmp/finished.mp4", 123, None
+        )
+
+    async def test_cloud_upload_state_is_recorded(self):
+        from module.cloud_drive import UPLOAD_EXISTS
+
+        node = mock.Mock()
+        node.chat_id = -100123
+        node.bot = None
+        node.upload_user = None
+        node.upload_telegram_chat_id = None
+        node.upload_success_count = 0
+        node.upload_skipped_count = 0
+        node.download_status = {}
+        message = mock.Mock()
+        message.id = 44
+        message.text = None
+        message.media = mock.Mock()
+
+        with mock.patch.object(
+            md,
+            "download_media",
+            new=mock.AsyncMock(
+                return_value=(DownloadStatus.SuccessDownload, "/tmp/cloud.mp4")
+            ),
+        ), mock.patch.object(
+            md, "upload_telegram_chat", new=mock.AsyncMock()
+        ), mock.patch.object(
+            md.app,
+            "upload_file",
+            new=mock.AsyncMock(return_value=UPLOAD_EXISTS),
+        ), mock.patch.object(
+            md, "report_bot_download_status", new=mock.AsyncMock()
+        ), mock.patch.object(
+            md, "mark_download_completed"
+        ) as completed_mock, mock.patch.object(
+            md.app, "set_download_id"
+        ), mock.patch.object(
+            md.os.path, "getsize", return_value=10
+        ):
+            await md.download_task(mock.Mock(), message, node)
+
+        self.assertEqual(node.upload_success_count, 1)
+        self.assertEqual(node.upload_skipped_count, 1)
+        completed_mock.assert_called_once_with(
+            -100123, 44, "/tmp/cloud.mp4", 10, UPLOAD_EXISTS
         )

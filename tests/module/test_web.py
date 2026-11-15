@@ -43,6 +43,7 @@ SAMPLE_COMPLETED = [
         "total_size": 4096,
         "completed_time": 1763000000,
         "upload_success": True,
+        "upload_state": "uploaded",
     }
 ]
 
@@ -115,6 +116,7 @@ class WebApiTestCase(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["filename"], "done.mp4")
         self.assertTrue(rows[0]["upload_success"])
+        self.assertEqual(rows[0]["upload_state"], "uploaded")
 
     def test_download_list_defaults_to_progress(self):
         # Without an explicit filter the API returns what is in flight.
@@ -468,6 +470,7 @@ class WebAssetTestCase(unittest.TestCase):
         self.assertIn('data-version="%s"' % utils.__version__, html)
         self.assertIn("app.css?v=", html)
         self.assertIn("app.js?v=", html)
+        self.assertIn("TeleVault", html)
         self.assertIn("no-store", response.headers.get("Cache-Control", ""))
 
     def test_static_assets_are_long_lived(self):

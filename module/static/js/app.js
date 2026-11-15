@@ -322,11 +322,23 @@
     if (deleteBtn) deleteBtn.setAttribute("aria-label", "删除任务 " + row.filename);
   }
 
+  function uploadChipHtml(row) {
+    // upload_state: "uploaded" = bytes were transferred now,
+    // "exists" = remote already had an identical file (rclone skipped it),
+    // missing = still only local.
+    const uploadState = row.upload_state;
+    if (uploadState === "exists") {
+      return '<span class="state-chip is-remote">云端已有</span>';
+    }
+    if (uploadState === "uploaded" || (!uploadState && row.upload_success)) {
+      return '<span class="state-chip is-uploaded">已上传</span>';
+    }
+    return '<span class="state-chip">仅本地</span>';
+  }
+
   function buildDownloadedRow(row) {
     const tr = document.createElement("tr");
-    const uploadChip = row.upload_success
-      ? '<span class="state-chip is-uploaded">已上传</span>'
-      : '<span class="state-chip">仅本地</span>';
+    const uploadChip = uploadChipHtml(row);
     tr.innerHTML =
       idCell(row) +
       '<td class="cell-name" title="' +

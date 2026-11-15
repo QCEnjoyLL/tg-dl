@@ -3,11 +3,20 @@
 > 基于 [tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader) 的修复分支。
 > 保留原项目的全部功能（Telegram bot 指令、Web UI、rclone 上传、受保护内容下载），并持续修复实际使用中的问题。
 
-当前版本：**v2.7.4**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
+当前版本：**v2.8.0**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
 
 [![Docker](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml)
 [![Tests](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/unittest.yml/badge.svg)](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/unittest.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+---
+
+## v2.8.0 更新内容
+
+- **Web UI 更名为 TeleVault**，换用新的归档 + 下载箭头 Logo（登录页、favicon 同步）
+- **上传结果可区分**：「已完成」标签现在区分 `已上传`（真正传了新文件）、`云端已有`（rclone 判定远端已有相同文件、跳过上传）和 `仅本地`；
+  bot 卡片与日志也会分别统计这两种成功
+- 修复 `aligo` 上传适配器在上传时必然抛 `TypeError` 的问题
 
 ---
 
@@ -226,6 +235,7 @@ upload_drive:
 ```
 
 > 上传成功后删除本地是**已修复**的逻辑；如果 rclone 返回非 0，文件会被保留并在日志中记录退出码，方便重试。
+> 成功分两种：`upload new file ... success` 表示真正传了新文件，`remote already has ..., upload skipped` 表示云端已有相同文件、rclone 跳过了传输（同样是成功）。
 
 ### bot
 
@@ -252,6 +262,7 @@ web_login_secret: "改成你的密码"
 ## Web UI
 
 界面完全重写过，不再依赖 layui，静态资源从 ~880KB 降到 ~35KB（CSS/JS 合计，不含 logo 等文档图片）。
+页面品牌名为 **TeleVault**（仓库名仍是 tg-dl），Logo 为「归档环 + 下载箭头」，登录页与 favicon 一致。
 
 **浅色**
 
@@ -276,7 +287,7 @@ web_login_secret: "改成你的密码"
 - **三个标签**：下载中、已完成、失败；支持深链，`http://host:5000/#failed` 直接打开失败页
 - **单任务控制**：每个下载中的任务可以「暂停 / 继续 / 删除」，暂停只影响该条消息，不影响其他任务
 - **失败可操作**：每行「重试」直接重新入队（无需重启）、「删除」清除记录（并同步从 `ids_to_retry` 移除，重启后不会再排队）
-- **已完成**：显示完成时间与保存路径，可一键复制路径或删除记录
+- **已完成**：显示完成时间与保存路径，可一键复制路径或删除记录；标签区分 `已上传`（新文件）、`云端已有`（远端已有、跳过上传）和 `仅本地`
 - **登录 / 退出登录**：配置了 `web_login_secret` 时右上角出现退出按钮
 - **在线改配置**：齿轮按钮打开配置面板，默认是带中文解释的表单（已填写的自动回填、未填写的留空），
   可按分组修改常见参数；顶部可切到「YAML 原文」编辑特殊配置。保存前校验，空值即删除该项，

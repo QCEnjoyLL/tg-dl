@@ -6,12 +6,18 @@ import inspect
 import os
 import re
 from asyncio import subprocess
-from typing import Callable
+from typing import Callable, Optional
 from zipfile import ZipFile
 
 from loguru import logger
 
 from utils import platform
+
+#: Upload results. ``UPLOAD_NEW`` means bytes were actually transferred,
+#: ``UPLOAD_EXISTS`` means the remote already held an identical file and rclone
+#: skipped it (still a success, but the operator deserves to know which one).
+UPLOAD_NEW = "uploaded"
+UPLOAD_EXISTS = "exists"
 
 
 # pylint: disable = R0902
@@ -72,6 +78,9 @@ class CloudDrive:
             str(remote_file_path),
             "--no-traverse",
             "--progress",
+            # -v is what makes rclone print the per-file verdict
+            # ("Copied (new)" / "Unchanged skipping") we parse below.
+            "-v",
         ]
 
     @staticmethod
@@ -147,8 +156,10 @@ class CloudDrive:
             made rclone skip the transfer, return 0, and the local copy was then
             deleted.
         """
-        upload_status: bool = False
+        upload_state: Optional[str] = None
         zip_file_path: str = ""
+        copied_new = False
+        skipped_existing = False
         try:
             remote_dir = (
                 drive_config.remote_dir
@@ -182,6 +193,13 @@ class CloudDrive:
                     tail.append(s)
                     if len(tail) > 100:
                         tail.pop(0)
+                    lower = s.lower()
+                    if "copied (new)" in lower or "copied (replaced" in lower:
+                        copied_new = True
+                    elif "copied (server-side copy)" in lower:
+                        copied_new = True
+                    elif "unchanged skipping" in lower:
+                        skipped_existing = True
                     transferred_match = re.search(
                         r"Transferred: (.*?) / (.*?), (.*?)%, (.*?/s)?, ETA (.*?)$", s
                     )
@@ -201,11 +219,23 @@ class CloudDrive:
             retcode = await proc.wait()
 
             if retcode == 0:
-                logger.info(f"upload file {local_file_path} success")
+                if skipped_existing and not copied_new:
+                    upload_state = UPLOAD_EXISTS
+                    logger.info(
+                        f"remote already has {local_file_path}, upload skipped "
+                        f"(this is a success)"
+                    )
+                else:
+                    upload_state = UPLOAD_NEW
+                    logger.info(f"upload new file {local_file_path} success")
                 drive_config.total_upload_success_file_count += 1
                 if drive_config.after_upload_file_delete:
-                    os.remove(local_file_path)
-                upload_status = True
+                    try:
+                        os.remove(local_file_path)
+                    except OSError as remove_err:
+                        logger.warning(
+                            f"remove uploaded file {local_file_path} failed: {remove_err}"
+                        )
             else:
                 logger.error(
                     f"rclone upload failed, exit code {retcode}: "
@@ -213,7 +243,7 @@ class CloudDrive:
                 )
         except Exception as e:
             logger.error(f"{e.__class__} {e}")
-            return False
+            return None
         finally:
             # The zip is only a temporary transport artifact; never leave it in
             # downloads/, even when the upload failed.
@@ -223,17 +253,16 @@ class CloudDrive:
                 except OSError as zip_err:
                     logger.warning(f"remove zip {zip_file_path} failed: {zip_err}")
 
-        return upload_status
+        return upload_state
 
     @staticmethod
     def aligo_upload_file(
         drive_config: CloudDriveConfig, save_path: str, local_file_path: str
-    ):
+    ) -> Optional[str]:
         """aliyun upload file"""
-        upload_status: bool = False
         if not drive_config.aligo:
             logger.warning("please config aligo! see README.md")
-            return False
+            return None
 
         try:
             remote_dir = (
@@ -271,19 +300,20 @@ class CloudDrive:
                 if drive_config.before_upload_file_zip:
                     os.remove(zip_file_path)
 
-                upload_status = True
+                return UPLOAD_NEW
 
         except Exception as e:
             logger.error(f"{e.__class__} {e}")
-            return False
+            return None
 
-        return upload_status
+        return None
 
     @staticmethod
     async def upload_file(
         drive_config: CloudDriveConfig, save_path: str, local_file_path: str
-    ) -> bool:
+    ) -> Optional[str]:
         """Upload file
+
         Parameters
         ----------
         drive_config: CloudDriveConfig
@@ -297,13 +327,14 @@ class CloudDrive:
 
         Returns
         -------
-        bool
-            True or False
+        Optional[str]
+            ``UPLOAD_NEW`` when bytes were transferred, ``UPLOAD_EXISTS`` when
+            the remote already had the file, ``None`` on failure.
         """
         if not drive_config.enable_upload_file:
-            return False
+            return None
 
-        ret: bool = False
+        ret: Optional[str] = None
         if drive_config.upload_adapter == "rclone":
             ret = await CloudDrive.rclone_upload_file(
                 drive_config, save_path, local_file_path

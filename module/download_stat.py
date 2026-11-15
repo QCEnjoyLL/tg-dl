@@ -130,9 +130,13 @@ def mark_download_completed(
     message_id: int,
     file_name: str = "",
     total_size: int = 0,
-    upload_success: bool = False,
+    upload_state: Optional[str] = None,
 ) -> None:
     """Move a finished task out of "downloading" and into the completed list.
+
+    ``upload_state`` is ``"uploaded"`` when bytes were actually transferred to
+    the cloud, ``"exists"`` when the remote already had an identical file, and
+    ``None`` when the file stayed local only.
 
     Before this existed the row stayed in ``_download_result`` forever with its
     last reported percentage. The bot card said "success" while the Web UI kept
@@ -159,7 +163,8 @@ def mark_download_completed(
                 "down_byte": row.get("total_size") or total_size,
                 "download_speed": 0,
                 "completed_time": now,
-                "upload_success": upload_success,
+                "upload_state": upload_state,
+                "upload_success": bool(upload_state),
             }
         )
         _completed_downloads.pop(key, None)

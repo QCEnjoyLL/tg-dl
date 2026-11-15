@@ -49,7 +49,7 @@ class DownloadStatTestCase(unittest.TestCase):
                 7: {"down_byte": 10, "total_size": 20, "file_name": "/tmp/x.mp4"}
             }
 
-        mark_download_completed(-100, 7, "/tmp/x.mp4", 20, True)
+        mark_download_completed(-100, 7, "/tmp/x.mp4", 20, "uploaded")
 
         self.assertEqual(get_download_result(), {})
         completed = get_completed_downloads()
@@ -57,6 +57,7 @@ class DownloadStatTestCase(unittest.TestCase):
         self.assertEqual(completed[0]["id"], 7)
         self.assertEqual(completed[0]["down_byte"], 20)
         self.assertTrue(completed[0]["upload_success"])
+        self.assertEqual(completed[0]["upload_state"], "uploaded")
         # Synchronous success must not be reported as a failure.
         self.assertEqual(get_failed_downloads(), {})
 

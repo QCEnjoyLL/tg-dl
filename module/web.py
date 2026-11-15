@@ -356,6 +356,8 @@ def _completed_rows() -> list:
                 "save_path": file_name.replace("\\", "/"),
                 "completed_time": value.get("completed_time") or 0,
                 "upload_success": bool(value.get("upload_success")),
+                # "uploaded" (new) / "exists" (already on the remote) / None
+                "upload_state": value.get("upload_state"),
             }
         )
     return rows

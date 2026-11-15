@@ -13,6 +13,7 @@ from rich.logging import RichHandler
 
 from module.app import Application, ChatDownloadConfig, DownloadStatus, TaskNode
 from module.bot import start_download_bot, stop_download_bot
+from module.cloud_drive import UPLOAD_EXISTS
 from module.config_form import parse_format_list
 from module.download_stat import (
     TaskCancelled,
@@ -330,6 +331,7 @@ async def download_task(
     file_name = None
     file_size = 0
     upload_ok = False
+    upload_state = None
 
     try:
         download_status, file_name = await download_media(
@@ -371,11 +373,14 @@ async def download_task(
             ui_file_name = file_name
             if app.hide_file_name:
                 ui_file_name = f"****{os.path.splitext(file_name)[-1]}"
-            if await app.upload_file(
+            upload_state = await app.upload_file(
                 file_name, update_cloud_upload_stat, (node, message.id, ui_file_name)
-            ):
+            )
+            if upload_state:
                 node.upload_success_count += 1
                 upload_ok = True
+                if upload_state == UPLOAD_EXISTS:
+                    node.upload_skipped_count += 1
     except Exception as e:  # pylint: disable = W0703
         logger.exception(f"Message[{message.id}] task failed: {e}")
         # If the download itself completed, keep Success: the file exists and
@@ -412,7 +417,7 @@ async def download_task(
                 message.id,
                 file_name or "",
                 file_size,
-                upload_ok,
+                upload_state if upload_ok else None,
             )
         else:
             remove_download_result(node.chat_id, message.id)

@@ -1174,9 +1174,11 @@ async def _report_bot_status(
         upload_msg_detail_str: str = ""
 
         if node.upload_success_count:
+            uploaded_new = node.upload_success_count - node.upload_skipped_count
             upload_msg_detail_str = (
                 f"\n☁️ {_t('Upload')}\n"
-                f"└─ ✅ {_t('Success')}: {node.upload_success_count}\n"
+                f"├─ 🆕 {_t('New file')}: {max(uploaded_new, 0)}\n"
+                f"└─ ♻️ {_t('Already on remote')}: {node.upload_skipped_count}\n"
             )
 
         pending_cloud_uploads = [
