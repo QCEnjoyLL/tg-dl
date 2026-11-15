@@ -1,10 +1,23 @@
 # tg-dl
 
 > 基于 [tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader) 的修复分支。
-> 保留原项目的全部功能（Telegram bot 指令、Web UI、rclone 上传、受保护内容下载），修掉了长期困扰实际使用的四个问题。
+> 保留原项目的全部功能（Telegram bot 指令、Web UI、rclone 上传、受保护内容下载），并持续修复实际使用中的问题。
+
+当前版本：**v2.6.6**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
 
 [![Docker](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml)
+[![Tests](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/unittest.yml/badge.svg)](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/unittest.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+---
+
+## v2.6.6 更新内容
+
+- **Web UI 重做**：全新视觉与交互，支持登录/退出登录、配置在线编辑、单任务暂停/恢复/删除
+- **任务状态真实化**：下载完成后从「下载中」移入「已完成」，不再出现 bot 已成功而网页仍显示 100% 的僵尸任务；已完成列表有上限，不会无限吃内存
+- **配置在线编辑**：Web UI 可直接编辑 `config.yaml`，密钥默认掩码显示；保存后立即生效的项会提示，需要重启的项会单独列出
+- **CI 变严格**：测试 job 改为必过（不再是 `continue-on-error`），并修掉了上游遗留的测试腐化
+- **版本号规范化**：去掉 `-fork.1` 后缀，改为语义化版本
 
 ---
 
@@ -206,25 +219,50 @@ web_login_secret: "改成你的密码"
 
 ![深色主题](docs/ui-dark.png)
 
+**在线编辑配置**
+
+![编辑配置](docs/ui-config.png)
+
+**移动端**
+
+![移动端](docs/ui-mobile.png)
+
 功能：
 
 - **明暗主题**：默认跟随系统，右上角可手动切换，选择记在 `localStorage`，刷新不丢
-- **顶部概览**：下载中数量、失败数量、当前速度、运行/暂停状态
+- **顶部概览**：下载中、已完成、失败数量，以及运行/暂停状态
 - **三个标签**：下载中、已完成、失败；支持深链，`http://host:5000/#failed` 直接打开失败页
-- **失败可操作**：每行「重试」直接重新入队（无需重启）、「删除」清除记录
-- **已完成**：点一下保存路径即可复制
+- **单任务控制**：每个下载中的任务可以「暂停 / 继续 / 删除」，暂停只影响该条消息，不影响其他任务
+- **失败可操作**：每行「重试」直接重新入队（无需重启）、「删除」清除记录（并同步从 `ids_to_retry` 移除，重启后不会再排队）
+- **已完成**：显示完成时间与保存路径，可一键复制路径或删除记录
+- **登录 / 退出登录**：配置了 `web_login_secret` 时右上角出现退出按钮
+- **在线改配置**：齿轮按钮打开 `config.yaml` 编辑器，保存即校验 YAML 并原子写入；`api_hash` / `bot_token` / `web_login_secret` 以掩码显示，不修改就不会被覆盖
 - **移动端适配**：窄屏自动隐藏次要列，表格自适应
-- **登录页**：同样的明暗主题和卡片风格，支持回车提交、错误抖动提示
+- **可访问性**：键盘可完成全部操作（Tab 导航、方向键切换标签页、Esc 关闭配置面板、危险操作二次确认），焦点环、对比度和 `prefers-reduced-motion` 均已处理
 
 接口（需要登录态）：
 
 | 接口 | 方法 | 说明 |
 | --- | --- | --- |
+| `/get_download_list?already_down=false` | GET | 下载中的任务 JSON（含 `paused` 状态） |
+| `/get_download_list?already_down=true` | GET | 已完成任务 JSON |
 | `/get_failed_list` | GET | 失败任务 JSON |
+| `/pause_task?chat_id=&message_id=` | POST | 暂停单条任务 |
+| `/resume_task?chat_id=&message_id=` | POST | 恢复单条任务 |
+| `/delete_task?chat_id=&message_id=` | POST | 删除任务（下载中会中止该文件） |
 | `/retry_failed?chat_id=&message_id=` | POST | 重试单条，省略 `message_id` 则重试该 chat 全部 |
 | `/clear_failed?chat_id=&message_id=` | POST | 删除失败记录 |
+| `/get_config` | GET | 读取 `config.yaml`（密钥掩码） |
+| `/set_config` | POST | 校验并保存 `config.yaml`，返回已生效 / 需重启的配置项 |
+| `/logout` | POST | 退出登录 |
 
 > 重试是把消息重新放回下载队列，需要进程仍在运行。配置了 `bot_token` 时进程常驻，可以随时重试；纯一次性下载模式请直接重启程序，会从 `data.yaml` 的 `ids_to_retry` 重新排队。
+
+### 配置热更新说明
+
+保存配置后，以下项**立即生效**：`media_types`、`file_formats`、`file_path_prefix`、`file_name_prefix`、`file_name_prefix_split`、`hide_file_name`、`enable_download_txt`、`after_upload_telegram_delete`、`drop_no_audio_video`、`log_level`、`date_format`、`language`、广告过滤相关项、`upload_drive.*`、`web_login_secret`。
+
+以下项需要**重启进程**：`api_id`、`api_hash`、`bot_token`、`chat`、`proxy`、`save_path`、`web_host`、`web_port`、`max_download_task`、`max_concurrent_transmissions`、`allowed_user_ids`、`start_timeout`。
 
 ### 本地预览界面
 
@@ -290,7 +328,16 @@ PAT 需要 `read:packages` 权限。
 ## 常见问题
 
 **Q：下载任务一直 0%，是不是卡住了？**
-看 `log/tdl.log`。Web 的 Downloading 标签只反映开始过下载的消息，队列里的大量消息不会同时推进；把 `max_download_task` 控制在 2-3 更稳。
+看 `log/tdl.log`。Web 的「下载中」标签只反映开始过下载的消息，队列里的大量消息不会同时推进；把 `max_download_task` 控制在 2-3 更稳。如果某条任务显示 100% 但一直不动，通常是该文件还在等待上传或收尾，可点「删除」清掉。
+
+**Q：bot 说下载成功，网页还显示 100% 下载中？**
+v2.6.6 已修：任务结束时会把记录从「下载中」移到「已完成」。旧版本请升级，或手动删除该行。
+
+**Q：暂停单条任务会怎样？**
+只影响这一条消息的传输进度，其他任务继续；「删除」会中止该文件并把它从列表中移除，重启后也不会再重新下载（如需重下请用失败页的重试或手动调整 `last_read_message_id`）。
+
+**Q：改配置会不会重启？**
+大部分下载/上传行为项立即生效；`api_id`、`bot_token`、`chat`、`save_path`、端口等需要重启，保存后 Web UI 会列出需要重启的项。
 
 **Q：上传成功但本地没删？**
 检查日志里是否有 `rclone upload failed, exit code ...`。修复后的逻辑只在返回码为 0 时删除；非 0 会保留文件并打印 rclone 输出尾部，按报错处理即可（常见是 WebDAV 423、磁盘配额、token 过期）。
@@ -306,10 +353,11 @@ PAT 需要 `read:packages` 权限。
 ## 与上游的差异
 
 - 修复上述四个问题（见上文修复清单）
-- 重写 Web UI 与登录页：明暗主题、概览卡片、失败重试/删除、移动端适配、深链；移除 layui，静态资源从 ~880KB 降到 ~35KB（CSS/JS 合计）
+- 修复 Web 写接口契约（真实 JSON）、认证绕过、rclone 命令注入、上传失败误删本地、任务卡死等 P0 问题
+- 重写 Web UI 与登录页：明暗主题、概览卡片、单任务暂停/恢复/删除、在线配置编辑、退出登录、失败重试/删除、移动端适配、深链；移除 layui 与前端假 AES 加密，静态资源从 ~880KB 降到 ~35KB（CSS/JS 合计）
 - 重写 Dockerfile：加 `tzdata`、`PYTHONUNBUFFERED`、OCI 标签、`STOPSIGNAL SIGINT`
 - 重写镜像工作流：GHCR + buildx 缓存 + 语法检查，移除上游依赖 Docker Hub secrets 的旧流水线
-- 上游单测在本环境未全部通过，因此 `Tests (non-blocking)` 只作为参考运行，不会把分支标红；真正卡关的是 `Build and Publish Docker Image`
+- 测试 job 改为必过（`Tests`），修复上游遗留的测试腐化，并覆盖 Web 接口、rclone 参数、上传失败删除和任务终态
 - 移除上游的 Windows PyInstaller 发布流水线（依赖已废弃的 `actions/create-release@v1`）
 - 清理上游遗留配置：`dependabot.yml`（会自动开一堆依赖 PR）、`stale.yml`、`issue_label_bot.yaml`、issue 模板、`codecov.yml`、赞赏二维码图片
 

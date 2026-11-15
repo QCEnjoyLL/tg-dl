@@ -355,11 +355,16 @@ def check_for_updates(_: dict = None):
 @mock.patch("media_downloader.fetch_message", new=new_fetch_message)
 @mock.patch("media_downloader.get_chat_history_v2", new=get_chat_history)
 @mock.patch("media_downloader.RETRY_TIME_OUT", new=0)
-@mock.patch("media_downloader.check_for_updates", new=check_for_updates)
+@mock.patch("utils.updates.check_for_updates", new=check_for_updates)
 class MediaDownloaderTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.loop = asyncio.get_event_loop()
+        # Python 3.12+ raises when get_event_loop() finds no current loop.
+        try:
+            cls.loop = asyncio.get_event_loop()
+        except RuntimeError:
+            cls.loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(cls.loop)
         rest_app(MOCK_CONF)
 
     # @mock.patch("media_downloader.app.save_path", new=MOCK_DIR)

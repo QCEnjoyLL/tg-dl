@@ -1,20 +1,28 @@
-/* tg-dl web ui — data polling, table rendering, theme switching */
+/* tg-dl web ui — polling, rendering, per-task controls, config editor. */
 (() => {
   "use strict";
 
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
-  // Polling intervals per tab (ms). The status pill polls every second.
   const TAB_REFRESH = { downloading: 1000, downloaded: 4000, failed: 3000 };
   const STATUS_REFRESH = 1000;
   const FAILED_BADGE_REFRESH = 10000;
-  const DOWNLOADING_COUNTER_REFRESH = 10000;
+  const COUNTER_REFRESH = 10000;
+  const CONFIRM_TIMEOUT = 3500;
 
   const ICON_PAUSE =
-    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 5v14M15 5v14"/></svg>';
+    '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M9 5v14M15 5v14"/></svg>';
   const ICON_PLAY =
-    '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M8 5.5v13l11-6.5z"/></svg>';
+    '<svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M8 5.5v13l11-6.5z"/></svg>';
+  const ICON_TRASH =
+    '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9 7V5h6v2"/><path d="M6 7l1 13h10l1-13"/></svg>';
+  const ICON_RETRY =
+    '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.3-5.6"/><path d="M20 4v5h-5"/></svg>';
+  const ICON_COPY =
+    '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/></svg>';
+  const ICON_CHECK =
+    '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 13 4 4L19 7"/></svg>';
 
   const state = {
     tab: "downloading",
@@ -26,8 +34,8 @@
 
   const el = {
     speed: $("#speed"),
-    statSpeed: $("#stat-speed"),
     statActive: $("#stat-active"),
+    statDone: $("#stat-done"),
     statFailed: $("#stat-failed"),
     statState: $("#stat-state"),
     badgeDownloading: $("#badge-downloading"),
@@ -38,15 +46,22 @@
     emptyText: $("#empty-text"),
     pauseBtn: $("#pause-btn"),
     themeBtn: $("#theme-toggle"),
+    configBtn: $("#config-btn"),
+    logoutBtn: $("#logout-btn"),
     toasts: $("#toasts"),
+    dialog: $("#config-dialog"),
+    configPath: $("#config-path"),
+    configText: $("#config-text"),
+    configError: $("#config-error"),
+    configSave: $("#config-save"),
+    configCancel: $("#config-cancel"),
+    configClose: $("#config-close"),
     tables: {
       downloading: $("#table-downloading"),
       downloaded: $("#table-downloaded"),
       failed: $("#table-failed"),
     },
   };
-
-  /* ------------------------------------------------------------------ utils */
 
   const ESCAPE_MAP = {
     "&": "&amp;",
@@ -56,6 +71,8 @@
     "'": "&#39;",
   };
 
+  /* ------------------------------------------------------------------ utils */
+
   function esc(value) {
     return String(value === null || value === undefined ? "" : value).replace(
       /[&<>"']/g,
@@ -63,21 +80,16 @@
     );
   }
 
-  // Dim the extension so long, similar names stay readable.
   function nameHtml(name) {
     const text = String(name === null || name === undefined ? "" : name);
     const dot = text.lastIndexOf(".");
     const hasExt = dot > 0 && text.length - dot <= 8;
     if (!hasExt) {
-      return esc(text) || '<span class="ext">(unnamed)</span>';
+      return esc(text) || '<span class="ext">(未命名)</span>';
     }
-    return (
-      esc(text.slice(0, dot)) + '<span class="ext">' + esc(text.slice(dot)) + "</span>"
-    );
+    return esc(text.slice(0, dot)) + '<span class="ext">' + esc(text.slice(dot)) + "</span>";
   }
 
-  // Long chat ids do not fit the column; keep the tail, which is the part that
-  // tells supergroups apart, and expose the full value in the tooltip.
   function chatLabel(chat) {
     const text = String(chat === null || chat === undefined ? "" : chat);
     return text.length > 12 ? "…" + text.slice(-8) : text;
@@ -108,10 +120,12 @@
       " " +
       pad(d.getHours()) +
       ":" +
-      pad(d.getMinutes()) +
-      ":" +
-      pad(d.getSeconds())
+      pad(d.getMinutes())
     );
+  }
+
+  function rowKey(row) {
+    return row.chat + ":" + row.id;
   }
 
   function toast(message, tone) {
@@ -120,10 +134,12 @@
     node.dataset.tone = tone || "info";
     node.textContent = message;
     el.toasts.appendChild(node);
+    // Force a frame so the entrance transition runs.
+    requestAnimationFrame(() => node.classList.add("is-visible"));
     setTimeout(() => {
       node.classList.add("is-leaving");
-      setTimeout(() => node.remove(), 220);
-    }, 3200);
+      setTimeout(() => node.remove(), 200);
+    }, tone === "error" ? 5200 : 3200);
   }
 
   async function api(url, options) {
@@ -184,6 +200,20 @@
     );
   }
 
+  function actionButton(action, label, icon, tone) {
+    return (
+      '<button class="btn-mini" type="button" data-action="' +
+      action +
+      '"' +
+      (tone ? ' data-tone="' + tone + '"' : "") +
+      ">" +
+      icon +
+      "<span>" +
+      label +
+      "</span></button>"
+    );
+  }
+
   function buildDownloadingRow(row) {
     const tr = document.createElement("tr");
     tr.innerHTML =
@@ -201,41 +231,82 @@
       '<span class="pct">0%</span></div></td>' +
       '<td class="cell-speed">' +
       esc(row.download_speed) +
-      "</td>";
+      "</td>" +
+      '<td class="col-actions"><div class="row-actions">' +
+      actionButton("pause", "暂停", ICON_PAUSE) +
+      actionButton("delete", "删除", ICON_TRASH, "danger") +
+      "</div></td>";
     return tr;
   }
 
   function updateDownloadingRow(tr, row) {
     const pct = pctValue(row.download_progress);
     const fill = tr.querySelector(".bar > i");
-    if (fill.style.width !== pct + "%") fill.style.width = pct + "%";
+    if (fill && fill.style.width !== pct + "%") fill.style.width = pct + "%";
     const label = tr.querySelector(".pct");
-    const text = pctText(pct);
-    if (label.textContent !== text) label.textContent = text;
+    if (label) {
+      const text = pctText(pct);
+      if (label.textContent !== text) label.textContent = text;
+    }
 
     const speed = tr.querySelector(".cell-speed");
     const value = row.download_speed === undefined ? "" : String(row.download_speed);
-    if (speed.textContent !== value) speed.textContent = value;
+    if (speed && speed.textContent !== value) speed.textContent = value;
+
+    const pauseBtn = tr.querySelector('[data-action="pause"]');
+    if (pauseBtn) {
+      const paused = Boolean(row.paused);
+      pauseBtn.dataset.action = paused ? "resume" : "pause";
+      pauseBtn.dataset.tone = paused ? "warn" : "";
+      pauseBtn.innerHTML =
+        (paused ? ICON_PLAY : ICON_PAUSE) + "<span>" + (paused ? "继续" : "暂停") + "</span>";
+      pauseBtn.setAttribute(
+        "aria-label",
+        (paused ? "继续下载 " : "暂停下载 ") + row.filename
+      );
+    }
+
+    const deleteBtn = tr.querySelector('[data-action="delete"]');
+    if (deleteBtn) deleteBtn.setAttribute("aria-label", "删除任务 " + row.filename);
   }
 
   function buildDownloadedRow(row) {
     const tr = document.createElement("tr");
+    const uploadChip = row.upload_success
+      ? '<span class="state-chip is-uploaded">已上传</span>'
+      : '<span class="state-chip">仅本地</span>';
     tr.innerHTML =
       idCell(row) +
       '<td class="cell-name" title="' +
       esc(row.filename) +
       '">' +
       nameHtml(row.filename) +
+      " " +
+      uploadChip +
       "</td>" +
       '<td class="cell-size">' +
       esc(row.total_size) +
       "</td>" +
-      '<td class="cell-path" title="点击复制：' +
+      '<td class="cell-time">' +
+      timeText(row.completed_time) +
+      "</td>" +
+      '<td class="cell-path" title="' +
       esc(row.save_path) +
       '">' +
       esc(row.save_path) +
-      "</td>";
+      "</td>" +
+      '<td class="col-actions"><div class="row-actions">' +
+      actionButton("copy", "复制路径", ICON_COPY) +
+      actionButton("delete", "删除", ICON_TRASH, "danger") +
+      "</div></td>";
     return tr;
+  }
+
+  function updateDownloadedRow(tr, row) {
+    const deleteBtn = tr.querySelector('[data-action="delete"]');
+    if (deleteBtn) deleteBtn.setAttribute("aria-label", "删除记录 " + row.filename);
+    const copyBtn = tr.querySelector('[data-action="copy"]');
+    if (copyBtn) copyBtn.setAttribute("aria-label", "复制保存路径 " + row.filename);
   }
 
   function buildFailedRow(row) {
@@ -250,18 +321,25 @@
       '<td class="cell-time">' +
       timeText(row.time) +
       "</td>" +
-      '<td class="col-actions">' +
-      '<button class="btn-ghost" type="button" data-action="retry">重试</button>' +
-      '<button class="btn-ghost" type="button" data-action="drop" data-tone="danger">删除</button>' +
-      "</td>";
+      '<td class="col-actions"><div class="row-actions">' +
+      actionButton("retry", "重试", ICON_RETRY) +
+      actionButton("delete", "删除", ICON_TRASH, "danger") +
+      "</div></td>";
     return tr;
+  }
+
+  function updateFailedRow(tr, row) {
+    const retryBtn = tr.querySelector('[data-action="retry"]');
+    if (retryBtn) retryBtn.setAttribute("aria-label", "重试下载 " + row.filename);
+    const deleteBtn = tr.querySelector('[data-action="delete"]');
+    if (deleteBtn) deleteBtn.setAttribute("aria-label", "删除失败记录 " + row.filename);
   }
 
   function renderDownloading() {
     syncRows(
       el.tables.downloading.querySelector("tbody"),
       state.downloading,
-      (r) => r.chat + ":" + r.id,
+      rowKey,
       buildDownloadingRow,
       updateDownloadingRow
     );
@@ -275,10 +353,11 @@
     syncRows(
       el.tables.downloaded.querySelector("tbody"),
       state.downloaded,
-      (r) => r.chat + ":" + r.id,
+      rowKey,
       buildDownloadedRow,
-      () => {}
+      updateDownloadedRow
     );
+    el.statDone.textContent = state.downloaded.length;
     renderEmpty();
   }
 
@@ -286,9 +365,9 @@
     syncRows(
       el.tables.failed.querySelector("tbody"),
       state.failed,
-      (r) => r.chat + ":" + r.id,
+      rowKey,
       buildFailedRow,
-      () => {}
+      updateFailedRow
     );
     renderEmpty();
   }
@@ -314,22 +393,20 @@
     el.statState.textContent = running ? "运行中" : "已暂停";
     el.statState.classList.toggle("is-running", running);
     el.statState.classList.toggle("is-paused", !running);
-
     el.liveDot.classList.toggle("is-paused", !running);
 
     el.pauseBtn.dataset.value = state.action;
-    el.pauseBtn.dataset.variant = running ? "pause" : "resume";
     el.pauseBtn.innerHTML =
       (running ? ICON_PAUSE : ICON_PLAY) +
       '<span class="pause-label">' +
       (running ? "暂停" : "继续") +
       "</span>";
+    el.pauseBtn.setAttribute("aria-label", running ? "暂停全部下载" : "继续全部下载");
   }
 
   function renderSpeed(speed) {
     const text = speed || "--";
-    el.speed.textContent = text;
-    el.statSpeed.textContent = text;
+    if (el.speed) el.speed.textContent = text;
   }
 
   /* --------------------------------------------------------------- loading */
@@ -343,7 +420,7 @@
   async function loadDownloaded() {
     const rows = await api("/get_download_list?already_down=true");
     state.downloaded = Array.isArray(rows) ? rows : [];
-    if (state.tab === "downloaded") renderDownloaded();
+    renderDownloaded();
   }
 
   async function loadFailed() {
@@ -374,6 +451,7 @@
       const on = btn.dataset.tab === state.tab;
       btn.classList.toggle("is-active", on);
       btn.setAttribute("aria-selected", on ? "true" : "false");
+      btn.tabIndex = on ? 0 : -1;
     });
 
     Object.keys(el.tables).forEach((name) => {
@@ -388,12 +466,10 @@
     renderEmpty();
   }
 
-  function setTab(tab) {
+  function setTab(tab, focus) {
     if (!el.tables[tab]) return;
     state.tab = tab;
-
     paintTab();
-    // Paint whatever we already have, then refresh from the server.
     renderCachedTab();
 
     lastTabFetch = 0;
@@ -403,6 +479,11 @@
       history.replaceState(null, "", "#" + tab);
     } catch (e) {
       /* file:// or old browsers */
+    }
+
+    if (focus) {
+      const target = $$(".tab").find((btn) => btn.dataset.tab === tab);
+      if (target) target.focus();
     }
   }
 
@@ -415,8 +496,22 @@
   function applyTheme(theme) {
     document.documentElement.dataset.theme = theme;
     const label = theme === "dark" ? "切换到浅色主题" : "切换到深色主题";
-    el.themeBtn.setAttribute("aria-label", label);
-    el.themeBtn.title = label;
+    if (el.themeBtn) {
+      el.themeBtn.setAttribute("aria-label", label);
+      el.themeBtn.title = label;
+    }
+  }
+
+  function swapTheme(theme) {
+    // Suppress every transition for the swap, force a style flush, restore.
+    document.documentElement.classList.add("theme-switching");
+    applyTheme(theme);
+    void document.documentElement.offsetWidth;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() =>
+        document.documentElement.classList.remove("theme-switching")
+      );
+    });
   }
 
   function storedTheme() {
@@ -429,21 +524,22 @@
 
   function initTheme() {
     applyTheme(currentTheme());
-
-    el.themeBtn.addEventListener("click", () => {
-      const next = currentTheme() === "dark" ? "light" : "dark";
-      applyTheme(next);
-      try {
-        localStorage.setItem("tgdl-theme", next);
-      } catch (e) {
-        /* private mode: the theme just will not persist */
-      }
-    });
+    if (el.themeBtn) {
+      el.themeBtn.addEventListener("click", () => {
+        const next = currentTheme() === "dark" ? "light" : "dark";
+        swapTheme(next);
+        try {
+          localStorage.setItem("tgdl-theme", next);
+        } catch (e) {
+          /* private mode: the theme just will not persist */
+        }
+      });
+    }
 
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     const onChange = (event) => {
       if (storedTheme()) return; // an explicit choice wins
-      applyTheme(event.matches ? "dark" : "light");
+      swapTheme(event.matches ? "dark" : "light");
     };
     if (media.addEventListener) media.addEventListener("change", onChange);
   }
@@ -465,7 +561,7 @@
           ? "continue"
           : "pause";
       renderStatus();
-      toast(state.action === "continue" ? "已暂停下载队列" : "已恢复下载", "success");
+      toast(state.action === "continue" ? "已暂停全部下载" : "已恢复全部下载", "success");
       lastTabFetch = 0;
       await refreshActive();
     } catch (err) {
@@ -475,30 +571,39 @@
     }
   }
 
-  async function handleRowAction(button, row) {
-    const action = button.dataset.action;
-    const params =
-      "chat_id=" +
-      encodeURIComponent(row.chat) +
-      "&message_id=" +
-      encodeURIComponent(row.id);
-    const url =
-      action === "retry" ? "/retry_failed?" + params : "/clear_failed?" + params;
+  function taskParams(row) {
+    return (
+      "chat_id=" + encodeURIComponent(row.chat) + "&message_id=" + encodeURIComponent(row.id)
+    );
+  }
 
-    button.disabled = true;
-    try {
-      const res = await api(url, { method: "POST" });
-      if (!res || res.code !== "1") throw new Error((res && res.msg) || "未知错误");
-      toast(action === "retry" ? "已重新加入下载队列" : "已删除该失败记录", "success");
-      await loadFailed();
-      if (action === "retry" && state.tab === "downloading") {
-        await loadDownloading().catch(() => {});
-      }
-    } catch (err) {
-      toast("操作失败：" + err.message, "error");
-    } finally {
-      button.disabled = false;
-    }
+  async function setTaskPaused(row, paused) {
+    const url = (paused ? "/pause_task?" : "/resume_task?") + taskParams(row);
+    const res = await api(url, { method: "POST" });
+    if (!res || res.code !== "1") throw new Error((res && res.msg) || "未知错误");
+    toast(paused ? "已暂停该任务" : "已恢复该任务", "success");
+    lastTabFetch = 0;
+    await loadDownloading();
+  }
+
+  async function deleteRow(row, label) {
+    const res = await api("/delete_task?" + taskParams(row), { method: "POST" });
+    if (!res || res.code !== "1") throw new Error((res && res.msg) || "未知错误");
+    toast(label || "已删除任务", "success");
+    lastTabFetch = 0;
+    await Promise.all([
+      loadDownloading().catch(() => {}),
+      loadDownloaded().catch(() => {}),
+      loadFailed().catch(() => {}),
+    ]);
+  }
+
+  async function retryRow(row) {
+    const res = await api("/retry_failed?" + taskParams(row), { method: "POST" });
+    if (!res || res.code !== "1") throw new Error((res && res.msg) || "未知错误");
+    toast("已重新加入下载队列", "success");
+    lastTabFetch = 0;
+    await Promise.all([loadFailed(), loadDownloading().catch(() => {})]);
   }
 
   async function copyPath(text) {
@@ -518,8 +623,168 @@
       }
       toast("路径已复制", "success");
     } catch (e) {
-      toast("复制失败，请手动选择", "error");
+      toast("复制失败，请手动选择路径", "error");
     }
+  }
+
+  /**
+   * Two-step confirm: the first click arms the button for a few seconds.
+   * Destructive actions get a distinct treatment instead of a silent delete.
+   * The armed state swaps icon and label, so it is not carried by colour alone.
+   */
+  function confirmOrRun(button, run) {
+    if (button.dataset.confirm === "1") {
+      clearTimeout(Number(button.dataset.timer || 0));
+      button.dataset.confirm = "0";
+      restoreLabel(button);
+      run();
+      return;
+    }
+
+    button.dataset.confirm = "1";
+    button.dataset.previousHtml = button.innerHTML;
+    button.innerHTML = ICON_CHECK + "<span>确认删除</span>";
+    const previousLabel = button.getAttribute("aria-label") || "";
+    button.dataset.previousAria = previousLabel;
+    button.setAttribute("aria-label", "确认删除？再点一次执行");
+
+    const timer = setTimeout(() => {
+      button.dataset.confirm = "0";
+      restoreLabel(button);
+    }, CONFIRM_TIMEOUT);
+    button.dataset.timer = String(timer);
+  }
+
+  function restoreLabel(button) {
+    if (button.dataset.previousHtml) {
+      button.innerHTML = button.dataset.previousHtml;
+      delete button.dataset.previousHtml;
+    }
+    if (button.dataset.previousAria !== undefined) {
+      button.setAttribute("aria-label", button.dataset.previousAria);
+      delete button.dataset.previousAria;
+    }
+  }
+
+  async function handleRowAction(button, row) {
+    const action = button.dataset.action;
+
+    if (action === "delete" && button.dataset.confirm !== "1") {
+      confirmOrRun(button, () => {
+        button.disabled = true;
+        deleteRow(row).catch((err) => toast("操作失败：" + err.message, "error"))
+          .finally(() => {
+            button.disabled = false;
+          });
+      });
+      return;
+    }
+
+    button.disabled = true;
+    try {
+      if (action === "delete") await deleteRow(row);
+      else if (action === "pause") await setTaskPaused(row, true);
+      else if (action === "resume") await setTaskPaused(row, false);
+      else if (action === "retry") await retryRow(row);
+      else if (action === "copy") await copyPath(row.save_path);
+    } catch (err) {
+      toast("操作失败：" + err.message, "error");
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  function bindTable(table, source) {
+    table.addEventListener("click", (event) => {
+      const button = event.target.closest(".btn-mini");
+      if (!button) return;
+      const tr = button.closest("tr");
+      const key = tr && tr.dataset.key;
+      const row = source().find((item) => rowKey(item) === key);
+      if (row) handleRowAction(button, row);
+    });
+  }
+
+  /* ---------------------------------------------------------------- config */
+
+  let configSaving = false;
+
+  function setConfigError(message) {
+    el.configError.textContent = message || "";
+  }
+
+  async function openConfig() {
+    setConfigError("");
+    el.configSave.disabled = true;
+    el.configText.value = "正在读取 config.yaml…";
+    if (typeof el.dialog.showModal === "function") {
+      el.dialog.showModal();
+    } else {
+      el.dialog.setAttribute("open", "");
+    }
+    try {
+      const res = await api("/get_config");
+      if (!res || res.code !== "1") throw new Error((res && res.msg) || "读取失败");
+      el.configPath.textContent = res.path;
+      el.configText.value = res.text;
+      el.configText.scrollTop = 0;
+      el.configText.focus({ preventScroll: true });
+      el.configText.setSelectionRange(0, 0);
+      el.configText.scrollTop = 0;
+      el.configSave.disabled = false;
+    } catch (err) {
+      el.configText.value = "";
+      setConfigError("读取配置失败：" + err.message);
+    }
+  }
+
+  function closeConfig() {
+    if (typeof el.dialog.close === "function") el.dialog.close();
+    else el.dialog.removeAttribute("open");
+    if (el.configBtn) el.configBtn.focus();
+  }
+
+  async function saveConfig() {
+    if (configSaving) return;
+    configSaving = true;
+    setConfigError("");
+    el.configSave.disabled = true;
+    el.configSave.textContent = "保存中…";
+
+    try {
+      const body = new URLSearchParams();
+      body.set("text", el.configText.value);
+      const res = await api("/set_config", { method: "POST", body: body });
+      if (!res || res.code !== "1") {
+        throw new Error((res && res.msg) || "保存失败");
+      }
+      const applied = (res.applied || []).length;
+      const restart = res.restart_required || [];
+      toast(
+        "配置已保存。" +
+          (applied ? "已生效 " + applied + " 项。" : "") +
+          (restart.length ? "需要重启：" + restart.join(", ") : ""),
+        "success"
+      );
+      closeConfig();
+      lastTabFetch = 0;
+      refreshActive().catch(() => {});
+    } catch (err) {
+      setConfigError(err.message);
+    } finally {
+      configSaving = false;
+      el.configSave.disabled = false;
+      el.configSave.textContent = "保存";
+    }
+  }
+
+  async function logout() {
+    try {
+      await api("/logout", { method: "POST" });
+    } catch (e) {
+      /* the cookie is gone even if the response is odd; fall through */
+    }
+    window.location.href = "/login";
   }
 
   /* ------------------------------------------------------------------ loop */
@@ -557,10 +822,9 @@
       loadFailed().catch(() => {});
     }
 
-    // Keep the "下载中" counter fresh even while another tab is open.
     if (
       state.tab !== "downloading" &&
-      now - lastCounterFetch >= DOWNLOADING_COUNTER_REFRESH
+      now - lastCounterFetch >= COUNTER_REFRESH
     ) {
       lastCounterFetch = now;
       loadDownloading().catch(() => {});
@@ -570,26 +834,56 @@
   /* ------------------------------------------------------------------ init */
 
   function bind() {
-    $$(".tab").forEach((btn) =>
-      btn.addEventListener("click", () => setTab(btn.dataset.tab))
-    );
+    const tabs = $$(".tab");
+    tabs.forEach((btn) => {
+      btn.addEventListener("click", () => setTab(btn.dataset.tab, false));
+    });
+
+    const tablist = $(".tabs");
+    if (tablist) {
+      // APG tab key map: arrows move between tabs, Home/End jump to the ends.
+      tablist.addEventListener("keydown", (event) => {
+        const keys = ["ArrowLeft", "ArrowRight", "Home", "End"];
+        if (keys.indexOf(event.key) === -1) return;
+        event.preventDefault();
+        const index = tabs.indexOf(document.activeElement);
+        if (index === -1) return;
+        let next = index;
+        if (event.key === "ArrowLeft") next = (index - 1 + tabs.length) % tabs.length;
+        if (event.key === "ArrowRight") next = (index + 1) % tabs.length;
+        if (event.key === "Home") next = 0;
+        if (event.key === "End") next = tabs.length - 1;
+        setTab(tabs[next].dataset.tab, true);
+      });
+    }
 
     el.pauseBtn.addEventListener("click", togglePause);
 
-    el.tables.failed.addEventListener("click", (event) => {
-      const button = event.target.closest(".btn-ghost");
-      if (!button) return;
-      const row = button.closest("tr");
-      const source = state.failed.find(
-        (item) => item.chat + ":" + item.id === row.dataset.key
-      );
-      if (source) handleRowAction(button, source);
-    });
+    bindTable(el.tables.downloading, () => state.downloading);
+    bindTable(el.tables.downloaded, () => state.downloaded);
+    bindTable(el.tables.failed, () => state.failed);
 
-    el.tables.downloaded.addEventListener("click", (event) => {
-      const cell = event.target.closest(".cell-path");
-      if (cell) copyPath(cell.textContent.trim());
-    });
+    if (el.configBtn) el.configBtn.addEventListener("click", openConfig);
+    if (el.configClose) el.configClose.addEventListener("click", closeConfig);
+    if (el.configCancel) el.configCancel.addEventListener("click", closeConfig);
+    if (el.configSave) el.configSave.addEventListener("click", saveConfig);
+    if (el.logoutBtn) el.logoutBtn.addEventListener("click", logout);
+
+    if (el.dialog) {
+      el.dialog.addEventListener("cancel", (event) => {
+        event.preventDefault();
+        closeConfig();
+      });
+      el.dialog.addEventListener("close", () => {
+        if (el.configBtn) el.configBtn.focus();
+      });
+      el.dialog.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+          event.preventDefault();
+          saveConfig();
+        }
+      });
+    }
 
     document.addEventListener("visibilitychange", () => {
       if (!document.hidden) {
@@ -605,13 +899,11 @@
     renderStatus();
     renderSpeed("--");
 
-    // Allow deep links such as /#failed.
     const initial = (location.hash || "").replace("#", "");
     if (el.tables[initial]) state.tab = initial;
     paintTab();
     renderEmpty();
 
-    // First paint: fire everything in parallel.
     loadStatus().catch(notifyError);
     loadFailed().catch(() => {});
     loadDownloaded().catch(() => {});

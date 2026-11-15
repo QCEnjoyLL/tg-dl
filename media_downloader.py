@@ -14,7 +14,11 @@ from rich.logging import RichHandler
 from module.app import Application, ChatDownloadConfig, DownloadStatus, TaskNode
 from module.bot import start_download_bot, stop_download_bot
 from module.download_stat import (
+    TaskCancelled,
+    clear_task_cancelled,
     get_failed_downloads,
+    is_task_cancelled,
+    mark_download_completed,
     mark_download_failed,
     mark_download_retried,
     remove_download_result,
@@ -316,6 +320,7 @@ async def download_task(
     download_status = DownloadStatus.FailedDownload
     file_name = None
     file_size = 0
+    upload_ok = False
 
     try:
         download_status, file_name = await download_media(
@@ -361,6 +366,7 @@ async def download_task(
                 file_name, update_cloud_upload_stat, (node, message.id, ui_file_name)
             ):
                 node.upload_success_count += 1
+                upload_ok = True
     except Exception as e:  # pylint: disable = W0703
         logger.exception(f"Message[{message.id}] task failed: {e}")
         # If the download itself completed, keep Success: the file exists and
@@ -369,6 +375,14 @@ async def download_task(
         if download_status is not DownloadStatus.SuccessDownload:
             download_status = DownloadStatus.FailedDownload
     finally:
+        # A message deleted from the Web UI raises TaskCancelled inside the
+        # progress callback. Treat it as skipped: it must not show up as a
+        # failure, and the queue must keep finishing.
+        if is_task_cancelled(node.chat_id, message.id):
+            clear_task_cancelled(node.chat_id, message.id)
+            download_status = DownloadStatus.SkipDownload
+            file_name = None
+
         if download_status is DownloadStatus.Downloading:
             download_status = DownloadStatus.FailedDownload
 
@@ -380,6 +394,19 @@ async def download_task(
             # stale row and record the failure for the "Failed" tab instead.
             remove_download_result(node.chat_id, message.id)
             mark_download_failed(node.chat_id, message.id, file_name or "")
+        elif download_status is DownloadStatus.SuccessDownload:
+            # Move the row into the completed list. Leaving it in the
+            # in-progress dict was why the Web UI kept showing a finished
+            # message at 100% long after the bot card reported success.
+            mark_download_completed(
+                node.chat_id,
+                message.id,
+                file_name or "",
+                file_size,
+                upload_ok,
+            )
+        else:
+            remove_download_result(node.chat_id, message.id)
 
         if not node.bot:
             app.set_download_id(node, message.id, download_status)
@@ -538,6 +565,11 @@ async def download_media(
                 logger.error(
                     f"Message[{message.id}]: {_t('Timing out after 3 reties, download skipped.')}"
                 )
+        except TaskCancelled:
+            # The Web UI deleted this task while it was transferring. Stop
+            # quietly; download_task turns it into a skip.
+            logger.info(f"Message[{message.id}]: download cancelled from the Web UI")
+            return DownloadStatus.FailedDownload, None
         except Exception as e:
             # pylint: disable = C0301
             logger.error(

@@ -3,28 +3,48 @@
 import hmac
 import logging
 import os
+import re
 import secrets
+import tempfile
 import threading
+from typing import Optional, Tuple
 
-from flask import Flask, jsonify, render_template, request
-from flask_login import LoginManager, UserMixin, login_required, login_user
+from flask import Flask, jsonify, redirect, render_template, request
+from flask_login import LoginManager, UserMixin, login_required, login_user, logout_user
+from ruamel import yaml
 from werkzeug.security import check_password_hash
 
 import utils
 from module.app import Application
 from module.download_stat import (
     DownloadState,
+    clear_failed_downloads,
+    delete_task,
+    get_completed_downloads,
     get_download_result,
     get_download_state,
     get_failed_downloads,
     get_total_download_speed,
+    is_task_paused,
+    mark_download_retried,
     set_download_state,
+    set_task_paused,
 )
 from utils.format import format_byte
 
 log = logging.getLogger("werkzeug")
 log.setLevel(logging.ERROR)
 app_log = logging.getLogger(__name__)
+
+_yaml = yaml.YAML()
+
+#: Config keys never sent to the browser. They are replaced by ``CONFIG_MASK``
+#: and restored from the file when the form is saved unchanged.
+SECRET_CONFIG_KEYS = ("api_hash", "bot_token", "web_login_secret", "password")
+CONFIG_MASK = "********"
+_SECRET_LINE = re.compile(
+    r"^(\s*)(api_hash|bot_token|web_login_secret|password)(\s*:\s*)(.*?)\s*$"
+)
 
 _flask_app = Flask(__name__)
 
@@ -38,12 +58,15 @@ _flask_app.config["SECRET_KEY"] = (
 )
 _flask_app.config["SESSION_COOKIE_HTTPONLY"] = True
 _flask_app.config["SESSION_COOKIE_SAMESITE"] = "Strict"
+if os.environ.get("TDL_WEB_COOKIE_SECURE", "").lower() in ("1", "true", "yes"):
+    _flask_app.config["SESSION_COOKIE_SECURE"] = True
 
 _login_manager = LoginManager()
 _login_manager.login_view = "login"
 _login_manager.init_app(_flask_app)
 web_login_users: dict = {}
 _retry_handler = None
+_application: Optional[Application] = None
 
 
 def set_retry_handler(handler):
@@ -122,12 +145,9 @@ def init_web(app: Application):
         None.
     """
     global web_login_users
-    if app.web_login_secret:
-        web_login_users = {"root": app.web_login_secret}
-        _flask_app.config["LOGIN_DISABLED"] = False
-    else:
-        web_login_users = {}
-        _flask_app.config["LOGIN_DISABLED"] = True
+    global _application
+    _application = app
+    _refresh_login_config(app)
 
     host = _effective_web_host(app)
     if app.debug_web:
@@ -138,6 +158,17 @@ def init_web(app: Application):
         threading.Thread(
             target=get_flask_app().run, daemon=True, args=(host, app.web_port)
         ).start()
+
+
+def _refresh_login_config(app: Application):
+    """Point the login form at the current ``web_login_secret``."""
+    global web_login_users
+    if app.web_login_secret:
+        web_login_users = {"root": app.web_login_secret}
+        _flask_app.config["LOGIN_DISABLED"] = False
+    else:
+        web_login_users = {}
+        _flask_app.config["LOGIN_DISABLED"] = True
 
 
 @_flask_app.after_request
@@ -196,6 +227,16 @@ def login():
     return render_template("login.html")
 
 
+@_flask_app.route("/logout", methods=["POST", "GET"])
+@login_required
+def logout():
+    """Drop the session and send the browser back to the login form."""
+    logout_user()
+    if request.method == "GET":
+        return redirect("/login")
+    return jsonify({"code": "1"})
+
+
 @_flask_app.route("/")
 @login_required
 def index():
@@ -206,6 +247,7 @@ def index():
             "pause" if get_download_state() is DownloadState.Downloading else "continue"
         ),
         version=utils.__version__,
+        login_enabled=bool(web_login_users),
     )
 
 
@@ -217,6 +259,11 @@ def get_download_speed():
         {
             "download_speed": format_byte(get_total_download_speed()) + "/s",
             "upload_speed": "0.00 B/s",
+            "state": (
+                "running"
+                if get_download_state() is DownloadState.Downloading
+                else "paused"
+            ),
         }
     )
 
@@ -252,49 +299,59 @@ def get_app_version():
     return utils.__version__
 
 
-@_flask_app.route("/get_download_list")
-@login_required
-def get_download_list():
-    """get download list"""
-    if request.args.get("already_down") is None:
-        return jsonify([])
-
-    already_down = request.args.get("already_down") == "true"
-
-    download_result = get_download_result()
-    result = []
-    for chat_id, messages in download_result.items():
-        for idx, value in messages.items():
+def _progress_rows() -> list:
+    """Snapshot the in-progress downloads as JSON-ready rows."""
+    rows = []
+    for chat_id, messages in get_download_result().items():
+        for message_id, value in messages.items():
             total_size = value.get("total_size") or 0
             down_byte = value.get("down_byte") or 0
-            is_already_down = down_byte == total_size
-
-            if already_down and not is_already_down:
-                continue
-
-            # Progress callbacks can report total_size == 0 for media whose size
-            # Telegram did not expose; never divide by it.
-            download_progress = (
-                round(down_byte / total_size * 100, 1) if total_size else 0.0
-            )
             file_name = value.get("file_name") or ""
-            result.append(
+            rows.append(
                 {
                     "chat": chat_id,
-                    "id": idx,
+                    "id": message_id,
                     "filename": os.path.basename(file_name),
                     "total_size": format_byte(total_size),
-                    "download_progress": download_progress,
+                    "download_progress": (
+                        round(down_byte / total_size * 100, 1) if total_size else 0.0
+                    ),
                     "download_speed": format_byte(value.get("download_speed") or 0)
                     + "/s",
                     "save_path": file_name.replace("\\", "/"),
+                    "paused": is_task_paused(chat_id, message_id),
                 }
             )
+    rows.sort(key=lambda row: (str(row["chat"]), row["id"]))
+    return rows
 
-    # Return real JSON. The Web UI only calls response.json() for a JSON
-    # content type; returning a hand-built string made every list render empty
-    # in a real deployment (the static preview mocked application/json).
-    return jsonify(result)
+
+def _completed_rows() -> list:
+    rows = []
+    for value in get_completed_downloads():
+        file_name = value.get("file_name") or ""
+        rows.append(
+            {
+                "chat": value.get("chat"),
+                "id": value.get("id"),
+                "filename": os.path.basename(file_name),
+                "total_size": format_byte(value.get("total_size") or 0),
+                "save_path": file_name.replace("\\", "/"),
+                "completed_time": value.get("completed_time") or 0,
+                "upload_success": bool(value.get("upload_success")),
+            }
+        )
+    return rows
+
+
+@_flask_app.route("/get_download_list")
+@login_required
+def get_download_list():
+    """Return in-progress downloads (``already_down=false``) or finished ones."""
+    already_down = request.args.get("already_down") == "true"
+    if already_down:
+        return jsonify(_completed_rows())
+    return jsonify(_progress_rows())
 
 
 @_flask_app.route("/get_failed_list")
@@ -313,7 +370,53 @@ def get_failed_list():
                     "reason": value.get("reason", ""),
                 }
             )
+    result.sort(key=lambda row: row.get("time", 0), reverse=True)
     return jsonify(result)
+
+
+def _task_args() -> Optional[Tuple[str, int]]:
+    """Parse ``chat_id``/``message_id`` from the query string."""
+    chat_id = request.args.get("chat_id")
+    message_id = request.args.get("message_id")
+    if not chat_id or not message_id:
+        return None
+    try:
+        return chat_id, int(message_id)
+    except ValueError:
+        return None
+
+
+@_flask_app.route("/pause_task", methods=["POST"])
+@login_required
+def pause_task():
+    """Pause one message."""
+    args = _task_args()
+    if not args:
+        return jsonify({"code": "0", "msg": "chat_id and message_id are required"})
+    changed = set_task_paused(args[0], args[1], True)
+    return jsonify({"code": "1", "changed": changed})
+
+
+@_flask_app.route("/resume_task", methods=["POST"])
+@login_required
+def resume_task():
+    """Resume one message."""
+    args = _task_args()
+    if not args:
+        return jsonify({"code": "0", "msg": "chat_id and message_id are required"})
+    changed = set_task_paused(args[0], args[1], False)
+    return jsonify({"code": "1", "changed": changed})
+
+
+@_flask_app.route("/delete_task", methods=["POST"])
+@login_required
+def delete_download_task():
+    """Delete a task from every tab, aborting it when it is still downloading."""
+    args = _task_args()
+    if not args:
+        return jsonify({"code": "0", "msg": "chat_id and message_id are required"})
+    delete_task(args[0], args[1])
+    return jsonify({"code": "1"})
 
 
 @_flask_app.route("/retry_failed", methods=["POST"])
@@ -342,25 +445,52 @@ def retry_failed():
         return jsonify({"code": "0", "msg": "downloader is not ready"})
 
     try:
-        _retry_handler(chat_id, message_id)
+        future = _retry_handler(chat_id, message_id)
+        if future is not None:
+            # Wait for the coroutine so the UI learns whether anything was
+            # actually queued; before this it always answered {"code":"1"}.
+            try:
+                retried = future.result(timeout=10)
+            except Exception as wait_err:  # noqa: BLE001 - becomes the API answer
+                return jsonify({"code": "0", "msg": str(wait_err)})
+        else:
+            retried = 0
     except Exception as e:  # pylint: disable = W0703
         return jsonify({"code": "0", "msg": str(e)})
 
-    return jsonify({"code": "1"})
+    if not retried:
+        return jsonify({"code": "0", "msg": "没有匹配的失败任务"})
+    return jsonify({"code": "1", "retried": retried})
+
+
+def _forget_failed_ids(chat_id, message_id: Optional[int]) -> None:
+    """Also drop the id from ``ids_to_retry`` so a restart cannot re-queue it."""
+    if _application is None:
+        return
+    chat_config = _application.chat_download_config.get(chat_id)
+    if chat_config is None:
+        return
+    ids = [message_id] if message_id is not None else list(chat_config.ids_to_retry)
+    for one_id in ids:
+        if one_id in chat_config.ids_to_retry:
+            chat_config.ids_to_retry.remove(one_id)
+        chat_config.ids_to_retry_dict.pop(one_id, None)
+        chat_config.node.download_status.pop(one_id, None)
 
 
 @_flask_app.route("/clear_failed", methods=["POST"])
 @login_required
 def clear_failed():
     """Forget recorded failures without retrying them."""
-    # pylint: disable = C0415
-    from module.download_stat import clear_failed_downloads, mark_download_retried
-
     chat_id_arg = request.args.get("chat_id")
     message_id_arg = request.args.get("message_id")
 
     if chat_id_arg is None:
-        return jsonify({"code": "1", "cleared": clear_failed_downloads()})
+        cleared = clear_failed_downloads()
+        if _application is not None:
+            for chat_id in list(_application.chat_download_config):
+                _forget_failed_ids(chat_id, None)
+        return jsonify({"code": "1", "cleared": cleared})
 
     try:
         chat_id = int(chat_id_arg)
@@ -369,10 +499,152 @@ def clear_failed():
 
     if message_id_arg:
         try:
-            mark_download_retried(chat_id, int(message_id_arg))
-            return jsonify({"code": "1", "cleared": 1})
+            one_id = int(message_id_arg)
         except ValueError:
             return jsonify({"code": "0", "msg": "invalid message_id"})
+        mark_download_retried(chat_id, one_id)
+        _forget_failed_ids(chat_id, one_id)
+        return jsonify({"code": "1", "cleared": 1})
 
-    return jsonify({"code": "1", "cleared": clear_failed_downloads(chat_id)})
+    cleared = clear_failed_downloads(chat_id)
+    _forget_failed_ids(chat_id, None)
+    return jsonify({"code": "1", "cleared": cleared})
 
+
+# --------------------------------------------------------------------- config
+
+
+def _config_path() -> Optional[str]:
+    if _application is None:
+        return None
+    return os.path.join(os.path.abspath("."), _application.config_file)
+
+
+def _mask_config_text(text: str) -> str:
+    """Replace secret values so they never leave the server."""
+    lines = []
+    for line in text.splitlines():
+        match = _SECRET_LINE.match(line)
+        if match and match.group(4).strip().strip("\"'"):
+            line = f"{match.group(1)}{match.group(2)}{match.group(3)}{CONFIG_MASK}"
+        lines.append(line)
+    suffix = "\n" if text.endswith("\n") else ""
+    return "\n".join(lines) + suffix
+
+
+def _restore_masked_config_text(new_text: str, current_text: str) -> str:
+    """Put the real secret back when the submitted field still holds the mask."""
+    current = {}
+    for line in current_text.splitlines():
+        match = _SECRET_LINE.match(line)
+        if match:
+            current[match.group(2)] = match.group(4).strip()
+
+    lines = []
+    for line in new_text.splitlines():
+        match = _SECRET_LINE.match(line)
+        if (
+            match
+            and match.group(4).strip().strip("\"'") == CONFIG_MASK
+            and current.get(match.group(2))
+        ):
+            line = f"{match.group(1)}{match.group(2)}{match.group(3)}{current[match.group(2)]}"
+        lines.append(line)
+    suffix = "\n" if new_text.endswith("\n") else ""
+    return "\n".join(lines) + suffix
+
+
+def _write_config_atomic(path: str, text: str) -> None:
+    """Write the file through a temp file so a crash cannot truncate it.
+
+    Docker setups bind-mount ``config.yaml`` as a single file, and ``os.replace``
+    onto a mount point fails with EBUSY. Fall back to an in-place write there
+    instead of leaving the config unsaveable.
+    """
+    directory = os.path.dirname(path) or "."
+    handle, temp_path = tempfile.mkstemp(dir=directory, prefix=".config-", suffix=".yaml")
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as config_file:
+            config_file.write(text)
+            config_file.flush()
+            os.fsync(config_file.fileno())
+        os.replace(temp_path, path)
+    except OSError:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        with open(path, "w", encoding="utf-8") as config_file:
+            config_file.write(text)
+    except Exception:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        raise
+
+
+@_flask_app.route("/get_config")
+@login_required
+def get_config():
+    """Return config.yaml as text with the secrets masked."""
+    path = _config_path()
+    if not path or not os.path.exists(path):
+        return jsonify({"code": "0", "msg": "config.yaml not found"})
+
+    with open(path, encoding="utf-8") as config_file:
+        text = config_file.read()
+
+    return jsonify(
+        {
+            "code": "1",
+            "path": path,
+            "text": _mask_config_text(text),
+            "masked_keys": list(SECRET_CONFIG_KEYS),
+        }
+    )
+
+
+@_flask_app.route("/set_config", methods=["POST"])
+@login_required
+def set_config():
+    """Validate and save config.yaml, then apply the hot-reloadable keys."""
+    path = _config_path()
+    if not path or not os.path.exists(path):
+        return jsonify({"code": "0", "msg": "config.yaml not found"})
+
+    new_text = request.form.get("text", "")
+    if not new_text.strip():
+        return jsonify({"code": "0", "msg": "配置内容不能为空"})
+
+    with open(path, encoding="utf-8") as config_file:
+        current_text = config_file.read()
+
+    restored_text = _restore_masked_config_text(new_text, current_text)
+
+    try:
+        parsed = _yaml.load(restored_text)
+    except Exception as parse_err:  # pylint: disable = W0703
+        return jsonify({"code": "0", "msg": f"YAML 解析失败：{parse_err}"})
+
+    if not isinstance(parsed, dict):
+        return jsonify({"code": "0", "msg": "配置必须是 YAML 映射（key: value）"})
+
+    missing = [key for key in ("api_id", "api_hash", "media_types") if key not in parsed]
+    if missing:
+        return jsonify({"code": "0", "msg": "缺少必填项：" + ", ".join(missing)})
+
+    try:
+        _write_config_atomic(path, restored_text)
+    except OSError as write_err:
+        return jsonify({"code": "0", "msg": f"写入失败：{write_err}"})
+
+    applied, restart_required = [], []
+    if _application is not None:
+        applied, restart_required = _application.reload_hot_config(parsed)
+        _refresh_login_config(_application)
+
+    app_log.info("config.yaml updated from the Web UI: %s", applied)
+    return jsonify(
+        {
+            "code": "1",
+            "applied": applied,
+            "restart_required": restart_required,
+        }
+    )

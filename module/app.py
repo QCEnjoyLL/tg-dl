@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Callable, List, Optional, Union
+from typing import Callable, List, Optional, Tuple, Union
 
 from loguru import logger
 from ruamel import yaml
@@ -911,6 +911,163 @@ class Application:
         if immediate:
             with open(self.app_data_file, "w", encoding="utf-8") as yaml_file:
                 _yaml.dump(self.app_data, yaml_file)
+
+    def reload_hot_config(self, config: dict) -> Tuple[List[str], List[str]]:
+        """Apply the settings that can change without restarting the process.
+
+        The Web UI config editor calls this after saving ``config.yaml``.
+        Anything that would rebuild the client, the task nodes or the HTTP
+        listener is reported back as "restart required" instead of being
+        silently ignored.
+
+        Returns
+        -------
+        Tuple[List[str], List[str]]
+            (applied keys, keys that need a restart)
+        """
+        applied: List[str] = []
+        restart: List[str] = []
+
+        # Keep the in-memory copy in sync so shutdown persistence writes the
+        # values the operator just saved.
+        self.config = config
+
+        if "media_types" in config and list(config["media_types"]) != list(
+            self.media_types
+        ):
+            self.media_types = list(config["media_types"])
+            applied.append("media_types")
+
+        if "file_formats" in config and dict(config["file_formats"]) != dict(
+            self.file_formats
+        ):
+            self.file_formats = dict(config["file_formats"])
+            applied.append("file_formats")
+
+        if "file_path_prefix" in config:
+            self.file_path_prefix = list(config["file_path_prefix"])
+            applied.append("file_path_prefix")
+
+        if "file_name_prefix" in config:
+            self.file_name_prefix = list(config["file_name_prefix"])
+            applied.append("file_name_prefix")
+
+        if "file_name_prefix_split" in config:
+            self.file_name_prefix_split = str(config["file_name_prefix_split"])
+            applied.append("file_name_prefix_split")
+
+        if "hide_file_name" in config:
+            self.hide_file_name = bool(config["hide_file_name"])
+            applied.append("hide_file_name")
+
+        if "enable_download_txt" in config:
+            self.enable_download_txt = bool(config["enable_download_txt"])
+            applied.append("enable_download_txt")
+
+        if "after_upload_telegram_delete" in config:
+            self.after_upload_telegram_delete = bool(
+                config["after_upload_telegram_delete"]
+            )
+            applied.append("after_upload_telegram_delete")
+
+        if "drop_no_audio_video" in config:
+            self.drop_no_audio_video = bool(config["drop_no_audio_video"])
+            applied.append("drop_no_audio_video")
+
+        if "log_level" in config:
+            self.log_level = str(config["log_level"])
+            applied.append("log_level")
+
+        if "date_format" in config:
+            try:
+                datetime(2023, 10, 31).strftime(str(config["date_format"]))
+            except Exception as e:  # pylint: disable = W0703
+                logger.warning(f"config date format error: {e}")
+            else:
+                self.date_format = str(config["date_format"])
+                applied.append("date_format")
+
+        if "language" in config:
+            try:
+                language = Language[str(config["language"]).upper()]
+            except KeyError:
+                logger.warning(f"unknown language: {config['language']}")
+            else:
+                self.set_language(language)
+                applied.append("language")
+
+        if "filter_advertisement_list" in config:
+            self.filter_advertisement_list = (
+                yaml.comments.CommentedSeq(config["filter_advertisement_list"])
+                if config["filter_advertisement_list"]
+                else yaml.comments.CommentedSeq([])
+            )
+            applied.append("filter_advertisement_list")
+
+        if "replace_advertisement_list" in config:
+            self.replace_advertisement_list = (
+                yaml.comments.CommentedSeq(config["replace_advertisement_list"])
+                if config["replace_advertisement_list"]
+                else yaml.comments.CommentedSeq([])
+            )
+            applied.append("replace_advertisement_list")
+
+        if "group_add_advertisement" in config:
+            self.group_add_advertisement = dict(
+                config["group_add_advertisement"] or {}
+            )
+            applied.append("group_add_advertisement")
+
+        if "web_login_secret" in config:
+            self.web_login_secret = str(config["web_login_secret"] or "")
+            applied.append("web_login_secret")
+
+        upload_drive = config.get("upload_drive")
+        if isinstance(upload_drive, dict):
+            drive = self.cloud_drive_config
+            if "enable_upload_file" in upload_drive:
+                drive.enable_upload_file = bool(upload_drive["enable_upload_file"])
+            if upload_drive.get("upload_adapter"):
+                drive.upload_adapter = upload_drive["upload_adapter"]
+            if upload_drive.get("remote_dir"):
+                drive.remote_dir = upload_drive["remote_dir"]
+            if upload_drive.get("rclone_path"):
+                drive.rclone_path = upload_drive["rclone_path"]
+            if "before_upload_file_zip" in upload_drive:
+                drive.before_upload_file_zip = bool(
+                    upload_drive["before_upload_file_zip"]
+                )
+            if "after_upload_file_delete" in upload_drive:
+                drive.after_upload_file_delete = bool(
+                    upload_drive["after_upload_file_delete"]
+                )
+            drive.dir_cache.clear()
+            applied.append("upload_drive")
+
+        # Everything below builds a client, a task node or the HTTP listener at
+        # startup, so a running process can only pick it up after a restart.
+        for key in (
+            "api_id",
+            "api_hash",
+            "bot_token",
+            "chat",
+            "chat_id",
+            "proxy",
+            "save_path",
+            "web_host",
+            "web_port",
+            "max_download_task",
+            "max_concurrent_transmissions",
+            "allowed_user_ids",
+            "forward_limit",
+            "start_timeout",
+            "restart_program",
+            "debug_web",
+        ):
+            if key in config:
+                restart.append(key)
+
+        return applied, restart
 
     def set_language(self, language: Language):
         """Set Language"""

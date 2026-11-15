@@ -62,6 +62,8 @@ class DownloadTaskFinalizeTestCase(unittest.IsolatedAsyncioTestCase):
         ), mock.patch.object(
             md, "report_bot_download_status", new=mock.AsyncMock()
         ), mock.patch.object(
+            md, "mark_download_completed"
+        ) as completed_mock, mock.patch.object(
             md.app, "set_download_id"
         ), mock.patch.object(
             md.os.path, "getsize", return_value=123
@@ -71,3 +73,8 @@ class DownloadTaskFinalizeTestCase(unittest.IsolatedAsyncioTestCase):
         # The download itself finished, so the message must not be re-downloaded
         # as a failure just because an upload step raised.
         self.assertIs(node.download_status[43], DownloadStatus.SuccessDownload)
+        # ... and it must leave the in-progress list, otherwise the Web UI keeps
+        # showing a finished task at 100% forever.
+        completed_mock.assert_called_once_with(
+            -100123, 43, "/tmp/finished.mp4", 123, False
+        )

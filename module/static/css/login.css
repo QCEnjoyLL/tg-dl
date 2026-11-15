@@ -1,117 +1,129 @@
-/* login screen */
+/* Login page — reuses the tokens from app.css. */
 
-.auth {
+body {
   display: grid;
   place-items: center;
   min-height: 100vh;
-  padding: 24px;
+  padding: 24px 16px;
+  background:
+    radial-gradient(1100px 600px at 12% -10%, var(--accent-soft), transparent 60%),
+    radial-gradient(900px 520px at 100% 110%, var(--success-soft), transparent 55%),
+    var(--bg);
+}
+
+.auth-theme {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+}
+
+.auth {
+  width: min(400px, 100%);
 }
 
 .auth-card {
-  width: 100%;
-  max-width: 380px;
-  padding: 32px 28px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 28px;
+  border-radius: var(--radius-lg);
   border: 1px solid var(--border);
-  border-radius: 20px;
-  background: var(--bg-elev);
-  box-shadow: var(--shadow-md);
-  text-align: center;
+  background: var(--surface);
+  box-shadow: var(--shadow-2);
 }
 
-.auth .brand-mark {
-  width: 52px;
-  height: 52px;
-  margin: 0 auto 18px;
-  border-radius: 15px;
+.auth-card .brand-mark {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
 }
 
-.auth .brand-mark svg {
-  width: 28px;
-  height: 28px;
+.auth-card .brand-mark svg {
+  width: 24px;
+  height: 24px;
 }
 
-.auth h1 {
-  margin: 0 0 6px;
-  font-size: 20px;
+.auth-card h1 {
+  font-size: 19px;
   font-weight: 650;
   letter-spacing: -0.01em;
 }
 
-.auth p {
-  margin: 0 0 24px;
+.auth-card > p {
+  margin-top: -10px;
   color: var(--text-muted);
   font-size: 13px;
 }
 
 .field {
-  position: relative;
-  margin-bottom: 12px;
-  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field label {
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 550;
 }
 
 .field input {
-  width: 100%;
-  height: 46px;
-  padding: 0 14px;
-  border: 1px solid var(--border-strong);
-  border-radius: 11px;
-  background: var(--bg);
+  height: 44px;
+  padding-inline: 12px;
+  border: 1px solid var(--border-input);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
   color: var(--text);
-  font-family: inherit;
-  font-size: 14px;
-  outline: none;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  font: inherit;
+  font-size: 16px; /* keeps iOS from zooming the page on focus */
+  transition: border-color var(--dur) var(--ease-out),
+    background-color var(--dur) var(--ease-out);
 }
 
 .field input::placeholder {
   color: var(--text-faint);
 }
 
-.field input:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-ring);
+.field input:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-color: var(--focus);
+  background: var(--surface);
 }
 
-.auth .btn {
-  width: 100%;
+.auth-card .btn {
   height: 44px;
-  margin-top: 6px;
   font-size: 14px;
 }
 
 .auth-error {
   min-height: 18px;
-  margin-top: 12px;
   color: var(--danger);
-  font-size: 12.5px;
-  text-align: center;
+  font-size: 13px;
 }
 
 .auth-hint {
-  margin-top: 18px;
   color: var(--text-faint);
-  font-size: 11.5px;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
-.auth-theme {
-  position: fixed;
-  top: 18px;
-  right: 18px;
+/* A failed submit nudges the card; reduced motion gets a static cue instead. */
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-6px); }
+  40% { transform: translateX(6px); }
+  60% { transform: translateX(-4px); }
+  80% { transform: translateX(4px); }
 }
 
 .shake {
-  animation: shake 0.32s ease;
+  animation: shake 320ms var(--ease-out);
 }
 
-@keyframes shake {
-  0%,
-  100% {
-    transform: translateX(0);
-  }
-  25% {
-    transform: translateX(-5px);
-  }
-  75% {
-    transform: translateX(5px);
+@media (prefers-reduced-motion: reduce) {
+  .shake {
+    animation: none;
+    border-color: var(--danger);
   }
 }

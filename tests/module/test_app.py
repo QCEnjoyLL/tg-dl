@@ -2,8 +2,11 @@
 
 import os
 import sys
+import tempfile
 import unittest
 from unittest import mock
+
+from ruamel import yaml
 
 import module.app
 from module.app import Application, ChatDownloadConfig, DownloadStatus, TaskNode
@@ -70,12 +73,36 @@ class AppTestCase(unittest.TestCase):
             app.app_data["chat"][0]["ids_to_retry"],
         )
 
-    @mock.patch("__main__.__builtins__.open", new_callable=mock.mock_open)
-    @mock.patch("module.app.yaml", autospec=True)
-    def test_update_config(self, mock_yaml, mock_open):
+    def test_update_config(self):
+        with tempfile.TemporaryDirectory() as workdir:
+            config_path = os.path.join(workdir, "config_test.yaml")
+            data_path = os.path.join(workdir, "data_test.yaml")
+
+            app = Application("config_test.yaml", "data_test.yaml")
+            app.config_file = config_path
+            app.app_data_file = data_path
+            app.chat_download_config[123] = ChatDownloadConfig()
+            app.config["chat"] = [{"chat_id": 123, "last_read_message_id": 0}]
+            app.update_config()
+
+            self.assertTrue(os.path.exists(config_path))
+            self.assertTrue(os.path.exists(data_path))
+
+            with open(data_path, encoding="utf-8") as data_file:
+                data = yaml.YAML().load(data_file.read())
+            self.assertEqual(data["chat"][0]["chat_id"], 123)
+
+    def test_reload_hot_config(self):
         app = Application("", "")
-        app.config_file = "config_test.yaml"
-        app.app_data_file = "data_test.yaml"
-        app.config["chat"] = [{"chat_id": 123, "last_read_message_id": 0}]
-        app.update_config()
-        mock_open.assert_called_with("data_test.yaml", "w", encoding="utf-8")
+        applied, restart = app.reload_hot_config(
+            {
+                "media_types": ["video"],
+                "max_download_task": 3,
+                "api_id": "1",
+            }
+        )
+        self.assertIn("media_types", applied)
+        self.assertEqual(app.media_types, ["video"])
+        # Worker count is fixed at startup, so it must be reported, not applied.
+        self.assertIn("max_download_task", restart)
+        self.assertIn("api_id", restart)

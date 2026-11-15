@@ -1,4 +1,4 @@
-name: Tests (non-blocking)
+name: Tests
 
 on:
   push:
@@ -6,24 +6,24 @@ on:
     paths-ignore:
       - "README.md"
       - "README_CN.md"
+      - "docs/**"
   pull_request:
     branches: [master, main]
     paths-ignore:
       - "README.md"
       - "README_CN.md"
+      - "docs/**"
+
+permissions:
+  contents: read
 
 jobs:
   test:
     runs-on: ubuntu-latest
-    # The upstream test-suite does not pass in this environment and was already
-    # red before this fork diverged. Keep running it for reference, but never
-    # let it mark the branch red: the required gate is the image build.
-    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.11"]
-
     name: Test - Python ${{ matrix.python-version }}
     steps:
       - uses: actions/checkout@v4
@@ -38,7 +38,8 @@ jobs:
           python -m pip install --upgrade pip setuptools
           make dev_install
 
+      - name: Compile all sources
+        run: python -m compileall -q media_downloader.py module utils
+
       - name: Run tests
-        run: |
-          mkdir -p /tmp/coverage
-          make -e test || pytest -x --tb=short tests/
+        run: pytest -q --tb=short tests/
