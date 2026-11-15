@@ -14,6 +14,7 @@ from loguru import logger
 from ruamel import yaml
 
 from module.cloud_drive import CloudDrive, CloudDriveConfig
+from module.config_form import parse_format_list
 from module.filter import Filter
 from module.language import Language, set_language
 from utils.format import replace_date_time, validate_title
@@ -457,7 +458,7 @@ class Application:
         self.bot_token = _config.get("bot_token", "")
 
         self.media_types = _config["media_types"]
-        self.file_formats = _config["file_formats"]
+        self.file_formats = self._normalize_file_formats(_config.get("file_formats"))
 
         self.hide_file_name = _config.get("hide_file_name", False)
 
@@ -918,6 +919,27 @@ class Application:
             with open(self.app_data_file, "w", encoding="utf-8") as yaml_file:
                 _yaml.dump(self.app_data, yaml_file)
 
+    @staticmethod
+    def _normalize_file_formats(raw) -> dict:
+        """Always keep ``file_formats`` values as lists.
+
+        Older configs (and a few hand edits) stored a string such as ``"['all']"``
+        or ``"mp3,flac"``. ``_can_download`` treats the value as a list, so a
+        string silently filtered every file out.
+        """
+        formats: dict = {}
+        if not isinstance(raw, dict):
+            return formats
+
+        for media_type, value in raw.items():
+            if isinstance(value, (list, tuple)):
+                formats[media_type] = [str(item) for item in value]
+            elif isinstance(value, str):
+                formats[media_type] = parse_format_list(value) or ["all"]
+            else:
+                formats[media_type] = ["all"]
+        return formats
+
     def reload_hot_config(self, config: dict) -> Tuple[List[str], List[str]]:
         """Apply the settings that can change without restarting the process.
 
@@ -944,11 +966,11 @@ class Application:
             self.media_types = list(config["media_types"])
             applied.append("media_types")
 
-        if "file_formats" in config and dict(config["file_formats"]) != dict(
-            self.file_formats
-        ):
-            self.file_formats = dict(config["file_formats"])
-            applied.append("file_formats")
+        if "file_formats" in config:
+            normalized = self._normalize_file_formats(config["file_formats"])
+            if normalized != self.file_formats:
+                self.file_formats = normalized
+                applied.append("file_formats")
 
         if "file_path_prefix" in config:
             self.file_path_prefix = list(config["file_path_prefix"])

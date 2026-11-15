@@ -212,10 +212,10 @@
       <form id="config-form" novalidate></form>
     </div>
 
-    <div class="dialog-body" id="config-yaml-pane" hidden>
+    <div class="dialog-body dialog-body--yaml" id="config-yaml-pane" hidden>
       <label class="sr-only" for="config-text">config.yaml 内容</label>
       <textarea class="config-text" id="config-text" spellcheck="false" autocomplete="off"
-        aria-describedby="config-hint" wrap="off"></textarea>
+        aria-describedby="config-hint" wrap="soft"></textarea>
       <p class="dialog-hint" id="config-hint">
         api_hash / bot_token / web_login_secret / 代理密码以 <code>********</code> 显示，保持原样即不会覆盖。
         保存会先校验 YAML，再原子写入文件。

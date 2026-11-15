@@ -871,9 +871,32 @@ main {
 }
 
 .dialog-body .config-text {
+  width: 100%;
   min-height: 280px;
+  max-height: none;
   border: 1px solid var(--border-input);
   border-radius: var(--radius-sm);
+}
+
+/* The YAML tab fills the dialog: the textarea scrolls, the body does not. */
+.dialog-body--yaml {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: hidden;
+}
+
+.dialog-body--yaml .config-text {
+  flex: 1 1 auto;
+  resize: none;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  tab-size: 2;
+}
+
+.dialog-body--yaml .dialog-hint {
+  flex: none;
+  padding: 0;
 }
 
 @media (max-width: 720px) {

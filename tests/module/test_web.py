@@ -51,6 +51,13 @@ api_hash: real-hash-value
 bot_token: 123:real-token
 media_types:
 - video
+file_formats:
+  audio:
+  - all
+  document:
+  - all
+  video:
+  - all
 chat:
 - chat_id: -100123
   last_read_message_id: 7
@@ -357,6 +364,42 @@ class ConfigFormTestCase(_ConfigFixture):
         errors = response.get_json()["errors"]
 
         self.assertIn("web_port", errors)
+
+    def test_form_shows_file_formats_joined(self):
+        payload = self.client.get("/get_config_form").get_json()
+
+        self.assertEqual(payload["values"]["file_formats.audio"], "all")
+        self.assertEqual(payload["values"]["file_formats.video"], "all")
+
+    def test_form_saves_file_formats_as_lists(self):
+        data = self.base_form()
+        data.update(
+            {
+                "file_formats.audio": "mp3, flac",
+                # Users paste YAML list syntax; it must still become a list.
+                "file_formats.video": "['mkv','mp4']",
+            }
+        )
+        response = self.client.post("/set_config_form", data=data)
+        self.assertEqual(response.get_json()["code"], "1")
+
+        saved = self.saved_config()
+        self.assertEqual(list(saved["file_formats"]["audio"]), ["mp3", "flac"])
+        self.assertEqual(list(saved["file_formats"]["video"]), ["mkv", "mp4"])
+
+    def test_form_reads_legacy_chat_id(self):
+        legacy = (
+            "api_id: 12345\n"
+            "api_hash: real-hash-value\n"
+            "media_types:\n- video\n"
+            "chat_id: -100999\n"
+            "last_read_message_id: 3\n"
+        )
+        with open(self.config_path, "w", encoding="utf-8") as config_file:
+            config_file.write(legacy)
+
+        payload = self.client.get("/get_config_form").get_json()
+        self.assertEqual(payload["values"]["chat"], "-100999")
 
     def test_form_updates_proxy_block(self):
         data = self.base_form()

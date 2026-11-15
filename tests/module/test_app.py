@@ -92,6 +92,26 @@ class AppTestCase(unittest.TestCase):
                 data = yaml.YAML().load(data_file.read())
             self.assertEqual(data["chat"][0]["chat_id"], 123)
 
+    def test_file_formats_are_normalized_to_lists(self):
+        app = Application("", "")
+        app.assign_config(
+            {
+                "api_id": 1,
+                "api_hash": "hash",
+                "media_types": ["video"],
+                "file_formats": {
+                    # A string used to make _can_download filter everything out.
+                    "audio": "['all']",
+                    "video": "mp4, mkv",
+                    "document": ["pdf"],
+                },
+            }
+        )
+
+        self.assertEqual(app.file_formats["audio"], ["all"])
+        self.assertEqual(app.file_formats["video"], ["mp4", "mkv"])
+        self.assertEqual(app.file_formats["document"], ["pdf"])
+
     def test_reload_hot_config(self):
         app = Application("", "")
         applied, restart = app.reload_hot_config(

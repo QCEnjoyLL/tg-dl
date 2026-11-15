@@ -286,10 +286,12 @@ def render(name: str, state: str = "pause") -> str:
     html = html.replace("{% if login_enabled %}", "")
     html = html.replace("{% endif %}", "")
 
-    # Inject the mocked fetch layer before the application script runs.
-    marker = '<script src="../module/static/js/app.js"></script>'
-    if marker in html:
-        html = html.replace(marker, MOCK_JS + marker)
+    # Inject the mocked fetch layer before the application script runs. The tag
+    # carries a ?v=<version> cache-buster, so match it loosely.
+    marker = re.compile(
+        r'(<script src="\.\./module/static/js/app\.js[^"]*"></script>)'
+    )
+    html = marker.sub(lambda m: MOCK_JS + m.group(1), html, count=1)
     return html
 
 

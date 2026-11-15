@@ -169,27 +169,27 @@ FIELDS: List[Dict[str, Any]] = [
         "path": ["file_formats", "audio"],
         "label": "音频格式",
         "group": "文件命名与格式",
-        "type": "text",
+        "type": "format_list",
         "placeholder": "all 或 mp3,flac",
-        "hint": "留空等同于 all。",
+        "hint": "逗号分隔扩展名，all 表示全部；留空等同于 all。",
     },
     {
         "name": "file_formats.document",
         "path": ["file_formats", "document"],
         "label": "文档格式",
         "group": "文件命名与格式",
-        "type": "text",
+        "type": "format_list",
         "placeholder": "all 或 pdf,epub",
-        "hint": "留空等同于 all。",
+        "hint": "逗号分隔扩展名，all 表示全部；留空等同于 all。",
     },
     {
         "name": "file_formats.video",
         "path": ["file_formats", "video"],
         "label": "视频格式",
         "group": "文件命名与格式",
-        "type": "text",
+        "type": "format_list",
         "placeholder": "all 或 mp4,mkv",
-        "hint": "留空等同于 all。",
+        "hint": "逗号分隔扩展名，all 表示全部；留空等同于 all。",
     },
     {
         "name": "file_path_prefix",
@@ -465,6 +465,19 @@ def _string_list(value: Any) -> List[str]:
     return [str(value)]
 
 
+def parse_format_list(raw: str) -> List[str]:
+    """Accept ``all``, ``mp3,flac`` and pasted YAML lists like ``['all']``."""
+    text = raw.strip()
+    if text.startswith("[") and text.endswith("]"):
+        text = text[1:-1]
+    parts: List[str] = []
+    for item in text.replace("\n", ",").split(","):
+        cleaned = item.strip().strip("'\"").strip()
+        if cleaned and cleaned not in parts:
+            parts.append(cleaned)
+    return parts
+
+
 def read_values(config: dict) -> Dict[str, Any]:
     """Build the form values for the browser, masking secrets."""
     values: Dict[str, Any] = {}
@@ -485,9 +498,19 @@ def read_values(config: dict) -> Dict[str, Any]:
             chats = value if isinstance(value, list) else []
             ids = []
             for item in chats:
-                if isinstance(item, dict) and "chat_id" in item:
-                    ids.append(str(item["chat_id"]))
+                if isinstance(item, dict):
+                    chat_id = item.get("chat_id")
+                    if chat_id not in (None, ""):
+                        ids.append(str(chat_id))
+            # Older configs only have the legacy top-level chat_id fields.
+            if not ids and config.get("chat_id") not in (None, ""):
+                ids.append(str(config["chat_id"]))
             values[name] = "\n".join(ids)
+        elif field_type == "format_list":
+            if isinstance(value, (list, tuple)):
+                values[name] = ", ".join(str(item) for item in value)
+            else:
+                values[name] = "" if value is None else str(value)
         elif field_type == "password":
             text = "" if value is None else str(value)
             values[name] = MASK if text else ""
@@ -559,6 +582,14 @@ def parse_form(form, current_config: dict) -> Tuple[Dict[str, Any], Dict[str, st
 
         if field_type == "number":
             values[name] = UNSET if not raw else _parse_number(field, raw, errors)
+            continue
+
+        if field_type == "format_list":
+            if not raw:
+                values[name] = UNSET
+            else:
+                parsed_formats = parse_format_list(raw)
+                values[name] = parsed_formats if parsed_formats else UNSET
             continue
 
         if field_type == "lines":
