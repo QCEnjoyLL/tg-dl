@@ -881,6 +881,15 @@ class MediaDownloaderTestCase(unittest.TestCase):
         result3 = _can_download("document", file_formats, "epub")
         self.assertEqual(result3, True)
 
+        # A string (the old config form wrote "['all']") must not filter
+        # everything out, and a missing key must fall back to allow-all.
+        self.assertEqual(_can_download("video", {"video": "['all']"}, "mp4"), True)
+        self.assertEqual(_can_download("video", {}, "mp4"), True)
+        self.assertEqual(_can_download("video", {"video": []}, "mp4"), True)
+        self.assertEqual(
+            _can_download("video", {"video": ["mp4"]}, "mkv"), False
+        )
+
     def test_is_exist(self):
         this_dir = os.path.dirname(os.path.abspath(__file__))
         result = _is_exist(os.path.join(this_dir, "__init__.py"))

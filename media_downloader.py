@@ -13,6 +13,7 @@ from rich.logging import RichHandler
 
 from module.app import Application, ChatDownloadConfig, DownloadStatus, TaskNode
 from module.bot import start_download_bot, stop_download_bot
+from module.config_form import parse_format_list
 from module.download_stat import (
     TaskCancelled,
     clear_task_cancelled,
@@ -146,8 +147,16 @@ def _can_download(_type: str, file_formats: dict, file_format: Optional[str]) ->
         True if the file format can be downloaded else False.
     """
     if _type in ["audio", "document", "video"]:
-        allowed_formats: list = file_formats[_type]
-        if not file_format in allowed_formats and allowed_formats[0] != "all":
+        allowed_formats = None
+        if isinstance(file_formats, dict):
+            allowed_formats = file_formats.get(_type)
+        # Older/edited configs stored a string here; a missing or malformed
+        # value must never silently drop every download.
+        if isinstance(allowed_formats, str):
+            allowed_formats = parse_format_list(allowed_formats)
+        if not allowed_formats:
+            return True
+        if "all" not in allowed_formats and file_format not in allowed_formats:
             return False
     return True
 
@@ -630,6 +639,12 @@ async def download_chat_task(
     node: TaskNode,
 ):
     """Download all task"""
+    if not node.chat_id:
+        logger.warning(
+            "chat_id 为空，跳过该频道的自动下载；请在 config.yaml 或 Web UI 中补全。"
+        )
+        return
+
     messages_iter = get_chat_history_v2(
         client,
         node.chat_id,

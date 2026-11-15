@@ -112,6 +112,42 @@ class AppTestCase(unittest.TestCase):
         self.assertEqual(app.file_formats["video"], ["mp4", "mkv"])
         self.assertEqual(app.file_formats["document"], ["pdf"])
 
+    def test_file_formats_defaults_for_missing_keys(self):
+        app = Application("", "")
+        app.assign_config(
+            {
+                "api_id": 1,
+                "api_hash": "hash",
+                "media_types": ["video"],
+                "file_formats": {},
+            }
+        )
+
+        self.assertEqual(app.file_formats["video"], ["all"])
+        self.assertEqual(app.file_formats["audio"], ["all"])
+
+    def test_chat_with_empty_id_is_skipped(self):
+        app = Application("", "")
+        app.assign_config(
+            {
+                "api_id": 1,
+                "api_hash": "hash",
+                "media_types": ["video"],
+                "file_formats": {"video": ["all"]},
+                "chat": [
+                    {"chat_id": None, "last_read_message_id": None},
+                    {"chat_id": "-100123", "last_read_message_id": None},
+                ],
+            }
+        )
+
+        self.assertNotIn(None, app.chat_download_config)
+        self.assertIn("-100123", app.chat_download_config)
+        # A missing last_read_message_id must not become None (TypeError later).
+        self.assertEqual(
+            app.chat_download_config["-100123"].last_read_message_id, 0
+        )
+
     def test_reload_hot_config(self):
         app = Application("", "")
         applied, restart = app.reload_hot_config(

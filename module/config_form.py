@@ -500,7 +500,7 @@ def read_values(config: dict) -> Dict[str, Any]:
             for item in chats:
                 if isinstance(item, dict):
                     chat_id = item.get("chat_id")
-                    if chat_id not in (None, ""):
+                    if _is_valid_chat_id(chat_id):
                         ids.append(str(chat_id))
             # Older configs only have the legacy top-level chat_id fields.
             if not ids and config.get("chat_id") not in (None, ""):
@@ -622,9 +622,19 @@ def parse_form(form, current_config: dict) -> Tuple[Dict[str, Any], Dict[str, st
 
 
 def _coerce_chat_id(text: str):
+    text = text.strip()
     if text.lstrip("-").isdigit():
         return int(text)
     return text
+
+
+_NONE_LIKE = {"", "none", "null", "~", "nil"}
+
+
+def _is_valid_chat_id(value) -> bool:
+    if value is None:
+        return False
+    return str(value).strip().lower() not in _NONE_LIKE
 
 
 def apply_values(config: dict, values: Dict[str, Any]) -> None:
@@ -651,6 +661,8 @@ def apply_values(config: dict, values: Dict[str, Any]) -> None:
             new_chats = []
             for line in lines:
                 chat_id = _coerce_chat_id(line.split()[0])
+                if not _is_valid_chat_id(chat_id):
+                    continue
                 existing = preserved.pop(str(chat_id), None)
                 if existing is not None:
                     new_chats.append(existing)
@@ -658,6 +670,9 @@ def apply_values(config: dict, values: Dict[str, Any]) -> None:
                     new_chats.append(
                         {"chat_id": chat_id, "last_read_message_id": 0}
                     )
+            if not new_chats:
+                config.pop("chat", None)
+                continue
             config["chat"] = new_chats
             continue
 

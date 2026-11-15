@@ -595,19 +595,33 @@ class Application:
         if _config.get("chat"):
             chat = _config["chat"]
             for item in chat:
-                if "chat_id" in item:
-                    self.chat_download_config[item["chat_id"]] = ChatDownloadConfig()
-                    self.chat_download_config[
-                        item["chat_id"]
-                    ].last_read_message_id = item.get("last_read_message_id", 0)
-                    self.chat_download_config[
-                        item["chat_id"]
-                    ].download_filter = item.get("download_filter", "")
-                    self.chat_download_config[
-                        item["chat_id"]
-                    ].upload_telegram_chat_id = item.get(
-                        "upload_telegram_chat_id", None
+                if not isinstance(item, dict):
+                    continue
+                chat_id = item.get("chat_id")
+                # A blank/None chat_id used to reach the download loop and blow
+                # up with "NoneType < int", silently preventing every download.
+                if chat_id is None or str(chat_id).strip().lower() in (
+                    "",
+                    "none",
+                    "null",
+                    "~",
+                ):
+                    logger.warning(
+                        "config.yaml 中有一个 chat 缺少 chat_id，已跳过；"
+                        "请在 Web UI「下载的频道 / 群组」里重新填写频道 ID。"
                     )
+                    continue
+                last_read = item.get("last_read_message_id") or 0
+                self.chat_download_config[chat_id] = ChatDownloadConfig()
+                self.chat_download_config[chat_id].last_read_message_id = int(
+                    last_read
+                )
+                self.chat_download_config[chat_id].download_filter = (
+                    item.get("download_filter") or ""
+                )
+                self.chat_download_config[chat_id].upload_telegram_chat_id = item.get(
+                    "upload_telegram_chat_id", None
+                )
         elif _config.get("chat_id"):
             # Compatible with lower versions
             self._chat_id = _config["chat_id"]
@@ -923,21 +937,34 @@ class Application:
     def _normalize_file_formats(raw) -> dict:
         """Always keep ``file_formats`` values as lists.
 
-        Older configs (and a few hand edits) stored a string such as ``"['all']"``
-        or ``"mp3,flac"``. ``_can_download`` treats the value as a list, so a
-        string silently filtered every file out.
+        Older configs (and a hand edit, or the first version of the config form)
+        stored a string such as ``"['all']"`` or ``"mp3,flac"``. ``_can_download``
+        treats the value as a list, so a string silently filtered every file out
+        — the bug behind "everything is suddenly skipped".
         """
-        formats: dict = {}
+        formats: dict = {"audio": ["all"], "document": ["all"], "video": ["all"]}
         if not isinstance(raw, dict):
+            logger.warning(
+                "config.yaml 缺少 file_formats，已按全部格式处理。"
+            )
             return formats
 
+        repaired = False
         for media_type, value in raw.items():
             if isinstance(value, (list, tuple)):
-                formats[media_type] = [str(item) for item in value]
+                items = [str(item) for item in value if str(item).strip()]
             elif isinstance(value, str):
-                formats[media_type] = parse_format_list(value) or ["all"]
+                items = parse_format_list(value)
+                repaired = True
             else:
-                formats[media_type] = ["all"]
+                items = []
+            formats[str(media_type)] = items or ["all"]
+
+        if repaired:
+            logger.warning(
+                "config.yaml 的 file_formats 存在文本写法（如 \"['all']\"），"
+                "已自动转换为列表；请到 Web UI 重新保存一次以修正文件。"
+            )
         return formats
 
     def reload_hot_config(self, config: dict) -> Tuple[List[str], List[str]]:

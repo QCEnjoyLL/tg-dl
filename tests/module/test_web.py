@@ -401,6 +401,30 @@ class ConfigFormTestCase(_ConfigFixture):
         payload = self.client.get("/get_config_form").get_json()
         self.assertEqual(payload["values"]["chat"], "-100999")
 
+    def test_form_ignores_empty_chat_entries(self):
+        broken = (
+            "api_id: 12345\n"
+            "api_hash: real-hash-value\n"
+            "media_types:\n- video\n"
+            "chat:\n"
+            "- chat_id:\n"
+            "  last_read_message_id:\n"
+        )
+        with open(self.config_path, "w", encoding="utf-8") as config_file:
+            config_file.write(broken)
+
+        payload = self.client.get("/get_config_form").get_json()
+        # A null chat_id must not be rendered as the literal string "None".
+        self.assertEqual(payload["values"]["chat"], "")
+
+        response = self.client.post(
+            "/set_config_form", data=self.base_form(chat="-100123")
+        )
+        self.assertEqual(response.get_json()["code"], "1")
+        saved = self.saved_config()
+        self.assertEqual(len(saved["chat"]), 1)
+        self.assertEqual(saved["chat"][0]["chat_id"], -100123)
+
     def test_form_updates_proxy_block(self):
         data = self.base_form()
         data.update(

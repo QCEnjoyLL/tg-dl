@@ -3,11 +3,20 @@
 > 基于 [tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader) 的修复分支。
 > 保留原项目的全部功能（Telegram bot 指令、Web UI、rclone 上传、受保护内容下载），并持续修复实际使用中的问题。
 
-当前版本：**v2.7.2**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
+当前版本：**v2.7.3**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
 
 [![Docker](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml)
 [![Tests](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/unittest.yml/badge.svg)](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/unittest.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+---
+
+## v2.7.3 更新内容
+
+- 修复「保存配置后所有下载都被跳过、日志里没有任何报错」：
+  `file_formats` 被早期表单写成字符串 `"['all']"`、空 `chat_id` 被写成 `null`，导致整批任务静默失败。
+  现在加载时会自动修复 `file_formats`、跳过空频道并给出明确日志。
+- 若日志提示「config.yaml 中有一个 chat 缺少 chat_id」，到 Web UI「下载的频道 / 群组」重新填写一次即可。
 
 ---
 
@@ -364,6 +373,12 @@ v2.6.6 已修：任务结束时会把记录从「下载中」移到「已完成�
 
 **Q：暂停单条任务会怎样？**
 只影响这一条消息的传输进度，其他任务继续；「删除」会中止该文件并把它从列表中移除，重启后也不会再重新下载（如需重下请用失败页的重试或手动调整 `last_read_message_id`）。
+
+**Q：升级后 bot 只回「Direct download…」，日志没有报错，下载也不开始？**
+v2.7.0 / v2.7.1 的配置表单曾把 `file_formats` 写成文本 `"['all']"`、空频道写成 `null`，导致所有媒体格式被判定为「跳过」、频道初始化异常。升级到 **v2.7.3** 会自动修复 `file_formats` 并跳过空频道（日志会说明原因）；如果提示 `chat_id` 缺失，到 Web UI「下载的频道 / 群组」重新填写一次即可。
+
+**Q：日志里的「Generating LALR tables」是什么？**
+过滤器语法分析器（ply）的启动日志，正常现象，不是错误。
 
 **Q：改配置会不会重启？**
 大部分下载/上传行为项立即生效；`api_id`、`bot_token`、`chat`、`save_path`、端口等需要重启，保存后 Web UI 会列出需要重启的项。
