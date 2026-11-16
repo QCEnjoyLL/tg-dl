@@ -114,6 +114,36 @@ DOWNLOADED = [
     },
 ]
 
+# Extra completed rows so the preview (and the docs screenshots) show the
+# 25-per-page pagination instead of a single short table.
+_DEMO_TITLES = [
+    "素材归档_批次01",
+    "素材归档_批次02",
+    "花絮_幕后采访",
+    "空镜_城市延时",
+    "空镜_海岸线",
+    "广告片_15s",
+    "广告片_30s",
+    "纪录片_第1集",
+    "纪录片_第2集",
+    "纪录片_第3集",
+]
+for _index in range(27):
+    _num = 700 - _index * 7
+    _title = _DEMO_TITLES[_index % len(_DEMO_TITLES)]
+    DOWNLOADED.append(
+        {
+            "chat": "-1001234567890",
+            "id": str(_num),
+            "filename": f"{_num} - {_title}.mp4",
+            "total_size": f"{(_index % 9) + 1}.{_index % 10}GB",
+            "completed_time": NOW - 7200 - _index * 1800,
+            "upload_state": ["uploaded", "exists", None][_index % 3],
+            "upload_success": _index % 3 != 2,
+            "save_path": f"/app/downloads/示例频道/2026_11/{_num} - {_title}.mp4",
+        }
+    )
+
 FAILED = [
     {
         "chat": "-1001234567890",
@@ -257,10 +287,61 @@ MOCK_JS = """
     if (u.indexOf('/set_config') !== -1) {
       return Promise.resolve(respond(JSON.stringify({ code: '1', applied: ['media_types'], restart_required: ['chat'], values: formPayload.values, text: configText })));
     }
-    if (u.indexOf('/pause_task') !== -1) { paused = true; }
-    if (u.indexOf('/resume_task') !== -1) { paused = false; }
-    if (u.indexOf('/retry_failed') !== -1 || u.indexOf('/clear_failed') !== -1 || u.indexOf('/delete_task') !== -1 || u.indexOf('/pause_task') !== -1) {
+    function params(url) {
+      var out = {};
+      var query = url.split('?')[1] || '';
+      query.split('&').forEach(function (part) {
+        if (!part) return;
+        var kv = part.split('=');
+        out[decodeURIComponent(kv[0])] = decodeURIComponent(kv[1] || '');
+      });
+      return out;
+    }
+    function drop(list, p) {
+      for (var i = list.length - 1; i >= 0; i--) {
+        if (String(list[i].id) === String(p.message_id) &&
+            (p.chat_id === undefined || String(list[i].chat) === String(p.chat_id))) {
+          list.splice(i, 1);
+          return true;
+        }
+      }
+      return false;
+    }
+    var p = params(u);
+    if (u.indexOf('/pause_task') !== -1 || u.indexOf('/resume_task') !== -1) {
+      var on = u.indexOf('/pause_task') !== -1;
+      data.downloading.forEach(function (row) {
+        if (String(row.id) === String(p.message_id)) row.paused = on;
+      });
+      return Promise.resolve(respond(JSON.stringify({ code: '1', changed: true })));
+    }
+    if (u.indexOf('/delete_task') !== -1) {
+      drop(data.downloading, p);
+      drop(data.downloaded, p);
+      drop(data.failed, p);
       return Promise.resolve(respond(JSON.stringify({ code: '1' })));
+    }
+    if (u.indexOf('/retry_failed') !== -1) {
+      for (var i = 0; i < data.failed.length; i++) {
+        if (String(data.failed[i].id) === String(p.message_id)) {
+          var failedRow = data.failed.splice(i, 1)[0];
+          data.downloading.push({
+            chat: failedRow.chat,
+            id: failedRow.id,
+            filename: failedRow.filename,
+            total_size: '0B',
+            download_progress: 0,
+            download_speed: '0 B/s',
+            paused: false
+          });
+          break;
+        }
+      }
+      return Promise.resolve(respond(JSON.stringify({ code: '1' })));
+    }
+    if (u.indexOf('/clear_failed') !== -1) {
+      data.failed.length = 0;
+      return Promise.resolve(respond(JSON.stringify({ code: '1', cleared: 3 })));
     }
     return Promise.resolve(respond('[]'));
   };

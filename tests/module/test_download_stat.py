@@ -13,6 +13,7 @@ from module.download_stat import (
     is_task_paused,
     mark_download_completed,
     mark_download_failed,
+    normalize_chat_id,
     remove_download_result,
     set_task_paused,
 )
@@ -108,3 +109,21 @@ class DownloadStatTestCase(unittest.TestCase):
         self.assertTrue(delete_task(-100, 10))
         self.assertEqual(get_failed_downloads(), {})
         self.assertFalse(is_task_cancelled(-100, 10))
+
+    def test_delete_accepts_text_chat_ids(self):
+        # The Web UI sends chat_id as text; the int keys must still match.
+        mark_download_failed(-100, 11, "/tmp/bad.mp4")
+        self.assertTrue(delete_task("-100", 11))
+        self.assertEqual(get_failed_downloads(), {})
+
+        with download_stat._PROGRESS_LOCK:  # pylint: disable = W0212
+            download_stat._download_result[-100] = {12: {"down_byte": 1}}
+        self.assertTrue(delete_task("-100", 12))
+        self.assertTrue(is_task_cancelled(-100, 12))
+        self.assertEqual(get_download_result(), {})
+        download_stat.clear_task_cancelled(-100, 12)
+
+    def test_normalize_chat_id(self):
+        self.assertEqual(normalize_chat_id("-100123"), -100123)
+        self.assertEqual(normalize_chat_id(-100123), -100123)
+        self.assertEqual(normalize_chat_id("@mychannel"), "@mychannel")

@@ -23,6 +23,7 @@ from module.download_stat import (
     mark_download_completed,
     mark_download_failed,
     mark_download_retried,
+    normalize_chat_id,
     remove_download_result,
     update_download_status,
 )
@@ -723,38 +724,49 @@ _retry_client: Optional["HookClient"] = None
 
 async def retry_failed_messages(
     chat_id: Union[int, str, None] = None, message_id: Optional[int] = None
-) -> int:
+) -> Tuple[int, List[str]]:
     """Re-queue failed messages without restarting the process.
 
-    The Web UI "Failed" tab calls this. Failures are also kept in
-    ``data.yaml`` (``ids_to_retry``) and re-queued on the next start, so this
-    is the fast path, not the only path.
+    Returns ``(queued_count, reasons)``; the Web UI shows the first reason when
+    nothing could be queued (message deleted, no permission, ...). Failures are
+    also kept in ``data.yaml`` (``ids_to_retry``) and re-queued on the next
+    start, so this is the fast path, not the only path.
     """
     if _retry_client is None:
         logger.warning("retry requested before the client is ready")
-        return 0
+        return 0, ["下载客户端尚未就绪，请稍后再试"]
 
+    chat_id = normalize_chat_id(chat_id)
     failed = get_failed_downloads()
     targets = []
     for cid, messages in failed.items():
-        if chat_id is not None and cid != chat_id:
+        if chat_id is not None and str(cid) != str(chat_id):
             continue
         ids = [
             mid for mid in messages if message_id is None or mid == message_id
         ]
         if ids:
-            targets.append((cid, ids))
+            targets.append((normalize_chat_id(cid), ids))
 
     if not targets:
         logger.info("no failed message matched the retry request")
-        return 0
+        return 0, ["失败记录里没有这条任务（可能已重试成功或被清理）"]
 
     retried = 0
+    reasons: List[str] = []
     for cid, ids in targets:
         chat_config = app.chat_download_config.get(cid)
-        if not chat_config:
-            logger.warning(f"retry skipped, chat {cid} is not in config")
-            continue
+        if chat_config is None:
+            chat_config = app.chat_download_config.get(str(cid))
+        if chat_config is not None:
+            node = chat_config.node
+        else:
+            # Direct-download failures (bot /download of an arbitrary link) have
+            # no chat config entry; a throwaway node still lets the queue work.
+            logger.info(
+                f"retry: chat {cid} is not configured, using a temporary task node"
+            )
+            node = TaskNode(chat_id=cid)
 
         try:
             messages = await _retry_client.get_messages(  # type: ignore
@@ -762,17 +774,25 @@ async def retry_failed_messages(
             )
         except Exception as e:  # pylint: disable = W0703
             logger.warning(f"retry fetch {cid} failed: {e}")
+            reasons.append(f"拉取消息失败：{e}")
             continue
 
         for message in messages:
             if not message or getattr(message, "empty", False):
+                logger.warning(f"retry: message {ids} in {cid} is not accessible")
+                reasons.append(
+                    f"消息 {', '.join(str(one) for one in ids)} 已不可访问"
+                    "（可能被删除或当前账号没有权限）"
+                )
                 continue
-            if await add_download_task(message, chat_config.node):
+            if await add_download_task(message, node):
                 retried += 1
                 mark_download_retried(cid, message.id)
+            else:
+                reasons.append(f"消息 {message.id} 无法重新加入队列")
 
     logger.info(f"requeued {retried} failed message(s)")
-    return retried
+    return retried, reasons
 
 
 async def run_until_all_task_finish():

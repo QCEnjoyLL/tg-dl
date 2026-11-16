@@ -8,7 +8,7 @@ import re
 import secrets
 import tempfile
 import threading
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 
 from flask import Flask, jsonify, redirect, render_template, request
 from flask_login import LoginManager, UserMixin, login_required, login_user, logout_user
@@ -30,6 +30,7 @@ from module.download_stat import (
     is_task_paused,
     mark_download_retried,
     set_download_state,
+    normalize_chat_id,
     set_task_paused,
 )
 from utils.format import format_byte
@@ -393,14 +394,19 @@ def get_failed_list():
     return jsonify(result)
 
 
-def _task_args() -> Optional[Tuple[str, int]]:
-    """Parse ``chat_id``/``message_id`` from the query string."""
+def _task_args() -> Optional[Tuple[Union[int, str], int]]:
+    """Parse ``chat_id``/``message_id`` from the query string.
+
+    Numeric ids are converted back to int: the task dictionaries are keyed by
+    the same types the downloader uses, and a string key made delete/pause a
+    silent no-op.
+    """
     chat_id = request.args.get("chat_id")
     message_id = request.args.get("message_id")
     if not chat_id or not message_id:
         return None
     try:
-        return chat_id, int(message_id)
+        return normalize_chat_id(chat_id), int(message_id)
     except ValueError:
         return None
 
@@ -448,10 +454,7 @@ def retry_failed():
     if chat_id_arg is None:
         return jsonify({"code": "0", "msg": "chat_id is required"})
 
-    try:
-        chat_id = int(chat_id_arg)
-    except ValueError:
-        chat_id = chat_id_arg
+    chat_id = normalize_chat_id(chat_id_arg)
 
     message_id = None
     if message_id_arg:
@@ -463,22 +466,33 @@ def retry_failed():
     if _retry_handler is None:
         return jsonify({"code": "0", "msg": "downloader is not ready"})
 
+    reasons: list = []
     try:
         future = _retry_handler(chat_id, message_id)
         if future is not None:
             # Wait for the coroutine so the UI learns whether anything was
             # actually queued; before this it always answered {"code":"1"}.
             try:
-                retried = future.result(timeout=10)
+                result = future.result(timeout=10)
             except Exception as wait_err:  # noqa: BLE001 - becomes the API answer
                 return jsonify({"code": "0", "msg": str(wait_err)})
+            if isinstance(result, tuple):
+                retried = int(result[0] or 0)
+                reasons = [str(reason) for reason in (result[1] or []) if reason]
+            else:
+                retried = int(result or 0)
         else:
             retried = 0
     except Exception as e:  # pylint: disable = W0703
         return jsonify({"code": "0", "msg": str(e)})
 
     if not retried:
-        return jsonify({"code": "0", "msg": "没有匹配的失败任务"})
+        return jsonify(
+            {
+                "code": "0",
+                "msg": reasons[0] if reasons else "没有匹配的失败任务",
+            }
+        )
     return jsonify({"code": "1", "retried": retried})
 
 

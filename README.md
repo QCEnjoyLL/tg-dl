@@ -3,11 +3,20 @@
 > 基于 [tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader) 的修复分支。
 > 保留原项目的全部功能（Telegram bot 指令、Web UI、rclone 上传、受保护内容下载），并持续修复实际使用中的问题。
 
-当前版本：**v2.8.2**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
+当前版本：**v2.9.0**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
 
 [![Docker](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml)
 [![Tests](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/unittest.yml/badge.svg)](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/unittest.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+---
+
+## v2.9.0 更新内容
+
+- **任务列表分页**：默认 25 条/页，可选 25 / 50 / 100 / 全部，每页条数会被记住
+- 修复**全局暂停后列表没有暂停反馈**：新增暂停横幅、行内「已暂停 / 单条暂停」标签，速度显示 `—`
+- 修复**删除任务无效**：Web 传的字符串 `chat_id` 与 int 键不匹配导致删除/重试/单条暂停全部静默失效，现在统一规范化
+- 修复**失败任务无法重试**：同一类型问题；频道不在配置中时改用临时任务节点重试，并给出具体失败原因
 
 ---
 
@@ -301,6 +310,8 @@ web_login_secret: "改成你的密码"
 - **明暗主题**：默认跟随系统，右上角可手动切换，选择记在 `localStorage`，刷新不丢
 - **顶部概览**：下载中、已完成、失败数量，以及运行/暂停状态
 - **三个标签**：下载中、已完成、失败；支持深链，`http://host:5000/#failed` 直接打开失败页
+- **分页**：每页默认 25 条，可选 25 / 50 / 100 / 全部；切换标签各自记住页码，每页条数记在 `localStorage`
+- **全局暂停提示**：点右上角「暂停」后顶部出现暂停横幅，下载中每一行标注 `已暂停` / `单条暂停`，速度冻结显示 `—`
 - **单任务控制**：每个下载中的任务可以「暂停 / 继续 / 删除」，暂停只影响该条消息，不影响其他任务
 - **失败可操作**：每行「重试」直接重新入队（无需重启）、「删除」清除记录（并同步从 `ids_to_retry` 移除，重启后不会再排队）
 - **已完成**：显示完成时间与保存路径，可一键复制路径或删除记录；标签区分 `已上传`（新文件）、`云端已有`（远端已有、跳过上传）和 `仅本地`

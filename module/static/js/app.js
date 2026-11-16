@@ -31,6 +31,10 @@
     downloading: [],
     downloaded: [],
     failed: [],
+    // Client-side pagination: the polling endpoints keep returning the full
+    // list (it is capped server-side), the table only renders one page.
+    pageSize: 25,
+    pages: { downloading: 1, downloaded: 1, failed: 1 },
   };
 
   const el = {
@@ -46,6 +50,12 @@
     liveDot: $("#live-dot"),
     empty: $("#empty"),
     emptyText: $("#empty-text"),
+    pausedBanner: $("#paused-banner"),
+    pager: $("#pager"),
+    pagerInfo: $("#pager-info"),
+    pageSize: $("#page-size"),
+    pagePrev: $("#page-prev"),
+    pageNext: $("#page-next"),
     pauseBtn: $("#pause-btn"),
     themeBtn: $("#theme-toggle"),
     configBtn: $("#config-btn"),
@@ -273,6 +283,7 @@
       '<td class="cell-name" title="' +
       esc(row.filename) +
       '">' +
+      '<span class="row-chip state-chip is-paused" hidden>已暂停</span> ' +
       nameHtml(row.filename) +
       "</td>" +
       '<td class="cell-size">' +
@@ -301,9 +312,22 @@
       if (label.textContent !== text) label.textContent = text;
     }
 
+    const globalPaused = state.action === "continue";
     const speed = tr.querySelector(".cell-speed");
-    const value = row.download_speed === undefined ? "" : String(row.download_speed);
+    const frozen = globalPaused || Boolean(row.paused);
+    const value = frozen
+      ? "—"
+      : row.download_speed === undefined
+      ? ""
+      : String(row.download_speed);
     if (speed && speed.textContent !== value) speed.textContent = value;
+
+    const chip = tr.querySelector(".row-chip");
+    if (chip) {
+      chip.hidden = !(globalPaused || row.paused);
+      chip.textContent = row.paused ? "单条暂停" : "已暂停";
+    }
+    tr.classList.toggle("is-paused", globalPaused || Boolean(row.paused));
 
     const pauseBtn = tr.querySelector('[data-action="pause"]');
     if (pauseBtn) {
@@ -399,10 +423,73 @@
     if (deleteBtn) deleteBtn.setAttribute("aria-label", "删除失败记录 " + row.filename);
   }
 
+  function tabRows(tab) {
+    if (tab === "downloading") return state.downloading;
+    if (tab === "downloaded") return state.downloaded;
+    return state.failed;
+  }
+
+  /** Slice the full list into the current page for ``tab``. */
+  function pageInfo(tab) {
+    const rows = tabRows(tab);
+    const total = rows.length;
+    const size = state.pageSize;
+    if (!size) {
+      state.pages[tab] = 1;
+      return { rows, total, page: 1, pages: 1, start: 0, end: total };
+    }
+    const pages = Math.max(1, Math.ceil(total / size));
+    const page = Math.min(Math.max(1, state.pages[tab] || 1), pages);
+    state.pages[tab] = page;
+    const start = (page - 1) * size;
+    return {
+      rows: rows.slice(start, start + size),
+      total,
+      page,
+      pages,
+      start,
+      end: Math.min(start + size, total),
+    };
+  }
+
+  function renderPager(tab, info) {
+    if (!el.pager) return;
+    // One shared pager: only the visible tab may update it (background loads
+    // for other tabs used to overwrite it mid-switch).
+    if (tab !== state.tab) return;
+    // Keep the footer visible whenever there is data: the page-size selector
+    // lives there, so hiding it on a single page would trap the choice.
+    if (!info.total) {
+      el.pager.hidden = true;
+      return;
+    }
+    el.pager.hidden = false;
+    setText(
+      el.pagerInfo,
+      state.pageSize
+        ? "第 " +
+            (info.start + 1) +
+            "-" +
+            info.end +
+            " 条 / 共 " +
+            info.total +
+            " 条 · 第 " +
+            info.page +
+            "/" +
+            info.pages +
+            " 页"
+        : "共 " + info.total + " 条"
+    );
+    if (el.pagePrev) el.pagePrev.disabled = !state.pageSize || info.page <= 1;
+    if (el.pageNext)
+      el.pageNext.disabled = !state.pageSize || info.page >= info.pages;
+  }
+
   function renderDownloading() {
+    const info = pageInfo("downloading");
     syncRows(
       el.tables.downloading.querySelector("tbody"),
-      state.downloading,
+      info.rows,
       rowKey,
       buildDownloadingRow,
       updateDownloadingRow
@@ -410,13 +497,15 @@
     setText(el.statActive, state.downloading.length);
     setText(el.badgeDownloading, state.downloading.length);
     if (el.badgeDownloading) el.badgeDownloading.hidden = state.downloading.length === 0;
+    renderPager("downloading", info);
     renderEmpty();
   }
 
   function renderDownloaded() {
+    const info = pageInfo("downloaded");
     syncRows(
       el.tables.downloaded.querySelector("tbody"),
-      state.downloaded,
+      info.rows,
       rowKey,
       buildDownloadedRow,
       updateDownloadedRow
@@ -424,17 +513,20 @@
     setText(el.statDone, state.downloaded.length);
     setText(el.badgeDone, state.downloaded.length);
     if (el.badgeDone) el.badgeDone.hidden = state.downloaded.length === 0;
+    renderPager("downloaded", info);
     renderEmpty();
   }
 
   function renderFailed() {
+    const info = pageInfo("failed");
     syncRows(
       el.tables.failed.querySelector("tbody"),
-      state.failed,
+      info.rows,
       rowKey,
       buildFailedRow,
       updateFailedRow
     );
+    renderPager("failed", info);
     renderEmpty();
   }
 
@@ -444,12 +536,7 @@
       downloaded: "本次运行还没有完成的下载",
       failed: "没有失败任务",
     };
-    const rows =
-      state.tab === "downloading"
-        ? state.downloading
-        : state.tab === "downloaded"
-        ? state.downloaded
-        : state.failed;
+    const rows = tabRows(state.tab);
     if (el.empty) el.empty.hidden = rows.length > 0;
     setText(el.emptyText, messages[state.tab] || "");
   }
@@ -462,6 +549,8 @@
       el.statState.classList.toggle("is-paused", !running);
     }
     if (el.liveDot) el.liveDot.classList.toggle("is-paused", !running);
+
+    if (el.pausedBanner) el.pausedBanner.hidden = running;
 
     if (el.pauseBtn) {
       el.pauseBtn.dataset.value = state.action;
@@ -512,7 +601,53 @@
       setText(el.badgeDone, res.completed);
       if (el.badgeDone) el.badgeDone.hidden = res.completed === 0;
     }
+    const running = !(res && res.state === "paused");
+    const nextAction = running ? "pause" : "continue";
+    if (nextAction !== state.action) {
+      state.action = nextAction;
+      renderStatus();
+      if (state.tab === "downloading") renderDownloading();
+    }
     setText(el.updated, "更新于 " + clockText());
+  }
+
+  function stepPage(delta) {
+    if (!state.pageSize) return;
+    const tab = state.tab;
+    const total = tabRows(tab).length;
+    const pages = Math.max(1, Math.ceil(total / state.pageSize));
+    const next = Math.min(Math.max(1, (state.pages[tab] || 1) + delta), pages);
+    if (next === state.pages[tab]) return;
+    state.pages[tab] = next;
+    renderCachedTab();
+  }
+
+  function initPager() {
+    let size = 25;
+    try {
+      const raw = localStorage.getItem("tgdl-page-size");
+      const saved = raw === null ? NaN : Number(raw);
+      if ([0, 25, 50, 100].indexOf(saved) !== -1) size = saved;
+    } catch (e) {
+      /* private mode: keep the default */
+    }
+    state.pageSize = size;
+    if (el.pageSize) el.pageSize.value = String(size);
+    if (el.pagePrev) el.pagePrev.addEventListener("click", () => stepPage(-1));
+    if (el.pageNext) el.pageNext.addEventListener("click", () => stepPage(1));
+    if (el.pageSize) {
+      el.pageSize.addEventListener("change", () => {
+        const next = Number(el.pageSize.value);
+        state.pageSize = [0, 25, 50, 100].indexOf(next) !== -1 ? next : 25;
+        try {
+          localStorage.setItem("tgdl-page-size", String(state.pageSize));
+        } catch (e) {
+          /* private mode */
+        }
+        state.pages[state.tab] = 1;
+        renderCachedTab();
+      });
+    }
   }
 
   function refreshActive() {
@@ -709,12 +844,11 @@
    * Destructive actions get a distinct treatment instead of a silent delete.
    * The armed state swaps icon and label, so it is not carried by colour alone.
    */
-  function confirmOrRun(button, run) {
+  function confirmOrRun(button) {
     if (button.dataset.confirm === "1") {
       clearTimeout(Number(button.dataset.timer || 0));
       button.dataset.confirm = "0";
       restoreLabel(button);
-      run();
       return;
     }
 
@@ -747,13 +881,7 @@
     const action = button.dataset.action;
 
     if (action === "delete" && button.dataset.confirm !== "1") {
-      confirmOrRun(button, () => {
-        button.disabled = true;
-        deleteRow(row).catch((err) => toast("操作失败：" + err.message, "error"))
-          .finally(() => {
-            button.disabled = false;
-          });
-      });
+      confirmOrRun(button);
       return;
     }
 
@@ -768,6 +896,11 @@
       toast("操作失败：" + err.message, "error");
     } finally {
       button.disabled = false;
+      if (action === "delete") {
+        clearTimeout(Number(button.dataset.timer || 0));
+        button.dataset.confirm = "0";
+        restoreLabel(button);
+      }
     }
   }
 
@@ -1308,6 +1441,7 @@
   function start() {
     initTheme();
     bind();
+    initPager();
     renderStatus();
     renderSpeed("--");
 

@@ -56,13 +56,33 @@ _last_download_time: float = time.time()
 _download_state: DownloadState = DownloadState.Downloading
 
 
+def normalize_chat_id(chat_id):
+    """Canonical chat id: int for numeric ids, the original string otherwise.
+
+    The Web UI round-trips everything as text (``-100123``), while tasks and the
+    YAML config use ints. Comparing the two without normalizing made every
+    delete/retry a silent no-op, because the string key did not match the int
+    key in the per-chat dicts.
+    """
+    if isinstance(chat_id, bool):
+        return chat_id
+    if isinstance(chat_id, int):
+        return chat_id
+    if isinstance(chat_id, str):
+        text = chat_id.strip()
+        if text.lstrip("-").isdigit():
+            return int(text)
+        return chat_id
+    return chat_id
+
+
 def _task_key(chat_id, message_id: int):
     """Normalize a task key.
 
     YAML chat ids are ints while ``@username`` chats are strings, and the Web UI
     round-trips everything as text. Keep a single canonical form per message.
     """
-    return (str(chat_id), int(message_id))
+    return (str(normalize_chat_id(chat_id)), int(message_id))
 
 
 def get_download_result() -> dict:
@@ -94,6 +114,7 @@ def mark_download_failed(
     chat_id, message_id: int, file_name: str = "", reason: str = ""
 ) -> None:
     """Remember a failed download so the Web UI can list and retry it."""
+    chat_id = normalize_chat_id(chat_id)
     with _PROGRESS_LOCK:
         _failed_downloads.setdefault(chat_id, {})[message_id] = {
             "file_name": os.path.basename(file_name) if file_name else "",
@@ -105,6 +126,7 @@ def mark_download_failed(
 
 def mark_download_retried(chat_id, message_id: int) -> None:
     """Forget one failure after it was queued again."""
+    chat_id = normalize_chat_id(chat_id)
     with _PROGRESS_LOCK:
         messages = _failed_downloads.get(chat_id)
         if not messages:
@@ -116,6 +138,8 @@ def mark_download_retried(chat_id, message_id: int) -> None:
 
 def clear_failed_downloads(chat_id=None) -> int:
     """Forget every recorded failure, optionally for a single chat."""
+    if chat_id is not None:
+        chat_id = normalize_chat_id(chat_id)
     with _PROGRESS_LOCK:
         if chat_id is None:
             count = sum(len(messages) for messages in _failed_downloads.values())
@@ -142,6 +166,7 @@ def mark_download_completed(
     last reported percentage. The bot card said "success" while the Web UI kept
     showing the same message at 100% under "downloading".
     """
+    chat_id = normalize_chat_id(chat_id)
     with _PROGRESS_LOCK:
         messages = _download_result.get(chat_id)
         row = messages.pop(message_id, None) if messages else None
@@ -175,6 +200,7 @@ def mark_download_completed(
 
 def remove_download_result(chat_id, message_id: int) -> None:
     """Drop a row from the in-progress list."""
+    chat_id = normalize_chat_id(chat_id)
     with _PROGRESS_LOCK:
         messages = _download_result.get(chat_id)
         if not messages or message_id not in messages:
@@ -189,6 +215,7 @@ def delete_task(chat_id, message_id: int) -> bool:
 
     This backs the Web UI "delete" action on all three tabs.
     """
+    chat_id = normalize_chat_id(chat_id)
     key = _task_key(chat_id, message_id)
     with _PROGRESS_LOCK:
         existed = False
@@ -316,7 +343,7 @@ async def update_download_status(
 
     await _wait_until_runnable(node, client, message_id)
 
-    chat_id = node.chat_id
+    chat_id = normalize_chat_id(node.chat_id)
 
     with _PROGRESS_LOCK:
         messages = _download_result.setdefault(chat_id, {})
@@ -368,6 +395,7 @@ async def update_download_status(
 
 def get_download_progress(chat_id, message_id: int) -> Optional[dict]:
     """Return one in-progress row (already copied)."""
+    chat_id = normalize_chat_id(chat_id)
     with _PROGRESS_LOCK:
         messages = _download_result.get(chat_id)
         if not messages or message_id not in messages:

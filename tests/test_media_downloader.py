@@ -1108,3 +1108,54 @@ class MediaDownloaderTestCase(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.loop.close()
+
+
+class RetryFailedMessagesTestCase(unittest.IsolatedAsyncioTestCase):
+    """The Web UI retry must work for text chat ids and unconfigured chats."""
+
+    def _client(self, message):
+        client = mock.Mock()
+        client.get_messages = mock.AsyncMock(return_value=[message])
+        return client
+
+    async def test_retry_with_text_chat_id_and_temporary_node(self):
+        import media_downloader as md
+
+        message = mock.Mock()
+        message.empty = False
+        message.id = 5
+        failed = {-100: {5: {"file_name": "", "time": 1, "reason": ""}}}
+
+        with mock.patch.object(md, "_retry_client", self._client(message)),                 mock.patch.object(md, "get_failed_downloads", return_value=failed),                 mock.patch.object(md.app, "chat_download_config", {}),                 mock.patch.object(
+                    md, "add_download_task", new=mock.AsyncMock(return_value=True)
+                ),                 mock.patch.object(md, "mark_download_retried") as marked:
+            retried, reasons = await md.retry_failed_messages("-100", 5)
+
+        self.assertEqual(retried, 1)
+        self.assertEqual(reasons, [])
+        marked.assert_called_once_with(-100, 5)
+
+    async def test_retry_reports_an_inaccessible_message(self):
+        import media_downloader as md
+
+        message = mock.Mock()
+        message.empty = True
+        failed = {-100: {9: {"file_name": "", "time": 1, "reason": ""}}}
+
+        with mock.patch.object(md, "_retry_client", self._client(message)),                 mock.patch.object(md, "get_failed_downloads", return_value=failed),                 mock.patch.object(md.app, "chat_download_config", {}),                 mock.patch.object(
+                    md, "add_download_task", new=mock.AsyncMock(return_value=True)
+                ):
+            retried, reasons = await md.retry_failed_messages(-100, 9)
+
+        self.assertEqual(retried, 0)
+        self.assertTrue(reasons)
+        self.assertIn("不可访问", reasons[0])
+
+    async def test_retry_reports_missing_failed_record(self):
+        import media_downloader as md
+
+        with mock.patch.object(md, "_retry_client", mock.Mock()),                 mock.patch.object(md, "get_failed_downloads", return_value={}):
+            retried, reasons = await md.retry_failed_messages(-100, 9)
+
+        self.assertEqual(retried, 0)
+        self.assertTrue(reasons)

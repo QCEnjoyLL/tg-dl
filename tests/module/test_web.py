@@ -167,14 +167,14 @@ class WebApiTestCase(unittest.TestCase):
                 "/pause_task?chat_id=-100123&message_id=7"
             )
         self.assertEqual(response.get_json()["code"], "1")
-        pause.assert_called_once_with("-100123", 7, True)
+        pause.assert_called_once_with(-100123, 7, True)
 
         with mock.patch.object(web, "set_task_paused", return_value=True) as resume:
             response = self.client.post(
                 "/resume_task?chat_id=-100123&message_id=7"
             )
         self.assertEqual(response.get_json()["code"], "1")
-        resume.assert_called_once_with("-100123", 7, False)
+        resume.assert_called_once_with(-100123, 7, False)
 
     def test_delete_task(self):
         with mock.patch.object(web, "delete_task") as delete:
@@ -182,7 +182,22 @@ class WebApiTestCase(unittest.TestCase):
                 "/delete_task?chat_id=-100123&message_id=7"
             )
         self.assertEqual(response.get_json()["code"], "1")
-        delete.assert_called_once_with("-100123", 7)
+        delete.assert_called_once_with(-100123, 7)
+
+    def test_delete_task_cancels_a_downloading_task(self):
+        from module import download_stat
+
+        with download_stat._PROGRESS_LOCK:  # pylint: disable = W0212
+            download_stat._download_result[-100] = {  # pylint: disable = W0212
+                7: {"down_byte": 1}
+            }
+        try:
+            response = self.client.post("/delete_task?chat_id=-100&message_id=7")
+            self.assertEqual(response.get_json()["code"], "1")
+            self.assertEqual(download_stat.get_download_result(), {})
+            self.assertTrue(download_stat.is_task_cancelled(-100, 7))
+        finally:
+            download_stat.clear_task_cancelled(-100, 7)
 
     def test_retry_reports_zero_queued_as_failure(self):
         future = mock.Mock()
@@ -194,13 +209,42 @@ class WebApiTestCase(unittest.TestCase):
 
     def test_retry_reports_queued_count(self):
         future = mock.Mock()
-        future.result.return_value = 2
+        future.result.return_value = (2, [])
         with mock.patch.object(web, "_retry_handler", return_value=future):
             response = self.client.post("/retry_failed?chat_id=-100123")
 
         payload = response.get_json()
         self.assertEqual(payload["code"], "1")
         self.assertEqual(payload["retried"], 2)
+
+    def test_retry_reports_the_reason_when_nothing_queued(self):
+        future = mock.Mock()
+        future.result.return_value = (0, ["消息 132 已不可访问"])
+        with mock.patch.object(web, "_retry_handler", return_value=future):
+            response = self.client.post(
+                "/retry_failed?chat_id=-100123&message_id=132"
+            )
+
+        payload = response.get_json()
+        self.assertEqual(payload["code"], "0")
+        self.assertEqual(payload["msg"], "消息 132 已不可访问")
+
+    def test_delete_task_accepts_a_text_chat_id(self):
+        # The table renders the chat id as text; the handler must convert it back
+        # to int or the delete silently misses the in-memory task dict.
+        with mock.patch.object(web, "delete_task") as delete:
+            self.client.post("/delete_task?chat_id=-100123&message_id=7")
+        delete.assert_called_once_with(-100123, 7)
+
+    def test_retry_accepts_a_username_chat(self):
+        future = mock.Mock()
+        future.result.return_value = (1, [])
+        with mock.patch.object(web, "_retry_handler") as handler:
+            handler.return_value = future
+            response = self.client.post("/retry_failed?chat_id=%40mychannel")
+
+        self.assertEqual(response.get_json()["code"], "1")
+        self.assertEqual(handler.call_args[0][0], "@mychannel")
 
 
 class _ConfigFixture(unittest.TestCase):

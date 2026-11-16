@@ -135,6 +135,14 @@
         </div>
       </div>
 
+      <div class="paused-banner" id="paused-banner" hidden>
+        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round">
+          <path d="M9 5v14M15 5v14" />
+        </svg>
+        <span>全部任务已暂停：传输与速度已冻结，点右上角「继续」恢复。</span>
+      </div>
+
       <div class="table-scroll" id="table-scroll" tabindex="0" role="region" aria-label="任务表格">
         <table class="table" id="table-downloading">
           <thead>
@@ -185,6 +193,21 @@
           <path d="M12 3v11" />
         </svg>
         <p id="empty-text">暂无任务</p>
+      </div>
+
+      <div class="pager" id="pager" hidden>
+        <span class="pager-info" id="pager-info"></span>
+        <div class="pager-controls">
+          <label class="pager-size-label" for="page-size">每页</label>
+          <select class="pager-size" id="page-size">
+            <option value="25">25 条</option>
+            <option value="50">50 条</option>
+            <option value="100">100 条</option>
+            <option value="0">全部</option>
+          </select>
+          <button class="btn btn-ghost btn-page" id="page-prev" type="button">上一页</button>
+          <button class="btn btn-ghost btn-page" id="page-next" type="button">下一页</button>
+        </div>
       </div>
     </section>
   </main>
