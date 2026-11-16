@@ -4,9 +4,11 @@ import os
 import platform
 import queue
 import sys
+import tempfile
+import time
 import unittest
 from datetime import datetime
-from typing import List, Union
+from typing import List
 
 import mock
 import pyrogram
@@ -14,28 +16,22 @@ import pyrogram
 from media_downloader import (
     _can_download,
     _check_config,
+    _cleanup_stale_temp_files,
     _get_media_meta,
     _is_exist,
     app,
     download_all_chat,
     download_media,
-    download_task,
     main,
     save_msg_to_file,
-    worker,
 )
 from module.app import Application, DownloadStatus, TaskNode
 from module.cloud_drive import CloudDriveConfig
-from module.pyrogram_extension import (
-    get_extension,
-    record_download_status,
-    reset_download_cache,
-)
+from module.pyrogram_extension import reset_download_cache
 from module.pyrogram_guard import DownloadIncomplete
 
 from .test_common import (
     Chat,
-    Date,
     MockAudio,
     MockDocument,
     MockMessage,
@@ -1309,3 +1305,24 @@ class FloodErrorDescriptionTestCase(unittest.TestCase):
         error = pyrogram.errors.exceptions.flood_420.FloodWait(value=7)
         self.assertEqual(md._flood_wait_seconds(error), 7.0)
         self.assertEqual(md._flood_wait_seconds(RuntimeError("boom")), 0.0)
+
+    def test_cleanup_stale_temp_files(self):
+        import media_downloader as md
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            fresh = os.path.join(tmp_dir, "fresh.temp")
+            stale = os.path.join(tmp_dir, "stale.temp")
+            keep = os.path.join(tmp_dir, "keep.mp4")
+            for path in (fresh, stale, keep):
+                open(path, "wb").close()
+
+            old_time = time.time() - md.STALE_TEMP_MAX_AGE - 10
+            for path in (stale, keep):
+                os.utime(path, (old_time, old_time))
+
+            removed = _cleanup_stale_temp_files(tmp_dir)
+
+            self.assertEqual(removed, 1)
+            self.assertFalse(os.path.exists(stale))
+            self.assertTrue(os.path.exists(fresh))
+            self.assertTrue(os.path.exists(keep))

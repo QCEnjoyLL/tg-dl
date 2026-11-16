@@ -75,6 +75,18 @@
 - `docker-compose.yaml` 增加 `stop_signal: SIGINT` 和 `stop_grace_period: 2m`
 - 失败任务同时保留在 `data.yaml` 的 `ids_to_retry` 中，下次启动仍会自动重排
 
+### 5. 断点续传，失败不白下
+
+`module/pyrogram_guard.py` / `module/fast_download.py` / `media_downloader.py`
+
+- fork 的 `handle_download` 失败时会删掉 `.temp`，重试从 0 开始；现在保留半成品，重试（Web UI
+  的「重试」、`data.yaml` 的 `ids_to_retry`、或进程重启后的自动重排）从最后一个**完整的 1 MiB
+  边界**继续，末尾不完整的分片先截掉，保证不会重复写字节
+- 启动时清理 7 天前的 `.temp`（没人再重试的残留），其余保留
+- 下载补丁链收敛为一条：`get_file` 只包一层，`handle_download` = 截断守卫 → 并行分片 → 断点续传
+  → fork 原实现，单文件并行分片与顺序下载共用同一套失败/清理语义
+- 跨文件系统的最终移动（`shutil.move` 会复制整个文件）放到线程池，2 GB 文件不再卡住进度卡片
+
 ---
 
 ## 快速开始
@@ -375,6 +387,12 @@ v2.9.1 已修。底层 Pyrogram fork 会吞掉 `upload.GetFile` 的异常，把�
 旧版的大小校验又把它当成引用过期。现在下载器会在流提前结束时按 1 MiB 块边界自动续传，
 只有连续 3 次完全没有进展才判定失败，并在失败记录里写明「只收到 X / 应为 Y 字节」。
 
+**Q：下载到一半失败了 / 容器重启了，之前的进度会丢吗？**
+v2.11.0 起不会。失败或中断时 `.temp` 会保留，重试（Web UI 的「重试」、`data.yaml` 的
+`ids_to_retry`、或进程重启后的自动重排）从最后一个完整的 1 MiB 边界继续，末尾不完整的分片
+会先截掉，不会重复写字节。启动时只清理 7 天前的 `.temp`（没人再重试的残留），想彻底重下
+就手动删掉 `temp/` 目录下对应的 `.temp`。
+
 **Q：日志一直刷 `[-500 TIMEOUT] ... caused by "upload.GetFile"`，这个文件一直下不下来？**
 这是 **Telegram 存储节点取文件超时**，不是文件过期，也不是程序 bug；重试同一条会一直得到同样的结果。v2.9.3 起失败页会直接显示这条原因并给出提示，不再笼统地说「下载中途中断」。
 
@@ -486,9 +504,10 @@ v2.8.1 起上传前会先 `rclone lsjson --stat` 检查目标：同名且大小�
 
 ## 与上游的差异
 
-- 修复上述四个问题（见上文修复清单）
+- 修复上述五个问题（见上文修复清单）
 - 修复 Web 写接口契约（真实 JSON）、认证绕过、rclone 命令注入、上传失败误删本地、任务卡死等 P0 问题
 - 重写 Web UI 与登录页：明暗主题、概览卡片、单任务暂停/恢复/删除、在线配置编辑、退出登录、失败重试/删除、移动端适配、深链；移除 layui 与前端假 AES 加密，静态资源从 ~880KB 降到 ~35KB（CSS/JS 合计）
+- 统一下载补丁链（`fast_download` + 断点续传 + 流截断守卫），失败/中断留下的 `.temp` 在重试时从断点继续；依赖升到 Flask 3.1 / Werkzeug 3.1
 - 重写 Dockerfile：加 `tzdata`、`PYTHONUNBUFFERED`、OCI 标签、`STOPSIGNAL SIGINT`
 - 重写镜像工作流：GHCR + buildx 缓存 + 语法检查，移除上游依赖 Docker Hub secrets 的旧流水线
 - 测试 job 改为必过（`Tests`），修复上游遗留的测试腐化，并覆盖 Web 接口、rclone 参数、上传失败删除和任务终态
@@ -514,6 +533,20 @@ v2.8.1 起上传前会先 `rclone lsjson --stat` 检查目标：同名且大小�
 > Docker / compose 用户不受影响（配置本来就是挂载进容器的，从未进过镜像）。
 
 逐条历史记录见 [CHANGELOG.md](CHANGELOG.md)；当前版本见顶部的 Release 徽章。
+
+<details>
+<summary><b>v2.11.0</b> — 断点续传，下载补丁链收敛，依赖升级</summary>
+
+- **断点续传**：失败/中断都会保留 `.temp`，重试从最后一个完整的 1 MiB 边界继续，不再从 0
+  重下；启动时清理 7 天前的残留
+- **下载补丁链收敛为一条**：`get_file` 只包一层，`handle_download` = 截断守卫 → 并行分片 →
+  断点续传 → fork 原实现，单文件并行分片与顺序下载共用同一套失败/清理语义
+- **跨文件系统的最终移动放到线程池**：复制 2 GB 文件时不再卡住进度卡片和 Web UI
+- **Web 线程与下载线程的竞态**：`download_status` 的清理改到下载循环线程执行
+- **长跑内存上限**：媒体组 caption 缓存按会话限 64 组，失败列表每会话限 500 条
+- 依赖升级到 Flask 3.1 / Werkzeug 3.1 / Flask-Login 0.6.3，CI 增加 `ruff` 门禁
+
+</details>
 
 <details>
 <summary><b>v2.10.3</b> — 清理死代码与依赖，修正速度单位</summary>

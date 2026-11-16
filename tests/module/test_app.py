@@ -4,7 +4,6 @@ import os
 import sys
 import tempfile
 import unittest
-from unittest import mock
 
 from ruamel import yaml
 
@@ -230,3 +229,29 @@ class AppTestCase(unittest.TestCase):
 
             # The message has to tell the operator what to do, not just fail.
             self.assertIn("config.yaml.example", str(caught.exception))
+
+    def test_caption_cache_is_bounded_per_chat(self):
+        # One entry per album ever seen would grow for the whole run.
+        app = Application.__new__(Application)
+        app.caption_name_dict = {}
+        app.caption_entities_dict = {}
+        limit = module.app.MAX_CAPTION_CACHE_GROUPS
+
+        for index in range(limit + 10):
+            app.set_caption_name(-100, f"group-{index}", f"caption-{index}")
+            app.set_caption_entities(-100, f"group-{index}", [index])
+
+        self.assertEqual(len(app.caption_name_dict[-100]), limit)
+        self.assertEqual(len(app.caption_entities_dict[-100]), limit)
+
+        newest = limit + 9
+        self.assertEqual(
+            app.get_caption_name(-100, f"group-{newest}"),
+            f"caption-{newest}",
+        )
+        self.assertEqual(
+            app.get_caption_entities(-100, f"group-{newest}"), [newest]
+        )
+        # The oldest group was evicted.
+        self.assertIsNone(app.get_caption_name(-100, "group-0"))
+        self.assertIsNone(app.get_caption_entities(-100, "group-0"))

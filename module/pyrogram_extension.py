@@ -1,7 +1,6 @@
 """Pyrogram ext"""
 
 import asyncio
-import html
 import os
 import secrets
 import struct
@@ -15,9 +14,8 @@ from typing import Callable, Iterable, List, Optional, Tuple, Union
 
 import pyrogram
 from loguru import logger
-from pyrogram import enums, parser, types, utils
+from pyrogram import enums, types
 from pyrogram.client import Cache
-from pyrogram.enums import MessageEntityType
 from pyrogram.file_id import (
     FILE_REFERENCE_FLAG,
     PHOTO_TYPES,
@@ -1015,13 +1013,11 @@ async def proc_cache_forward(
 
     reply_to_message_id = None
     message_thread_id = node.topic_id
-    business_connection_id = None
     upload_telegram_chat_id = node.upload_telegram_chat_id
     if node.reply_to_message:
         if node.reply_to_message.chat.type != pyrogram.enums.ChatType.PRIVATE:
             reply_to_message_id = node.reply_to_message.id
         message_thread_id = node.reply_to_message.message_thread_id
-        business_connection_id = node.reply_to_message.business_connection_id
         upload_telegram_chat_id = node.reply_to_message.chat.id
     if not await send_media_group_v2(
         client,

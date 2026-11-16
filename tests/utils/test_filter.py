@@ -8,16 +8,10 @@ import mock
 from module.filter import Filter, MetaData
 from module.pyrogram_extension import set_meta_data
 from tests.test_common import (
-    Chat,
-    Date,
-    MockAudio,
-    MockDocument,
     MockMessage,
     MockPhoto,
     MockUser,
     MockVideo,
-    MockVideoNote,
-    MockVoice,
     get_extension,
 )
 from utils.format import replace_date_time

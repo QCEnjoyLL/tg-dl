@@ -605,19 +605,33 @@ def retry_failed():
     return jsonify({"code": "1", "retried": retried})
 
 
-def _forget_failed_ids(chat_id, message_id: Optional[int]) -> None:
-    """Also drop the id from ``ids_to_retry`` so a restart cannot re-queue it."""
-    if _application is None:
-        return
-    chat_config = _application.chat_download_config.get(chat_id)
-    if chat_config is None:
-        return
+def _apply_forget(chat_config, message_id: Optional[int]) -> None:
+    """Drop the ids from the retry bookkeeping (must run on the loop)."""
     ids = [message_id] if message_id is not None else list(chat_config.ids_to_retry)
     for one_id in ids:
         if one_id in chat_config.ids_to_retry:
             chat_config.ids_to_retry.remove(one_id)
         chat_config.ids_to_retry_dict.pop(one_id, None)
         chat_config.node.download_status.pop(one_id, None)
+
+
+def _forget_failed_ids(chat_id, message_id: Optional[int]) -> None:
+    """Also drop the id from ``ids_to_retry`` so a restart cannot re-queue it."""
+    # These structures belong to the download loop: resizing
+    # ``download_status`` from the Flask thread can raise
+    # "dictionary changed size during iteration". Schedule the change onto
+    # the loop; call it directly when the loop is not running (tests,
+    # shutdown).
+    if _application is None:
+        return
+    chat_config = _application.chat_download_config.get(chat_id)
+    if chat_config is None:
+        return
+    loop = getattr(_application, "loop", None)
+    if loop is not None and loop.is_running():
+        loop.call_soon_threadsafe(_apply_forget, chat_config, message_id)
+    else:
+        _apply_forget(chat_config, message_id)
 
 
 @_flask_app.route("/clear_failed", methods=["POST"])

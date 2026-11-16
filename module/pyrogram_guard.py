@@ -29,6 +29,9 @@ import asyncio
 import contextvars
 import functools
 import logging
+import os
+import re
+import shutil
 from typing import Optional
 
 log = logging.getLogger(__name__)
@@ -233,16 +236,18 @@ def guard_get_file(original):
         progress=None,
         progress_args=(),
     ):
-        # Only the plain "download the whole file" call is guarded. Callers that
-        # ask for a limited range keep the fork's behaviour.
-        if not file_size or limit or offset:
+        # Only whole-file calls are guarded. A ``limit`` means "fetch this range"
+        # (the parallel downloader), which keeps the fork's behaviour; a plain
+        # ``offset`` now means "resume this file from that chunk", which the
+        # resumable ``handle_download`` uses to continue a partial ``.temp``.
+        if not file_size or limit:
             async for chunk in original(
                 self, file_id, file_size, limit, offset, progress, progress_args
             ):
                 yield chunk
             return
 
-        received = 0
+        received = max(offset, 0) * CHUNK_SIZE
         stalled = 0
         flood_waits = 0
         while received < file_size:
@@ -318,6 +323,98 @@ def guard_get_file(original):
 
     guarded_get_file.__tdl_guarded__ = True
     return guarded_get_file
+
+
+def resumable_handle_download(original):
+    """Keep a partial ``.temp`` so the next attempt continues where it stopped.
+
+    Stock ``handle_download`` opens the target with ``"wb"`` and deletes the
+    partial file whenever ``get_file`` fails, so a 2 GB download that dies at
+    90% starts again from zero on the retry — or after a restart, which is the
+    common case when Telegram throttles an account for hours. This wrapper keeps
+    the bytes, resumes at the last complete 1 MiB chunk and renames on success.
+    """
+
+    async def handle_download(self, packet):
+        file_id, directory, file_name, in_memory, file_size, progress, progress_args = (
+            packet
+        )
+        if in_memory or not file_size:
+            return await original(self, packet)
+
+        os.makedirs(directory, exist_ok=True)
+        temp_path = (
+            os.path.abspath(re.sub("\\\\", "/", os.path.join(directory, file_name)))
+            + ".temp"
+        )
+        final_path = os.path.splitext(temp_path)[0]
+
+        start_offset = _resume_offset(temp_path, file_size)
+        if start_offset >= file_size:
+            # A complete leftover from a run that died before the rename.
+            shutil.move(temp_path, final_path)
+            return final_path
+
+        received = start_offset
+        try:
+            with open(temp_path, "ab" if start_offset else "wb") as file_obj:
+                async for chunk in self.get_file(
+                    file_id,
+                    file_size,
+                    0,
+                    start_offset // CHUNK_SIZE,
+                    progress,
+                    progress_args,
+                ):
+                    if not chunk:
+                        continue
+                    file_obj.write(chunk)
+                    received += len(chunk)
+        except BaseException as error:  # pylint: disable = W0703
+            if isinstance(error, (asyncio.CancelledError,) + _propagated_errors()):
+                raise
+            _captured_error.set(error)
+            log.warning(
+                "[%s] download failed after %s/%s bytes; keeping the partial file",
+                getattr(self, "name", "client"),
+                received,
+                file_size,
+            )
+            return None
+
+        if received < file_size:
+            _captured_error.set(DownloadIncomplete(received, file_size))
+            return None
+
+        shutil.move(temp_path, final_path)
+        return final_path
+
+    handle_download.__tdl_resumable__ = True
+    return handle_download
+
+
+def _resume_offset(temp_path: str, file_size: int) -> int:
+    """Bytes already on disk that can be trusted, or 0 to start over."""
+    if not os.path.exists(temp_path):
+        return 0
+    try:
+        written = os.path.getsize(temp_path)
+    except OSError:
+        return 0
+    if written <= 0:
+        return 0
+    if written >= file_size:
+        return file_size
+    # Resume on a chunk boundary: a stream can stop in the middle of a chunk,
+    # and appending from a partial chunk would duplicate bytes.
+    aligned = (written // CHUNK_SIZE) * CHUNK_SIZE
+    if aligned != written:
+        try:
+            with open(temp_path, "r+b") as file_obj:
+                file_obj.truncate(aligned)
+        except OSError:
+            return 0
+    return aligned
 
 
 def guard_handle_download(original):

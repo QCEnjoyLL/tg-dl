@@ -661,12 +661,17 @@ async def download_media(
             if temp_download_path and isinstance(temp_download_path, str):
                 _check_download_finish(media_size, temp_download_path, ui_file_name)
                 await asyncio.sleep(0.5)
-                _move_to_download_path(temp_download_path, file_name)
+                # Cross-device moves copy the file; keep the loop free while a
+                # multi-GB file is being copied.
+                await asyncio.to_thread(
+                    _move_to_download_path, temp_download_path, file_name
+                )
                 # TODO: if not exist file size or media
                 return DownloadStatus.SuccessDownload, file_name
 
-            # No path came back: the client aborted and removed its temp file.
-            # Pause before the next attempt instead of hammering the queue.
+            # No path came back: the client aborted and kept its partial file, so
+            # the next attempt resumes from it. Pause before the retry instead of
+            # hammering the queue.
             last_error = _t("download aborted before the file was written")
             delay = _retry_delay(retry)
             logger.warning(
@@ -993,6 +998,34 @@ async def stop_server(client: pyrogram.Client):
     await client.stop()
 
 
+#: Partial downloads (``.temp``) are kept so a restart can resume them; a file
+#: this old is treated as abandoned and removed at startup.
+STALE_TEMP_MAX_AGE = 7 * 24 * 60 * 60
+
+
+def _cleanup_stale_temp_files(
+    directory: str, max_age: float = STALE_TEMP_MAX_AGE
+) -> int:
+    """Remove abandoned ``.temp`` files left by downloads nobody retried."""
+    if not directory or not os.path.isdir(directory):
+        return 0
+    removed = 0
+    now = time.time()
+    for root, _dirs, names in os.walk(directory):
+        for name in names:
+            if not name.endswith(".temp"):
+                continue
+            path = os.path.join(root, name)
+            try:
+                if now - os.path.getmtime(path) < max_age:
+                    continue
+                os.remove(path)
+                removed += 1
+            except OSError:
+                continue
+    return removed
+
+
 def main():
     """Main function of the downloader."""
     # pylint: disable = W0603
@@ -1018,6 +1051,13 @@ def main():
     )
     try:
         app.pre_run()
+        # Partial files are kept for resume; drop the ones nobody came back for.
+        stale_temp_files = _cleanup_stale_temp_files(app.temp_save_path)
+        if stale_temp_files:
+            logger.info(
+                f"removed {stale_temp_files} abandoned .temp file(s) "
+                f"from {app.temp_save_path}"
+            )
         init_web(app)
 
         # Every parallel range holds one transmission slot for its whole stream,

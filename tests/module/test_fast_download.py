@@ -41,7 +41,15 @@ class FakeGetFileClient:
             else min(start + limit * CHUNK_SIZE, len(self.data))
         )
 
-    async def get_file(self, file_id, file_size=0, limit=0, offset=0):
+    async def get_file(
+        self,
+        file_id,
+        file_size=0,
+        limit=0,
+        offset=0,
+        progress=None,
+        progress_args=(),
+    ):
         key = (offset, limit)
         first_call = key not in self.calls
         self.calls[key] = self.calls.get(key, 0) + 1
@@ -237,19 +245,37 @@ class ParallelDownloadTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result)
         self.assertIsInstance(_captured_error.get(), DownloadIncomplete)
 
-    async def test_disabled_uses_the_stock_implementation(self):
+    async def test_sequential_download_resumes_from_partial_temp(self):
+        # A failed attempt leaves the ".temp" file behind; the next attempt must
+        # continue from it instead of downloading everything again.
         set_chunk_concurrency(1)
-        called = []
+        data = os.urandom(2 * CHUNK_SIZE + 100)
+        temp = os.path.join(self.directory, "video.bin") + ".temp"
+        with open(temp, "wb") as file_obj:
+            file_obj.write(data[:CHUNK_SIZE])
 
-        async def original(_self, packet):
-            called.append(packet)
-            return "/stock/path"
+        client = FakeGetFileClient(data)
+        handle = parallel_handle_download(self.fail_original)
+        path = await handle(client, self.packet(len(data)))
 
-        handle = parallel_handle_download(original)
-        result = await handle(None, self.packet(CHUNK_SIZE))
+        self.assertEqual(path, os.path.join(self.directory, "video.bin"))
+        with open(path, "rb") as file_obj:
+            self.assertEqual(file_obj.read(), data)
+        self.assertEqual(client.offsets, [1])
 
-        self.assertEqual(result, "/stock/path")
-        self.assertEqual(len(called), 1)
+    async def test_sequential_failure_keeps_the_partial_file(self):
+        set_chunk_concurrency(1)
+        handle = parallel_handle_download(self.fail_original)
+
+        result = await handle(
+            FailingGetFileClient(RuntimeError("connection reset")),
+            self.packet(CHUNK_SIZE),
+        )
+
+        self.assertIsNone(result)
+        self.assertTrue(
+            os.path.exists(os.path.join(self.directory, "video.bin") + ".temp")
+        )
 
     async def test_in_memory_download_uses_the_stock_implementation(self):
         called = []
@@ -336,13 +362,24 @@ class InstalledGuardTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(path, os.path.join(self.directory, "video.bin"))
         self.assertEqual(self.stock_calls, [])
 
-    async def test_installed_chain_falls_back_when_disabled(self):
+    async def test_installed_chain_resumes_a_partial_file(self):
+        # With one stream the download is resumable: a leftover .temp from a
+        # previous run must be continued, not downloaded again.
         set_chunk_concurrency(1)
-        packet = ("file-id", self.directory, "video.bin", False, CHUNK_SIZE, None, ())
+        data = os.urandom(2 * CHUNK_SIZE)
+        temp = os.path.join(self.directory, "video.bin") + ".temp"
+        with open(temp, "wb") as file_obj:
+            file_obj.write(data[:CHUNK_SIZE])
+        packet = ("file-id", self.directory, "video.bin", False, len(data), None, ())
 
-        self.assertEqual(
-            await pyrogram.Client.handle_download(None, packet), "/stock/path"
-        )
+        client = FakeGetFileClient(data)
+        path = await pyrogram.Client.handle_download(client, packet)
+
+        self.assertEqual(path, os.path.join(self.directory, "video.bin"))
+        with open(path, "rb") as file_obj:
+            self.assertEqual(file_obj.read(), data)
+        self.assertEqual(client.offsets, [1])
+        self.assertEqual(self.stock_calls, [])
 
 
 if __name__ == "__main__":

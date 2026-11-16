@@ -41,5 +41,10 @@ jobs:
       - name: Compile all sources
         run: python -m compileall -q media_downloader.py module utils scripts
 
+      # E9 catches syntax errors, F catches undefined names and dead imports:
+      # both are real bugs, so keep them at zero instead of letting them rot.
+      - name: Lint
+        run: ruff check --select E9,F media_downloader.py module utils scripts tests
+
       - name: Run tests
         run: pytest -q --tb=short tests/

@@ -216,11 +216,16 @@ def parallel_handle_download(original):
     """Wrap ``Client.handle_download``; defer to ``original`` when disabled.
 
     The wrapper reproduces the stock contract exactly — on success it returns the
-    final path, on failure it removes the ``.temp`` file and returns ``None``
-    while ``FloodWait`` / cancellation propagate — so
-    ``pyrogram_guard.guard_handle_download`` keeps turning a swallowed
-    ``DownloadIncomplete`` into an exception.
+    final path, on failure it returns ``None`` while ``FloodWait`` / cancellation
+    propagate — so ``pyrogram_guard.guard_handle_download`` keeps turning a
+    swallowed ``DownloadIncomplete`` into an exception.
+
+    The sequential path goes through ``pyrogram_guard.resumable_handle_download``
+    so a failed attempt keeps its ``.temp`` and the retry (or the next start)
+    continues instead of downloading the file again from zero.
     """
+
+    resumable = pyrogram_guard.resumable_handle_download(original)
 
     async def handle_download(self, packet):
         (
@@ -233,8 +238,11 @@ def parallel_handle_download(original):
             progress_args,
         ) = packet
         # In-memory (BytesIO) downloads and unknown sizes keep the stock path.
-        if _concurrency <= 1 or in_memory or not file_size:
+        if in_memory or not file_size:
             return await original(self, packet)
+        if _concurrency <= 1:
+            # One stream: let it resume from the partial file.
+            return await resumable(self, packet)
 
         os.makedirs(directory, exist_ok=True)
         temp_file_path = (

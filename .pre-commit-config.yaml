@@ -21,6 +21,13 @@ repos:
         entry: isort
         types: [python]
         args: ["--profile", "black", "--filter-files"]
+-   repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.5
+    hooks:
+    -   id: ruff
+        name: ruff
+        # Syntax errors and undefined names / dead imports: same gate as CI.
+        args: ["--select", "E9,F"]
 -   repo: https://github.com/pre-commit/mirrors-mypy
     rev: v0.961
     hooks:

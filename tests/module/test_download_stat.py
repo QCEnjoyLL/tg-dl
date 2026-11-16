@@ -146,3 +146,15 @@ class DownloadStatTestCase(unittest.TestCase):
 
     def test_total_speed_is_zero_without_rows(self):
         self.assertEqual(download_stat.get_total_download_speed(), 0)
+
+    def test_failed_list_is_capped(self):
+        # A throttled run can fail thousands of messages; the list must not grow
+        # without bound.
+        limit = download_stat.MAX_FAILED_DOWNLOADS
+        for index in range(limit + 20):
+            mark_download_failed(-100, index, f"/tmp/{index}.mp4", "boom")
+
+        rows = get_failed_downloads()[-100]
+        self.assertEqual(len(rows), limit)
+        self.assertNotIn(0, rows)
+        self.assertIn(limit + 19, rows)

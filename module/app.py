@@ -7,6 +7,7 @@ import os
 import shutil
 import time
 from asyncio import Lock
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
@@ -15,6 +16,11 @@ from typing import Callable, List, Optional, Tuple, Union
 
 from loguru import logger
 from ruamel import yaml
+
+#: Media-group captions/entities are only needed while one album is
+#: being processed; the caches are capped per chat so a long run cannot
+#: grow them forever.
+MAX_CAPTION_CACHE_GROUPS = 64
 
 from module.cloud_drive import CloudDrive, CloudDriveConfig
 from module.config_form import MEDIA_TYPE_OPTIONS, parse_format_list
@@ -1315,10 +1321,12 @@ class Application:
         if not media_group_id:
             return
 
-        if chat_id in self.caption_name_dict:
-            self.caption_name_dict[chat_id][media_group_id] = caption
-        else:
-            self.caption_name_dict[chat_id] = {media_group_id: caption}
+        groups = self.caption_name_dict.setdefault(chat_id, OrderedDict())
+        groups[media_group_id] = caption
+        groups.move_to_end(media_group_id)
+        # One entry per album ever seen used to be kept for the whole run.
+        while len(groups) > MAX_CAPTION_CACHE_GROUPS:
+            groups.popitem(last=False)
 
     def get_caption_name(
         self, chat_id: Union[int, str], media_group_id: Optional[str]
@@ -1349,10 +1357,11 @@ class Application:
         if not media_group_id:
             return
 
-        if chat_id in self.caption_entities_dict:
-            self.caption_entities_dict[chat_id][media_group_id] = caption_entities
-        else:
-            self.caption_entities_dict[chat_id] = {media_group_id: caption_entities}
+        groups = self.caption_entities_dict.setdefault(chat_id, OrderedDict())
+        groups[media_group_id] = caption_entities
+        groups.move_to_end(media_group_id)
+        while len(groups) > MAX_CAPTION_CACHE_GROUPS:
+            groups.popitem(last=False)
 
     def get_caption_entities(
         self, chat_id: Union[int, str], media_group_id: Optional[str]

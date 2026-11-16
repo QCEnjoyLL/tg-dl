@@ -44,6 +44,10 @@ class TaskCancelled(Exception):
 #: the whole process lifetime and was re-serialised on every poll.
 MAX_COMPLETED_DOWNLOADS = 500
 
+#: Failed rows kept per chat. The Web UI paginates them, but a throttled
+#: run can fail thousands of messages, so the list is capped too.
+MAX_FAILED_DOWNLOADS = 500
+
 _PROGRESS_LOCK = threading.RLock()
 _download_result: dict = {}
 _completed_downloads: "OrderedDict" = OrderedDict()
@@ -113,11 +117,14 @@ def mark_download_failed(
     """Remember a failed download so the Web UI can list and retry it."""
     chat_id = normalize_chat_id(chat_id)
     with _PROGRESS_LOCK:
-        _failed_downloads.setdefault(chat_id, {})[message_id] = {
+        failures = _failed_downloads.setdefault(chat_id, {})
+        failures[message_id] = {
             "file_name": os.path.basename(file_name) if file_name else "",
             "time": int(time.time()),
             "reason": reason,
         }
+        while len(failures) > MAX_FAILED_DOWNLOADS:
+            failures.pop(next(iter(failures)))
         _paused_tasks.discard(_task_key(chat_id, message_id))
 
 

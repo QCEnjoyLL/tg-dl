@@ -1,5 +1,4 @@
 """Unittest module for media downloader."""
-import os
 import sys
 import unittest
 
