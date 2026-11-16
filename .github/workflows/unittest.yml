@@ -39,7 +39,7 @@ jobs:
           make dev_install
 
       - name: Compile all sources
-        run: python -m compileall -q media_downloader.py module utils
+        run: python -m compileall -q media_downloader.py module utils scripts
 
       - name: Run tests
         run: pytest -q --tb=short tests/

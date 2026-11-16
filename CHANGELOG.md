@@ -36,6 +36,16 @@
   `extract_info_from_link` 遇到非数字路径会给出可读错误
 - **云盘**：aligo 上传失败时不再残留临时 zip
 
+### 构建与发布
+
+- **构建镜像时自动创建对应版本的 GitHub Release**：版本号统一取自 `utils/__init__.py` 的
+  `__version__`，镜像标签、git tag、Release 三者不会再各说各话；Release 正文由
+  `scripts/release.py` 从 `CHANGELOG.md` 抽取同名章节并附上拉取命令生成
+- 镜像推送成功后才创建 Release（失败不留半成品），已存在的 Release 自动跳过，可安全重跑
+- 手动推 `v*` tag 时校验 tag 与 `__version__` 一致，不一致直接失败
+- 镜像注入 `org.opencontainers.image.version` / `.revision` 标签，`docker inspect` 可查版本
+- README 增加 Release 徽章，仓库首页即可看到当前版本，并补充「发布新版本」流程说明
+
 ## v2.9.3
 
 ### 修复

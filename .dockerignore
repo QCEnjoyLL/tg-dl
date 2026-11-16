@@ -23,6 +23,7 @@ bot.yaml
 *.session
 *.session-journal
 tests/
+scripts/
 Makefile
 media_downloader.spec
 mypy.ini

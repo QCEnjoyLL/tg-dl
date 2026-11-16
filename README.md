@@ -6,6 +6,7 @@
 当前版本：**v2.9.4**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
 
 [![Docker](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml)
+[![Release](https://img.shields.io/github/v/release/QCEnjoyLL/tg-dl?label=release&color=blue)](https://github.com/QCEnjoyLL/tg-dl/releases/latest)
 [![Tests](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/unittest.yml/badge.svg)](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/unittest.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -448,9 +449,22 @@ systemctl stop tg-dl         # 服务里配置 KillSignal=SIGINT
 
 - 推送到 `master` / `main`、打 `v*` tag、或在 Actions 页面手动触发时构建
 - 自动推送到 **GHCR**：`ghcr.io/qcenjoyll/tg-dl`
-- 标签规则：`latest`（默认分支）、分支名、`v1.2.3`、`1.2`、`sha-xxxxxxx`
-- Prompt 拉取 PR 时只构建不推送
+- 版本号只有一处来源：`utils/__init__.py` 的 `__version__`。镜像标签、git tag、GitHub Release 全部由它生成，不会互相对不上
+- 标签规则：`2.9.4`（当前版本）、`2.9`（minor 系列）、`latest`（默认分支）、分支名、`sha-xxxxxxx`
+- 镜像内注入 `org.opencontainers.image.version` / `.revision`，`docker inspect` 一眼能看到版本
+- 镜像推送成功后自动创建 **GitHub Release**：标题 `v2.9.4`，正文取自 `CHANGELOG.md` 同名章节 + 拉取命令
+- Pull Request 只构建不推送，也不会创建 Release
 - 构建前先跑 `python -m compileall` 做语法检查
+
+### 发布新版本
+
+1. 改 `utils/__init__.py` 里的 `__version__`（如 `2.9.5`）
+2. 在 `CHANGELOG.md` 顶部加 `## v2.9.5` 章节（Release 正文就是这段内容）
+3. 提交并推送到 `master` / `main`
+
+工作流会自动构建镜像、打 `v2.9.5` tag 并创建 Release。版本号已存在的 Release 会跳过，重复推送不会报错。
+
+> 手动推 `v*` tag 也可以，但 tag 必须和 `__version__` 一致，否则工作流会直接失败——避免发布说明和实际运行的代码对不上。
 
 ### 多架构
 
@@ -459,6 +473,8 @@ systemctl stop tg-dl         # 服务里配置 KillSignal=SIGINT
 ```
 linux/amd64,linux/arm64
 ```
+
+Release 正文里的架构列表取自这次构建的实际参数。
 
 ### 拉取私有镜像
 
