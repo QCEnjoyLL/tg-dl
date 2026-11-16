@@ -133,6 +133,7 @@ async def _download_range(
 
     received = 0
     stalled = 0
+    flood_waits = 0
     while received < expected:
         absolute = range_start + received
         chunk_index = absolute // chunk_size
@@ -141,28 +142,43 @@ async def _download_range(
         skip = absolute - chunk_index * chunk_size
         progressed = False
 
-        async for chunk in client.get_file(
-            file_id, file_size, end_chunk - chunk_index, chunk_index
-        ):
-            if skip:
-                if len(chunk) <= skip:
-                    skip -= len(chunk)
+        try:
+            async for chunk in client.get_file(
+                file_id, file_size, end_chunk - chunk_index, chunk_index
+            ):
+                if skip:
+                    if len(chunk) <= skip:
+                        skip -= len(chunk)
+                        continue
+                    chunk = chunk[skip:]
+                    skip = 0
+                if not chunk:
                     continue
-                chunk = chunk[skip:]
-                skip = 0
-            if not chunk:
-                continue
-            if received + len(chunk) > expected:
-                # A stream can end with a short chunk; never write into the
-                # next range.
-                chunk = chunk[: expected - received]
+                if received + len(chunk) > expected:
+                    # A stream can end with a short chunk; never write into the
+                    # next range.
+                    chunk = chunk[: expected - received]
 
-            await writer.write(absolute, chunk)
-            absolute += len(chunk)
-            received += len(chunk)
-            progressed = True
-            if received >= expected:
-                break
+                await writer.write(absolute, chunk)
+                absolute += len(chunk)
+                received += len(chunk)
+                progressed = True
+                flood_waits = 0
+                if received >= expected:
+                    break
+        except pyrogram_guard.flood_errors() as flood:
+            # Same policy as the sequential guard: wait instead of throwing the
+            # partial range away.
+            wait = pyrogram_guard.flood_wait_seconds(flood)
+            flood_waits += 1
+            if flood_waits > pyrogram_guard.MAX_FLOOD_WAITS_PER_STREAM:
+                raise pyrogram_guard.DownloadIncomplete(received, expected) from flood
+            logger.warning(
+                f"{label}: flood wait {wait:g}s on range "
+                f"{start_chunk}-{end_chunk} ({type(flood).__name__})"
+            )
+            await asyncio.sleep(wait + pyrogram_guard.FLOOD_WAIT_MARGIN)
+            continue
 
         if received >= expected:
             break

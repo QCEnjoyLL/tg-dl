@@ -828,7 +828,9 @@ class MediaDownloaderTestCase(unittest.TestCase):
             )
         )
         self.assertEqual((DownloadStatus.FailedDownload, None), result)
-        mock_logger.warning.assert_called_with("Message[{}]: FlowWait {}", 420, 420)
+        mock_logger.warning.assert_called_with(
+            "Message[420]: Telegram 限速 (FloodWait)，等待 420 秒后继续"
+        )
 
         # Test other Exception
         message = MockMessage(
@@ -1289,3 +1291,25 @@ class RetryFailedMessagesTestCase(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(retried, 0)
         self.assertTrue(reasons)
+
+
+class FloodErrorDescriptionTestCase(unittest.TestCase):
+    """FLOOD_PREMIUM_WAIT must explain itself in the failed-task list."""
+
+    def test_premium_flood_is_described_with_a_hint(self):
+        import media_downloader as md
+
+        error = pyrogram.errors.exceptions.flood_420.FloodPremiumWait(value=13)
+        reason = md._describe_download_error(
+            DownloadIncomplete(0, 1024, cause=error), error
+        )
+
+        self.assertIn("only received 0 of 1024 bytes", reason)
+        self.assertIn("Telegram 限流", reason)
+
+    def test_flood_wait_seconds(self):
+        import media_downloader as md
+
+        error = pyrogram.errors.exceptions.flood_420.FloodWait(value=7)
+        self.assertEqual(md._flood_wait_seconds(error), 7.0)
+        self.assertEqual(md._flood_wait_seconds(RuntimeError("boom")), 0.0)

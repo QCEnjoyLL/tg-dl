@@ -78,6 +78,32 @@ class FailingGetFileClient:
         yield b""  # pragma: no cover
 
 
+class FloodThenStream:
+    """Raises ``error`` on the first call, then serves ``data``."""
+
+    def __init__(self, error: BaseException, data: bytes):
+        self.error = error
+        self.data = data
+        self.calls = 0
+
+    async def get_file(self, *_args, **_kwargs):
+        self.calls += 1
+        if self.calls == 1:
+            raise self.error
+        yield self.data
+
+
+class AlwaysFlooding:
+    """A ``get_file`` that only ever raises the given flood error."""
+
+    def __init__(self, error: BaseException):
+        self.error = error
+
+    async def get_file(self, *_args, **_kwargs):
+        raise self.error
+        yield b""  # pragma: no cover
+
+
 class ChunkRangesTestCase(unittest.TestCase):
     def test_splits_into_requested_ranges(self):
         self.assertEqual(
@@ -237,12 +263,43 @@ class ParallelDownloadTestCase(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(called), 1)
 
-    async def test_flood_wait_propagates(self):
-        error = pyrogram.errors.exceptions.flood_420.FloodWait(value=3)
+    async def test_protocol_error_fails_the_download(self):
+        error = RuntimeError("connection reset by peer")
+        handle = parallel_handle_download(self.fail_original)
+        _captured_error.set(None)
+
+        result = await handle(FailingGetFileClient(error), self.packet(CHUNK_SIZE))
+
+        self.assertIsNone(result)
+        self.assertIs(_captured_error.get(), error)
+
+    async def test_flood_wait_resumes_the_range(self):
+        # FLOOD_PREMIUM_WAIT is Telegram throttling the account; waiting keeps
+        # the bytes already written instead of failing the file.
+        error = pyrogram.errors.exceptions.flood_420.FloodPremiumWait(value=0)
+        data = os.urandom(CHUNK_SIZE)
+        client = FloodThenStream(error, data)
         handle = parallel_handle_download(self.fail_original)
 
-        with self.assertRaises(pyrogram.errors.exceptions.flood_420.FloodWait):
-            await handle(FailingGetFileClient(error), self.packet(CHUNK_SIZE))
+        with mock.patch.object(pyrogram_guard, "FLOOD_WAIT_MARGIN", 0):
+            path = await handle(client, self.packet(len(data)))
+
+        with open(path, "rb") as file:
+            self.assertEqual(file.read(), data)
+        self.assertEqual(client.calls, 2)
+
+    async def test_endless_floods_are_reported_incomplete(self):
+        error = pyrogram.errors.exceptions.flood_420.FloodPremiumWait(value=0)
+        handle = parallel_handle_download(self.fail_original)
+        _captured_error.set(None)
+
+        with mock.patch.object(
+            pyrogram_guard, "FLOOD_WAIT_MARGIN", 0
+        ), mock.patch.object(pyrogram_guard, "MAX_FLOOD_WAITS_PER_STREAM", 2):
+            result = await handle(AlwaysFlooding(error), self.packet(CHUNK_SIZE))
+
+        self.assertIsNone(result)
+        self.assertIsInstance(_captured_error.get(), DownloadIncomplete)
 
 
 class InstalledGuardTestCase(unittest.IsolatedAsyncioTestCase):

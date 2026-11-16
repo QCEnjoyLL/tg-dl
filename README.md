@@ -29,6 +29,18 @@
 逐条历史记录见 [CHANGELOG.md](CHANGELOG.md)；当前版本见顶部的 Release 徽章。
 
 <details>
+<summary><b>v2.10.2</b> — 处理 Telegram 免费账号限流、修正顶部速度</summary>
+
+- **`FLOOD_PREMIUM_WAIT` 不再直接判失败**：Telegram 对免费账号会回
+  `[420 FLOOD_PREMIUM_WAIT_X]`（等 X 秒，或订阅 Premium 解除），以前只有 `FloodWait` 被处理，
+  这个错误会直接让文件标记失败。现在按秒数等待后继续，单文件下载途中也会边等边续传
+- **顶部速度 = 列表各行速度之和**：以前顶部读的是另一套全局计数器（3 秒无回调就归零），
+  被限速时顶部一直是 `0 B/s`、列表却显示几十 KB/s
+- 失败原因里会写明这是账号级限流，并给出「降低并发 / 稍后重试 / 改用 Premium」的建议
+
+</details>
+
+<details>
 <summary><b>v2.10.1</b> — 修 `/download N 0` 扫不完、bot 没有进度卡片</summary>
 
 - **`/download ... N 0`（下到最新）永远跑不完**：v2.9.4 的空页兜底改调了 `Client.get_chat_history`
@@ -626,6 +638,24 @@ v2.9.1 已修。底层 Pyrogram fork 会吞掉 `upload.GetFile` 的异常，把�
 3. **网络本身**：`ping api.telegram.org` 看延迟，走代理/机场线路时延迟和抖动往往才是瓶颈；
    换线路比调参数更有效。
 4. 两项都调完仍然慢，按上面 `[-500 TIMEOUT]` 那节的顺序排查（MTU、出口 IP、存储 DC）。
+
+**Q：速度只有几十 KB/s，日志里全是 `[420 FLOOD_PREMIUM_WAIT_X]`，还有几个任务直接失败？**
+这是 **Telegram 对账号的限流**，不是线路问题，换服务器没有用。`FLOOD_PREMIUM_WAIT` 的官方含义是
+「等 X 秒再试，或者订阅 Premium 解除这个限制」——免费账号的 `upload.GetFile` 请求打到一定量后
+就会被这样压速（每个 1 MiB 的块都要等十几秒，折算下来正好六七十 KB/s），并发越高越容易触发。
+
+v2.10.2 起：
+
+- 遇到限流会**按 Telegram 给出的秒数等待并续传**，不会再把文件直接判失败
+- 单文件下载中途被限流也在流内等，已下载的字节不会丢
+
+能显著改善的做法：
+
+1. **降低并发**：`max_download_task: 1~2`，`max_concurrent_chunks: 1`。被限速时多开只会让
+   请求更快撞上限流
+2. **换账号 / 用 Premium 账号**：Premium 会直接解除这个限制，这也是最有效的办法
+3. **暂停一段时间**：限流是按时间窗口算的，停几小时再跑通常能恢复一阵
+4. 失败页的「失败原因」会写明这是账号级限流，可直接点「重试」
 
 **Q：`/download ... N 0` 发出去了，bot 一直只有那条回执，没有进度卡片？**
 v2.10.1 已修。原因有两层：一是扫描历史阶段 `node.is_running` 还没置位，卡片不会刷新；二是

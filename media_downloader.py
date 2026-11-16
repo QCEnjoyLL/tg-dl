@@ -167,9 +167,32 @@ def _describe_download_error(
 ) -> str:
     """Human readable reason stored in the failed-task list."""
     reason = str(incomplete)
+    if _is_flood_cause(cause):
+        hint = "Telegram 限流（免费账号的下载配额），可降低同时下载数、稍后重试，或改用 Premium 账号"
+        return f"{reason}; {hint}"
     if _is_network_cause(cause):
         return f"{reason}; {_t('download failed due to network timeout')}"
     return reason
+
+
+def _flood_wait_seconds(error: BaseException) -> float:
+    """Seconds Telegram asks us to wait (``FloodWait`` / ``FloodPremiumWait``)."""
+    try:
+        return max(float(getattr(error, "value", 0) or 0), 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _is_flood_cause(exc: Optional[BaseException]) -> bool:
+    """Whether ``exc`` is Telegram telling the account to slow down."""
+    if exc is None:
+        return False
+    try:
+        import pyrogram  # pylint: disable = C0415
+
+        return isinstance(exc, pyrogram.errors.exceptions.flood_420.Flood)
+    except Exception:  # pylint: disable = W0703
+        return False
 
 
 def _format_candidates(mime_format: Optional[str], file_name: str) -> List[str]:
@@ -686,9 +709,17 @@ async def download_media(
                     f"Message[{message.id}]: {last_error}; "
                     f"{_t('download incomplete after 3 retries, download skipped.')}"
                 )
-        except pyrogram.errors.exceptions.flood_420.FloodWait as wait_err:
-            await asyncio.sleep(wait_err.value)
-            logger.warning("Message[{}]: FlowWait {}", message.id, wait_err.value)
+        except pyrogram.errors.exceptions.flood_420.Flood as flood_err:
+            # Covers FloodWait and FloodPremiumWait ("wait N seconds, or buy
+            # Premium"). Sleeping keeps the retry budget instead of failing the
+            # file outright; the bytes already downloaded are resumed by the
+            # get_file guard.
+            wait = _flood_wait_seconds(flood_err)
+            logger.warning(
+                f"Message[{message.id}]: Telegram 限速 "
+                f"({type(flood_err).__name__})，等待 {wait:g} 秒后继续"
+            )
+            await asyncio.sleep(wait + 1)
             _check_timeout(retry, message.id)
         except TypeError:
             # pylint: disable = C0301

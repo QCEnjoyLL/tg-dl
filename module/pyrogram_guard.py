@@ -31,6 +31,8 @@ import functools
 import logging
 from typing import Optional
 
+log = logging.getLogger(__name__)
+
 #: Telegram's ``upload.GetFile`` returns at most 1 MiB per request.
 CHUNK_SIZE = 1024 * 1024
 
@@ -73,6 +75,50 @@ def _propagated_errors() -> tuple:
 def propagated_errors() -> tuple:
     """Errors the download path re-raises instead of swallowing."""
     return _propagated_errors()
+
+
+#: Telegram answers ``FLOOD_PREMIUM_WAIT`` when a free account makes too many
+#: GetFile requests ("wait N seconds, or buy Premium"). Waiting inside the
+#: stream keeps the bytes already on disk; letting the error escape made
+#: ``download_media`` restart a multi-GB file from zero.
+_FLOOD_ERRORS: tuple = ()
+
+#: Consecutive flood waits per stream before the failure is reported upwards
+#: (``download_media`` then backs off and retries the whole file).
+MAX_FLOOD_WAITS_PER_STREAM = 20
+
+#: Extra second added to the wait Telegram asks for (tests set this to 0).
+FLOOD_WAIT_MARGIN = 1.0
+
+
+def _flood_errors() -> tuple:
+    """Flood errors that should be waited out instead of aborting the stream."""
+    # pylint: disable = W0603
+    global _FLOOD_ERRORS
+    if _FLOOD_ERRORS:
+        return _FLOOD_ERRORS
+    import pyrogram  # pylint: disable = C0415
+
+    errors = []
+    for name in ("FloodWait", "FloodPremiumWait"):
+        error = getattr(pyrogram.errors, name, None)
+        if isinstance(error, type):
+            errors.append(error)
+    _FLOOD_ERRORS = tuple(errors)
+    return _FLOOD_ERRORS
+
+
+def flood_wait_seconds(error: BaseException) -> float:
+    """Seconds Telegram asks the client to wait before repeating the request."""
+    try:
+        return max(float(getattr(error, "value", 0) or 0), 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def flood_errors() -> tuple:
+    """Flood errors that should be waited out instead of aborting a stream."""
+    return _flood_errors()
 
 
 def record_swallowed_error(error: BaseException) -> None:
@@ -198,6 +244,7 @@ def guard_get_file(original):
 
         received = 0
         stalled = 0
+        flood_waits = 0
         while received < file_size:
             start_chunk = received // CHUNK_SIZE
             skip = received - start_chunk * CHUNK_SIZE
@@ -218,11 +265,29 @@ def guard_get_file(original):
                         continue
                     received += len(chunk)
                     progressed = True
+                    flood_waits = 0
                     yield chunk
                     if received >= file_size:
                         break
+            except _flood_errors() as flood:
+                # Telegram throttles free accounts with FLOOD_PREMIUM_WAIT;
+                # sleeping here keeps the partial file instead of restarting it.
+                wait = flood_wait_seconds(flood)
+                flood_waits += 1
+                if flood_waits > MAX_FLOOD_WAITS_PER_STREAM:
+                    _raise_incomplete(received, file_size, cause=flood)
+                log.warning(
+                    "[%s] flood wait %ss on GetFile (%s); resuming at %s/%s bytes",
+                    getattr(self, "name", "client"),
+                    wait,
+                    type(flood).__name__,
+                    received,
+                    file_size,
+                )
+                await asyncio.sleep(wait + FLOOD_WAIT_MARGIN)
+                continue
             except _propagated_errors():
-                # FloodWait / StopTransmission must reach ``download_media``.
+                # StopTransmission must reach ``download_media``.
                 raise
             except asyncio.CancelledError:
                 raise

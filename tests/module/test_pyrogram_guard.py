@@ -30,8 +30,16 @@ class FakeStream:
         self.fail_offsets = list(fail_offsets or [])
         self.calls = []
 
-    async def stream(self, client, file_id, file_size=0, limit=0, offset=0,
-                     progress=None, progress_args=()):
+    async def stream(
+        self,
+        client,
+        file_id,
+        file_size=0,
+        limit=0,
+        offset=0,
+        progress=None,
+        progress_args=(),
+    ):
         self.calls.append(offset)
         start = offset * CHUNK_SIZE
         position = start
@@ -40,7 +48,7 @@ class FakeStream:
                 if fail_at <= position:
                     self.fail_offsets.remove(fail_at)
                     return
-            chunk = self.data[position:position + CHUNK_SIZE]
+            chunk = self.data[position : position + CHUNK_SIZE]
             position += len(chunk)
             yield chunk
 
@@ -66,10 +74,68 @@ class FailingStream:
         yield b""  # pragma: no cover
 
 
+class FloodingStream:
+    """Raises a flood error a few times, then streams the data normally."""
+
+    def __init__(self, data: bytes, error: BaseException, failures: int = 1):
+        self.data = data
+        self.error = error
+        self.failures = failures
+        self.calls = 0
+
+    async def stream(
+        self,
+        client,
+        file_id,
+        file_size=0,
+        limit=0,
+        offset=0,
+        progress=None,
+        progress_args=(),
+    ):
+        self.calls += 1
+        if self.calls <= self.failures:
+            raise self.error
+        start = offset * CHUNK_SIZE
+        position = start
+        while position < len(self.data):
+            chunk = self.data[position : position + CHUNK_SIZE]
+            position += len(chunk)
+            yield chunk
+
+
 class GuardGetFileTestCase(unittest.IsolatedAsyncioTestCase):
     async def collect(self, stream, file_size):
         guarded = guard_get_file(stream.stream)
         return b"".join([chunk async for chunk in guarded(None, "file", file_size)])
+
+    async def test_flood_wait_is_waited_out_and_the_stream_resumes(self):
+        # FLOOD_PREMIUM_WAIT is Telegram's free-account throttle; aborting the
+        # stream made download_media restart a multi-GB file from zero.
+        error = pyrogram.errors.exceptions.flood_420.FloodPremiumWait(value=0)
+        data = b"f" * (2 * CHUNK_SIZE)
+        stream = FloodingStream(data, error)
+
+        with mock.patch.object(pyrogram_guard, "RESUME_SLEEP", 0), mock.patch.object(
+            pyrogram_guard, "FLOOD_WAIT_MARGIN", 0
+        ):
+            result = await self.collect(stream, len(data))
+
+        self.assertEqual(result, data)
+        self.assertEqual(stream.calls, 2)
+
+    async def test_endless_floods_are_reported_as_incomplete(self):
+        error = pyrogram.errors.exceptions.flood_420.FloodPremiumWait(value=0)
+        stream = FloodingStream(b"g" * CHUNK_SIZE, error, failures=99)
+
+        with mock.patch.object(pyrogram_guard, "RESUME_SLEEP", 0), mock.patch.object(
+            pyrogram_guard, "FLOOD_WAIT_MARGIN", 0
+        ), mock.patch.object(pyrogram_guard, "MAX_FLOOD_WAITS_PER_STREAM", 2):
+            with self.assertRaises(DownloadIncomplete) as caught:
+                await self.collect(stream, CHUNK_SIZE)
+
+        self.assertEqual(caught.exception.received, 0)
+        self.assertIsInstance(caught.exception.cause, type(error))
 
     async def test_complete_stream_is_passed_through(self):
         data = b"x" * (CHUNK_SIZE + 123)
@@ -212,9 +278,7 @@ class GuardGetFileTestCase(unittest.IsolatedAsyncioTestCase):
         try:
             pyrogram_guard.install_get_file_guard()
             self.assertFalse(pyrogram_guard.install_get_file_guard())
-            self.assertTrue(
-                getattr(pyrogram.Client.get_file, "__tdl_guarded__", False)
-            )
+            self.assertTrue(getattr(pyrogram.Client.get_file, "__tdl_guarded__", False))
             self.assertTrue(
                 getattr(pyrogram.Client.handle_download, "__tdl_guarded__", False)
             )

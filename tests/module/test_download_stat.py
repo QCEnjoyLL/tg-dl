@@ -68,7 +68,9 @@ class DownloadStatTestCase(unittest.TestCase):
 
         self.assertEqual(len(get_completed_downloads()), MAX_COMPLETED_DOWNLOADS)
         # Newest first, oldest evicted.
-        self.assertEqual(get_completed_downloads()[0]["id"], MAX_COMPLETED_DOWNLOADS + 24)
+        self.assertEqual(
+            get_completed_downloads()[0]["id"], MAX_COMPLETED_DOWNLOADS + 24
+        )
 
     def test_failed_row_is_removed_from_progress(self):
         with download_stat._PROGRESS_LOCK:  # pylint: disable = W0212
@@ -127,3 +129,20 @@ class DownloadStatTestCase(unittest.TestCase):
         self.assertEqual(normalize_chat_id("-100123"), -100123)
         self.assertEqual(normalize_chat_id(-100123), -100123)
         self.assertEqual(normalize_chat_id("@mychannel"), "@mychannel")
+
+    def test_total_speed_is_the_sum_of_the_rows(self):
+        # The header used to come from a separate global counter that drifted
+        # from the table (0 B/s in the header while rows showed ~60 KB/s).
+        with download_stat._PROGRESS_LOCK:  # pylint: disable = W0212
+            download_stat._download_result[-100] = {
+                1: {"down_byte": 10, "download_speed": 60000},
+                2: {"down_byte": 20, "download_speed": 60000},
+            }
+            download_stat._download_result[-200] = {
+                3: {"down_byte": 30, "download_speed": 30000},
+            }
+
+        self.assertEqual(download_stat.get_total_download_speed(), 150000)
+
+    def test_total_speed_is_zero_without_rows(self):
+        self.assertEqual(download_stat.get_total_download_speed(), 0)

@@ -50,9 +50,6 @@ _completed_downloads: "OrderedDict" = OrderedDict()
 _failed_downloads: dict = {}
 _paused_tasks: set = set()
 _cancelled_tasks: set = set()
-_total_download_speed: int = 0
-_total_download_size: int = 0
-_last_download_time: float = time.time()
 _download_state: DownloadState = DownloadState.Downloading
 
 
@@ -282,17 +279,23 @@ def clear_task_cancelled(chat_id, message_id: int) -> None:
         _cancelled_tasks.discard(_task_key(chat_id, message_id))
 
 
-#: The speed is only recomputed from inside the progress callbacks. Once the
-#: queue drains nothing updates it again, so an old value would be shown as the
-#: current speed forever.
-_TOTAL_SPEED_STALE_AFTER = 3.0
-
-
 def get_total_download_speed() -> int:
-    """get total download speed (0 when no callback has run recently)"""
-    if time.time() - _last_download_time > _TOTAL_SPEED_STALE_AFTER:
-        return 0
-    return _total_download_speed
+    """Sum of the per-file speeds the download table is showing.
+
+    A separate global counter (bytes over wall time, reset by whichever progress
+    callback happened to run last) drifted from the rows: on a throttled link a
+    single chunk can take 10+ seconds, so the counter was stale for most of the
+    time and the header read ``0 B/s`` while the table showed tens of KB/s.
+    Summing the values the table renders keeps the two in agreement, and an
+    empty table sums to zero by construction.
+    """
+    with _PROGRESS_LOCK:
+        total = sum(
+            value.get("download_speed") or 0
+            for messages in _download_result.values()
+            for value in messages.values()
+        )
+    return max(int(total), 0)
 
 
 def get_download_state() -> DownloadState:
@@ -344,10 +347,6 @@ async def update_download_status(
 ):
     """update_download_status"""
     cur_time = time.time()
-    # pylint: disable = W0603
-    global _total_download_speed
-    global _total_download_size
-    global _last_download_time
 
     await _wait_until_runnable(node, client, message_id)
 
@@ -357,14 +356,12 @@ async def update_download_status(
         messages = _download_result.setdefault(chat_id, {})
         if message_id in messages:
             value = messages[message_id]
-            last_download_byte = value["down_byte"]
             last_time = value["end_time"]
             download_speed = value["download_speed"]
             each_second_total_download = value["each_second_total_download"]
             end_time = value["end_time"]
 
-            _total_download_size += down_byte - last_download_byte
-            each_second_total_download += down_byte - last_download_byte
+            each_second_total_download += down_byte - value["down_byte"]
 
             if cur_time - last_time >= 1.0:
                 download_speed = int(
@@ -390,15 +387,6 @@ async def update_download_status(
                 "task_id": node.task_id,
                 "paused": is_task_paused(chat_id, message_id),
             }
-            _total_download_size += down_byte
-
-        if cur_time - _last_download_time >= 1.0:
-            _total_download_speed = int(
-                _total_download_size / (cur_time - _last_download_time)
-            )
-            _total_download_speed = max(_total_download_speed, 0)
-            _total_download_size = 0
-            _last_download_time = cur_time
 
 
 def get_download_progress(chat_id, message_id: int) -> Optional[dict]:
