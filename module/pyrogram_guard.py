@@ -1,19 +1,18 @@
 """Work around the bundled Pyrogram fork's silent truncated downloads.
 
 ``tangyoha/pyrogram``'s ``Client.get_file`` catches every non-FloodWait
-exception and only logs it, so a dropped ``upload.GetFile`` request ends the
-chunk stream quietly. ``handle_download`` then moves the partial ``.temp`` file
-into place and returns it as if the download had succeeded -- the caller only
-notices through a size check. That is why a stalled 210 MB transfer appeared as
-"downloaded with wrong size: 5242880" and was then reported as an expired file
-reference.
+exception, only logs it, and then ends the chunk stream quietly. The downloader
+therefore sees a stream that stops early: before this module existed it either
+accepted the partial ``.temp`` file (``downloaded with wrong size``) or, once
+``handle_download`` started deleting it, only got ``None`` back and reported a
+generic "download aborted before the file was written".
 
 The wrapper below keeps the stream honest: when the generator ends before
 ``file_size`` bytes were produced, it reopens the stream at the last chunk
 boundary with a ``GetFile`` offset and keeps appending. Only after repeated
-zero-progress attempts does it raise ``DownloadIncomplete``, so the downloader
-can retry or fail with a clear reason instead of silently accepting a partial
-file.
+zero-progress attempts, or immediately when Telegram answers with a server-side
+5xx, does it raise ``DownloadIncomplete``, so the downloader can retry or fail
+with a clear reason instead of silently accepting a partial file.
 
 Two things are added on top of the bare resume logic:
 
