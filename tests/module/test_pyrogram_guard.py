@@ -109,9 +109,12 @@ class GuardGetFileTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stream.calls, [0])
 
     def test_install_is_idempotent(self):
+        # media_downloader.main() installs the guard, and under some pytest
+        # versions the media_downloader tests run before this module, so the
+        # first call here may already be a no-op. Idempotency is the contract.
         original = pyrogram.Client.get_file
         try:
-            self.assertTrue(pyrogram_guard.install_get_file_guard())
+            pyrogram_guard.install_get_file_guard()
             self.assertFalse(pyrogram_guard.install_get_file_guard())
             self.assertTrue(
                 getattr(pyrogram.Client.get_file, "__tdl_guarded__", False)
