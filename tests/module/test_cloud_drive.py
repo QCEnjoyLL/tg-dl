@@ -48,6 +48,46 @@ def make_config(**overrides):
     return CloudDriveConfig(**options)
 
 
+class RemoteDirTestCase(unittest.TestCase):
+    """The remote path must never leak the local absolute path."""
+
+    def test_relative_dir_from_save_path(self):
+        config = make_config(remote_dir="115:Telegram")
+        remote_dir = CloudDrive.remote_dir_for(
+            config, "/app/downloads", "/app/downloads/chan/2026_04/f.mp4"
+        )
+        self.assertEqual(remote_dir, "115:Telegram/chan/2026_04/")
+
+    def test_trailing_slash_in_save_path_is_irrelevant(self):
+        config = make_config(remote_dir="115:Telegram")
+        remote_dir = CloudDrive.remote_dir_for(
+            config, "/app/downloads/", "/app/downloads/chan/f.mp4"
+        )
+        self.assertEqual(remote_dir, "115:Telegram/chan/")
+
+    def test_windows_paths_are_normalized(self):
+        config = make_config(remote_dir="r:")
+        remote_dir = CloudDrive.remote_dir_for(
+            config, "C:\\dl", "C:\\dl\\chan\\f.mp4"
+        )
+        self.assertEqual(remote_dir, "r:/chan/")
+
+    def test_file_outside_save_path_does_not_create_dot_dot_paths(self):
+        config = make_config(remote_dir="r:")
+        remote_dir = CloudDrive.remote_dir_for(
+            config, "/app/downloads", "/tmp/other/f.mp4"
+        )
+        self.assertNotIn("..", remote_dir)
+        self.assertTrue(remote_dir.startswith("r:/"))
+
+    def test_duplicate_slashes_are_collapsed(self):
+        config = make_config(remote_dir="115:Telegram/")
+        remote_dir = CloudDrive.remote_dir_for(
+            config, "/app/downloads", "/app/downloads/chan/f.mp4"
+        )
+        self.assertEqual(remote_dir, "115:Telegram/chan/")
+
+
 class RcloneArgumentsTestCase(unittest.TestCase):
     def test_copyto_args_keep_attacker_controlled_text_as_one_argument(self):
         dangerous = "/tmp/a $(touch pwned) `id`;rm -rf / #.mp4"
@@ -122,3 +162,88 @@ class RcloneUploadTestCase(unittest.IsolatedAsyncioTestCase):
         result, _ = await self.upload(process)
 
         self.assertIsNone(result)
+
+    async def test_same_size_on_remote_skips_upload_entirely(self):
+        # A freshly downloaded file has a new mtime, so rclone would re-upload
+        # it even though the identical file is already on the drive. The
+        # pre-check must prevent that (and keep the remote date untouched).
+        with mock.patch.object(
+            CloudDrive, "rclone_mkdir", new=mock.AsyncMock(return_value=True)
+        ), mock.patch.object(
+            CloudDrive,
+            "rclone_remote_stat",
+            new=mock.AsyncMock(return_value={"Size": 123}),
+        ), mock.patch(
+            "module.cloud_drive.os.path.getsize", return_value=123
+        ), mock.patch(
+            "module.cloud_drive.asyncio.create_subprocess_exec",
+            new=mock.AsyncMock(),
+        ) as exec_mock:
+            result = await CloudDrive.rclone_upload_file(
+                make_config(), "/save", "/save/f.mp4"
+            )
+
+        self.assertEqual(result, UPLOAD_EXISTS)
+        exec_mock.assert_not_called()
+
+    async def test_different_size_on_remote_is_uploaded(self):
+        process = FakeProcess(lines=[b"INFO  : f.mp4: Copied (new)\n"])
+        with mock.patch.object(
+            CloudDrive, "rclone_mkdir", new=mock.AsyncMock(return_value=True)
+        ), mock.patch.object(
+            CloudDrive,
+            "rclone_remote_stat",
+            new=mock.AsyncMock(
+                side_effect=[{"Size": 1}, {"Size": 123, "ModTime": "2026-11-16T04:00:00Z"}]
+            ),
+        ), mock.patch(
+            "module.cloud_drive.os.path.getsize", return_value=123
+        ), mock.patch(
+            "module.cloud_drive.asyncio.create_subprocess_exec",
+            new=mock.AsyncMock(return_value=process),
+        ):
+            result = await CloudDrive.rclone_upload_file(
+                make_config(), "/save", "/save/f.mp4"
+            )
+
+        self.assertEqual(result, UPLOAD_NEW)
+
+    async def test_server_side_dedupe_is_reported_as_existing(self):
+        # The drive kept its old object (3 days old) after the upload: rclone
+        # says "Copied (new)" but the content was deduplicated, so the honest
+        # answer is "already on the remote".
+        process = FakeProcess(lines=[b"INFO  : f.mp4: Copied (new)\n"])
+        with mock.patch.object(
+            CloudDrive, "rclone_mkdir", new=mock.AsyncMock(return_value=True)
+        ), mock.patch.object(
+            CloudDrive,
+            "rclone_remote_stat",
+            new=mock.AsyncMock(
+                side_effect=[
+                    None,
+                    {"Size": 123, "ModTime": "2026-11-13T10:00:00Z"},
+                ]
+            ),
+        ), mock.patch(
+            "module.cloud_drive.os.path.getsize", return_value=123
+        ), mock.patch(
+            "module.cloud_drive.asyncio.create_subprocess_exec",
+            new=mock.AsyncMock(return_value=process),
+        ):
+            result = await CloudDrive.rclone_upload_file(
+                make_config(), "/save", "/save/f.mp4"
+            )
+
+        self.assertEqual(result, UPLOAD_EXISTS)
+
+    def test_remote_time_parser(self):
+        parse = CloudDrive._parse_remote_time
+
+        utc = parse("2026-11-13T10:00:00Z")
+        self.assertIsNotNone(utc)
+        # Backends without modtime support report the zero time.
+        self.assertIsNone(parse("0001-01-01T00:00:00Z"))
+        self.assertIsNone(parse(None))
+        offset = parse("2026-11-13T10:00:00+08:00")
+        self.assertIsNotNone(offset)
+        self.assertAlmostEqual(utc - offset, 8 * 3600, delta=1)

@@ -2,6 +2,36 @@
 
 版本号规则：MAJOR（破坏性改动或核心重写）/ MINOR（新增功能）/ PATCH（修复、依赖、文档、UI 打磨）。
 
+## v2.8.1
+
+### 修复
+
+- **云端明明已有文件却显示「新文件上传成功」**，同时云端文件日期还是几天前
+  - 根因：rclone 默认按「大小 + 修改时间」比较。刚下载的本地文件 mtime 是今天，
+    远端是几天前，于是每次都被判定为不同并重新上传；而部分网盘（115/OpenList 等）
+    按内容哈希去重，保留旧对象，日期就停在几天前，rclone 却仍打印 `Copied (new)`
+  - 现在上传前先用 `rclone lsjson --stat` 检查目标：同名且大小一致时直接跳过，
+    标记为 **云端已有**（不改动云端文件，也不再浪费带宽）
+  - 上传后再检查一次远端：如果服务端去重后保留了旧对象（修改时间明显早于本次上传），
+    自动改判为 **云端已有** 并打印警告
+  - 大小不同时照常覆盖上传，日志会写明 `different size, replacing`
+- **远端目录拼接**：改用 `os.path.relpath`（带兜底）计算相对目录，修复 `save_path`
+  带结尾斜杠或反斜杠时远端路径残留本地绝对路径、导致文件被传到另一个目录的问题。
+  日志现在会同时打印本地路径和完整远端路径，便于核对。
+- 本地文件大小读取失败时不再让上传任务失败，而是回退给 rclone 自行判断。
+
+### 升级后如何确认
+
+日志会明确写出三种结果之一：
+
+```text
+remote already has 115:Telegram/频道/2026_04/xxx.mp4 (1.8 GiB), upload skipped
+upload new file /app/downloads/频道/2026_04/xxx.mp4 -> 115:Telegram/频道/2026_04/xxx.mp4 success (rclone: Copied (new))
+remote kept the older object at ... ; the drive deduplicated the upload, counting it as already existing
+```
+
+如果某个文件仍显示新上传、但云端日期没变，看日志里的远端路径是否和你预期的目录一致。
+
 ## v2.8.0
 
 ### 新增

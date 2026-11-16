@@ -3,11 +3,20 @@
 > 基于 [tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader) 的修复分支。
 > 保留原项目的全部功能（Telegram bot 指令、Web UI、rclone 上传、受保护内容下载），并持续修复实际使用中的问题。
 
-当前版本：**v2.8.0**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
+当前版本：**v2.8.1**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
 
 [![Docker](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml)
 [![Tests](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/unittest.yml/badge.svg)](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/unittest.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+---
+
+## v2.8.1 更新内容
+
+- 修复「云端已有文件却显示新文件上传成功、云端日期还是几天前」：上传前用 `rclone lsjson --stat`
+  检查同名同大小文件并直接跳过（标记 **云端已有**）；上传后再核对远端，若服务端去重保留旧对象也改判为云端已有
+- 修复 `save_path` 带斜杠/反斜杠时远端目录残留本地绝对路径、导致重复上传到新目录的问题
+- 上传日志现在同时打印本地路径与完整远端路径，便于核对
 
 ---
 
@@ -235,7 +244,7 @@ upload_drive:
 ```
 
 > 上传成功后删除本地是**已修复**的逻辑；如果 rclone 返回非 0，文件会被保留并在日志中记录退出码，方便重试。
-> 成功分两种：`upload new file ... success` 表示真正传了新文件，`remote already has ..., upload skipped` 表示云端已有相同文件、rclone 跳过了传输（同样是成功）。
+> 成功分两种：`upload new file ... success` 表示真正传了新文件，`remote already has ..., upload skipped` 表示云端已有相同文件、跳过了传输（同样算成功，且不会改动云端文件日期）。
 
 ### bot
 
@@ -407,6 +416,9 @@ v2.7.0 / v2.7.1 的配置表单曾把 `file_formats` 写成文本 `"['all']"`、
 
 **Q：左上角有个「跳到主要内容」是什么？**
 这是无障碍的跳过导航链接，只有用键盘 Tab 聚焦时才会出现，平时不会显示；回车会把焦点移到主内容区。
+
+**Q：云端明明已经有这个文件，为什么还重新上传 / 显示「新文件」？**
+v2.8.1 起上传前会先 `rclone lsjson --stat` 检查目标：同名且大小一致就跳过，标记为「云端已有」，云端文件日期不会被改动。如果仍显示新上传，请对照日志里的完整远端路径 —— 很可能是传到了另一个目录（例如 `save_path` 改动后路径前缀不同）。服务端按哈希去重、保留旧对象的情况也会被告警并改判为「云端已有」。
 
 **Q：上传成功但本地没删？**
 检查日志里是否有 `rclone upload failed, exit code ...`。修复后的逻辑只在返回码为 0 时删除；非 0 会保留文件并打印 rclone 输出尾部，按报错处理即可（常见是 WebDAV 423、磁盘配额、token 过期）。
