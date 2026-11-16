@@ -18,6 +18,7 @@ from ruamel import yaml
 
 from module.cloud_drive import CloudDrive, CloudDriveConfig
 from module.config_form import MEDIA_TYPE_OPTIONS, parse_format_list
+from module.fast_download import set_chunk_concurrency
 from module.filter import Filter
 from module.language import Language, set_language
 from utils.atomic_write import write_text_atomic
@@ -415,6 +416,8 @@ class Application:
         self.web_host: str = "0.0.0.0"
         self.web_port: int = 5000
         self.max_download_task: int = 5
+        #: Ranges one file is split into concurrently (1 = sequential download).
+        self.max_concurrent_chunks: int = 1
         self.language = Language.EN
         self.after_upload_telegram_delete: bool = True
         self.web_login_secret: str = ""
@@ -524,6 +527,12 @@ class Application:
 
         self.max_concurrent_transmissions = _config.get(
             "max_concurrent_transmissions", self.max_concurrent_transmissions
+        )
+
+        self.max_concurrent_chunks = set_chunk_concurrency(
+            get_config(
+                _config, "max_concurrent_chunks", self.max_concurrent_chunks, int
+            )
         )
 
         language = _config.get("language", "EN")
@@ -1090,6 +1099,14 @@ class Application:
         if "log_level" in config:
             self.log_level = str(config["log_level"])
             applied.append("log_level")
+
+        if "max_concurrent_chunks" in config:
+            # New downloads pick this up immediately; ranges already in flight
+            # keep the split they started with.
+            self.max_concurrent_chunks = set_chunk_concurrency(
+                config["max_concurrent_chunks"]
+            )
+            applied.append("max_concurrent_chunks")
 
         if "date_format" in config:
             try:

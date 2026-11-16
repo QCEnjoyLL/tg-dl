@@ -70,6 +70,20 @@ def _propagated_errors() -> tuple:
     return _PROPAGATED_ERRORS
 
 
+def propagated_errors() -> tuple:
+    """Errors the download path re-raises instead of swallowing."""
+    return _propagated_errors()
+
+
+def record_swallowed_error(error: BaseException) -> None:
+    """Remember an error the download path hid, for ``handle_download``'s caller.
+
+    Used by the parallel downloader (``module.fast_download``), which cleans up
+    after itself and returns ``None`` exactly like the stock implementation.
+    """
+    _captured_error.set(error)
+
+
 class DownloadIncomplete(Exception):
     """The file stream ended before the announced size was received."""
 
@@ -278,8 +292,16 @@ def install_get_file_guard() -> bool:
 
     original_handle_download = pyrogram.Client.handle_download
     if not getattr(original_handle_download, "__tdl_guarded__", False):
+        # Composed outside-in: the guard turns a swallowed failure into an
+        # exception, the parallel downloader sits between the guard and the
+        # stock implementation so it can reuse the same cleanup contract.
+        # Imported here because fast_download imports this module.
+        from module.fast_download import (  # pylint: disable = C0415
+            parallel_handle_download,
+        )
+
         pyrogram.Client.handle_download = guard_handle_download(
-            original_handle_download
+            parallel_handle_download(original_handle_download)
         )
         installed = True
 

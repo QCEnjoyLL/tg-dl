@@ -27,9 +27,9 @@ from module.download_stat import (
     remove_download_result,
     update_download_status,
 )
+from module.fast_download import describe_chunk_settings, set_chunk_concurrency
 from module.get_chat_history_v2 import get_chat_history_v2
 from module.language import _t
-from module.pyrogram_guard import DownloadIncomplete, install_get_file_guard
 from module.pyrogram_extension import (
     HookClient,
     fetch_message,
@@ -41,6 +41,7 @@ from module.pyrogram_extension import (
     update_cloud_upload_stat,
     upload_telegram_chat,
 )
+from module.pyrogram_guard import DownloadIncomplete, install_get_file_guard
 from module.web import init_web, set_retry_handler
 from utils.format import truncate_filename, validate_title
 from utils.log import LogFilter
@@ -962,6 +963,12 @@ def main():
     # The bundled Pyrogram fork silently ends the chunk stream when a
     # GetFile request fails; resume instead of accepting a partial file.
     install_get_file_guard()
+    # One file is a single sequential chunk stream by default; the Web UI can
+    # split it into concurrent ranges (module.fast_download).
+    set_chunk_concurrency(app.max_concurrent_chunks)
+    chunk_summary = describe_chunk_settings()
+    if chunk_summary:
+        logger.info(chunk_summary)
     tasks = []
     client = HookClient(
         "media_downloader",
@@ -976,7 +983,19 @@ def main():
         app.pre_run()
         init_web(app)
 
-        set_max_concurrent_transmissions(client, app.max_concurrent_transmissions)
+        # Every parallel range holds one transmission slot for its whole stream,
+        # so size the pool for the worst case instead of serialising ranges.
+        transmissions = max(
+            app.max_concurrent_transmissions,
+            app.max_download_task * app.max_concurrent_chunks,
+        )
+        if transmissions != app.max_concurrent_transmissions:
+            logger.info(
+                f"max_concurrent_transmissions {app.max_concurrent_transmissions} "
+                f"raised to {transmissions} for {app.max_download_task} files × "
+                f"{app.max_concurrent_chunks} ranges"
+            )
+        set_max_concurrent_transmissions(client, transmissions)
 
         app.loop.run_until_complete(start_server(client))
         logger.success(_t("Successfully started (Press Ctrl+C to stop)"))

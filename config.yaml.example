@@ -34,6 +34,9 @@ file_name_prefix:
 max_download_task: 2
 # Pyrogram 并发传输槽位，默认是 max_download_task * 5
 max_concurrent_transmissions: 4
+# 单个文件的并行分片数：1 = 顺序下载（默认），4-8 可让单个大文件跑满带宽
+# 带宽充足但单文件慢时优先调这个；过高会增加 FloodWait 概率
+# max_concurrent_chunks: 4
 
 # 本地保存目录，容器内保持 /app/downloads
 # save_path: /app/downloads

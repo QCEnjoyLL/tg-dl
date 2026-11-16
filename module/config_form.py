@@ -144,6 +144,17 @@ FIELDS: List[Dict[str, Any]] = [
         "hint": "Pyrogram 层并发，默认是同时下载数 × 5。修改后需重启。",
     },
     {
+        "name": "max_concurrent_chunks",
+        "path": ["max_concurrent_chunks"],
+        "label": "单文件并行分片",
+        "group": "并发与超时",
+        "type": "number",
+        "min": 1,
+        "max": 16,
+        "default": 1,
+        "hint": "1 = 顺序下载（默认）。网络延迟高时改成 4-8，单个大文件也能跑满带宽；过高易触发 FloodWait。",
+    },
+    {
         "name": "start_timeout",
         "path": ["start_timeout"],
         "label": "连接超时（秒）",

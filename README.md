@@ -29,6 +29,21 @@
 逐条历史记录见 [CHANGELOG.md](CHANGELOG.md)；当前版本见顶部的 Release 徽章。
 
 <details>
+<summary><b>v2.10.0</b> — 单文件并行分片下载（默认关闭）</summary>
+
+- **单文件提速**：以前一个文件只有一条顺序流，速度被 `1 MiB ÷ 往返延迟` 锁死，
+  `max_download_task` 只在队列里堆了多个文件时才有用。新增 `max_concurrent_chunks`：
+  把一个文件切成 N 段并发拉取，共用同一条媒体会话（不多开会话、不多建连接）
+- **默认 1，行为完全不变**；网络延迟高（>100 ms）时设 4-8，单个大文件也能跑满带宽。
+  段与段之间仍保留「流提前结束自动续传」语义，只有连续 3 次无进展才判失败
+- 并行段各占一个传输槽位，启动时自动把 `max_concurrent_transmissions` 抬到
+  `max_download_task × max_concurrent_chunks`，避免并行段互相排队
+- Web UI「并发与超时」新增「单文件并行分片」，改完即时生效（新任务生效，进行中的任务不变）
+- README 补「下载速度慢」排查：先分清是单文件慢、队列慢还是线路慢
+
+</details>
+
+<details>
 <summary><b>v2.9.6</b> — 操作列不再裁掉「确认删除」</summary>
 
 - **「确认删除」按钮被裁掉**：操作列固定 150px，而「暂停 / 继续 + 确认删除」需要 156px，
@@ -347,7 +362,16 @@ max_download_task: 2
 # Pyrogram 层的并发传输槽位，默认是 max_download_task * 5
 # 想让整体更慢更稳，显式调小
 max_concurrent_transmissions: 4
+
+# 单个文件的并行分片数（默认 1 = 顺序下载）
+# 队列里只有一两个大文件、速度上不去时优先调它，4-8 一般够用
+# max_concurrent_chunks: 4
 ```
+
+Telegram 的 `upload.GetFile` 每次最多返回 1 MiB，Pyrogram 是**一个文件一条顺序流**：
+单文件速度 ≈ `1 MiB / 往返延迟`，与带宽基本无关。所以提速只有两条路——
+多开文件（`max_download_task`），或者把一个文件切成多段并发拉（`max_concurrent_chunks`，
+见 [常见问题](#常见问题) 里的「下载速度慢」）。
 
 ### 上传到网盘
 
@@ -457,7 +481,7 @@ web_login_secret: "改成你的密码"
 
 ### 配置热更新说明
 
-保存配置后，以下项**立即生效**：`media_types`、`file_formats`、`file_path_prefix`、`file_name_prefix`、`file_name_prefix_split`、`hide_file_name`、`enable_download_txt`、`after_upload_telegram_delete`、`drop_no_audio_video`、`log_level`、`date_format`、`language`、广告过滤相关项、`upload_drive.*`、`web_login_secret`。
+保存配置后，以下项**立即生效**：`media_types`、`file_formats`、`file_path_prefix`、`file_name_prefix`、`file_name_prefix_split`、`hide_file_name`、`enable_download_txt`、`after_upload_telegram_delete`、`drop_no_audio_video`、`log_level`、`date_format`、`max_concurrent_chunks`、`language`、广告过滤相关项、`upload_drive.*`、`web_login_secret`。
 
 以下项需要**重启进程**：`api_id`、`api_hash`、`bot_token`、`chat`、`proxy`、`save_path`、`web_host`、`web_port`、`max_download_task`、`max_concurrent_transmissions`、`allowed_user_ids`、`start_timeout`。
 
@@ -571,6 +595,25 @@ v2.9.1 已修。底层 Pyrogram fork 会吞掉 `upload.GetFile` 的异常，把�
      port: 1080
    ```
 4. **只有个别文件失败**：可能是该文件所在的存储 DC 暂时异常，隔一段时间重试，或换代理线路。
+
+**Q：下载速度慢，怎么提速？**
+先分清瓶颈在哪：
+
+1. **单个文件慢**：这是默认行为。Pyrogram 对同一个文件只保持一条顺序流（一次 1 MiB 的
+   `upload.GetFile`），所以单文件速度上限约等于 `1 MiB ÷ 往返延迟`——100 ms 延迟就是 ~10 MB/s，
+   200 ms 就只有 ~5 MB/s，和你的带宽没关系。
+   把 `max_concurrent_chunks` 调成 4-8 即可让它把文件切成多段并发拉（默认 1 = 关闭）：
+   ```yaml
+   max_concurrent_chunks: 4
+   ```
+   段与段之间共用同一条媒体会话，不会多建连接；仍保留「流提前结束自动续传」的语义。
+   太高（>8）容易触发 FloodWait，收益也会变小。
+2. **队列整体慢**：`max_download_task` 是同时下载的文件数，默认 2。带宽富余时提到 4-6；
+   程序会自动把 `max_concurrent_transmissions` 抬到 `max_download_task × max_concurrent_chunks`，
+   保证并行段不会互相排队。
+3. **网络本身**：`ping api.telegram.org` 看延迟，走代理/机场线路时延迟和抖动往往才是瓶颈；
+   换线路比调参数更有效。
+4. 两项都调完仍然慢，按上面 `[-500 TIMEOUT]` 那节的顺序排查（MTU、出口 IP、存储 DC）。
 
 **Q：下载任务一直 0%，是不是卡住了？**
 看 `log/tdl.log`。Web 的「下载中」标签只反映开始过下载的消息，队列里的大量消息不会同时推进；把 `max_download_task` 控制在 2-3 更稳。如果某条任务显示 100% 但一直不动，通常是该文件还在等待上传或收尾，可点「删除」清掉。
