@@ -7,7 +7,7 @@ image tag always describe the same commit.
 Run it from the repository root::
 
     python3 scripts/release.py --print-version
-    python3 scripts/release.py --version 2.9.4 --output release-notes.md
+    python3 scripts/release.py --version 2.9.5 --output release-notes.md
 """
 
 import argparse
@@ -16,10 +16,10 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
-#: ``__version__ = "2.9.4"`` in ``utils/__init__.py`` — the single source of truth.
+#: ``__version__ = "2.9.5"`` in ``utils/__init__.py`` — the single source of truth.
 _VERSION_LINE = re.compile(r'^__version__\s*=\s*"([^"]+)"', re.MULTILINE)
 
-#: ``## v2.9.4`` — the section headings ``CHANGELOG.md`` uses.
+#: ``## v2.9.5`` — the section headings ``CHANGELOG.md`` uses.
 _SECTION_LINE = re.compile(r"^##\s+v?(?P<version>\d+\.\d+\.\d+)\s*$")
 
 DEFAULT_VERSION_FILE = "utils/__init__.py"
@@ -107,7 +107,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument(
         "--print-version", action="store_true", help="只打印 __version__ 后退出"
     )
-    parser.add_argument("--version", help="要生成发布说明的版本号，例如 2.9.4")
+    parser.add_argument("--version", help="要生成发布说明的版本号，例如 2.9.5")
     parser.add_argument("--version-file", default=DEFAULT_VERSION_FILE)
     parser.add_argument("--changelog", default=DEFAULT_CHANGELOG)
     parser.add_argument("--image", default=DEFAULT_IMAGE)

@@ -3,12 +3,25 @@
 > 基于 [tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader) 的修复分支。
 > 保留原项目的全部功能（Telegram bot 指令、Web UI、rclone 上传、受保护内容下载），并持续修复实际使用中的问题。
 
-当前版本：**v2.9.4**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
+当前版本：**v2.9.5**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
 
 [![Docker](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml)
 [![Release](https://img.shields.io/github/v/release/QCEnjoyLL/tg-dl?label=release&color=blue)](https://github.com/QCEnjoyLL/tg-dl/releases/latest)
 [![Tests](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/unittest.yml/badge.svg)](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/unittest.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+---
+
+## v2.9.5 更新内容
+
+> Release 自动化上线后的第一个版本。v2.9.4 没有单独发布过，它的全部修复都包含在本版本里。
+
+- **构建镜像时自动创建对应版本的 GitHub Release**：版本号只有 `utils/__init__.py` 一处来源，
+  镜像标签、git tag、Release 不会再各说各话
+- 镜像推送成功后才发 Release（失败不留半成品）；已存在的 Release 自动跳过，可安全重跑
+- 手动推 `v*` tag 会校验与 `__version__` 是否一致；`CHANGELOG.md` 缺对应章节时在构建前就失败
+- 镜像注入 `org.opencontainers.image.version`，`docker inspect` 可查版本；README 增加 Release 徽章
+- 本版本同时包含 v2.9.4 的全部修复，见下一节
 
 ---
 

@@ -2,6 +2,26 @@
 
 版本号规则：MAJOR（破坏性改动或核心重写）/ MINOR（新增功能）/ PATCH（修复、依赖、文档、UI 打磨）。
 
+## v2.9.5
+
+> Release 自动化上线后的第一个版本。v2.9.4 没有单独发布过，它的全部修复都包含在本版本里。
+
+### 构建与发布
+
+- **构建镜像时自动创建对应版本的 GitHub Release**：版本号统一取自 `utils/__init__.py` 的
+  `__version__`，镜像标签、git tag、Release 三者不会再各说各话；Release 正文由
+  `scripts/release.py` 从 `CHANGELOG.md` 抽取同名章节并附上拉取命令生成
+- 镜像推送成功后才创建 Release（失败不留半成品），已存在的 Release 自动跳过，可安全重跑
+- 手动推 `v*` tag 时校验 tag 与 `__version__` 一致，不一致直接失败
+- 构建前先校验 `CHANGELOG.md` 有对应章节，避免「镜像推上去了、Release 却失败」
+- 镜像注入 `org.opencontainers.image.version` / `.revision` 标签，`docker inspect` 可查版本
+- README 增加 Release 徽章，仓库首页即可看到当前版本，并补充「发布新版本」流程说明
+
+### 修复
+
+- 本版本包含 v2.9.4 的全部修复（已下载文件按字节数校验、`file_formats` 支持扩展名、
+  配置原子写入、Web 鉴权加固、bot 配置写错文件等），逐条说明见下一节
+
 ## v2.9.4
 
 ### 修复
