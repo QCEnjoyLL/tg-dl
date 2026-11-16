@@ -3,11 +3,20 @@
 > 基于 [tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader) 的修复分支。
 > 保留原项目的全部功能（Telegram bot 指令、Web UI、rclone 上传、受保护内容下载），并持续修复实际使用中的问题。
 
-当前版本：**v2.9.2**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
+当前版本：**v2.9.3**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
 
 [![Docker](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml)
 [![Tests](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/unittest.yml/badge.svg)](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/unittest.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+---
+
+## v2.9.3 更新内容
+
+- 修复 **`[-500 TIMEOUT] ... caused by "upload.GetFile"` 反复失败、看不出原因**：
+  Pyrogram fork 吞掉的真实异常现在会被捕获并写进失败原因，不再只报「下载中途中断，未生成文件」
+- Telegram 侧 5xx 不再无意义地重开同一 offset，直接带原因失败；网络类错误按指数退避重试
+- Web UI「失败」页新增**失败原因**列，并给出可执行的排查提示（MTU / 出口 IP / proxy / 并发）
 
 ---
 
@@ -317,6 +326,10 @@ web_login_secret: "改成你的密码"
 
 ![编辑配置](docs/ui-config.png)
 
+**失败任务与失败原因**
+
+![失败列表](docs/ui-failed.png)
+
 **移动端**
 
 ![移动端](docs/ui-mobile.png)
@@ -431,6 +444,34 @@ PAT 需要 `read:packages` 权限。
 v2.9.1 已修。底层 Pyrogram fork 会吞掉 `upload.GetFile` 的异常，把只下载了一部分的临时文件当成完成品返回；
 旧版的大小校验又把它当成引用过期。现在下载器会在流提前结束时按 1 MiB 块边界自动续传，
 只有连续 3 次完全没有进展才判定失败，并在失败记录里写明「只收到 X / 应为 Y 字节」。
+
+**Q：日志一直刷 `[-500 TIMEOUT] ... caused by "upload.GetFile"`，这个文件一直下不下来？**
+这是 **Telegram 存储节点取文件超时**，不是文件过期，也不是程序 bug；重试同一条会一直得到同样的结果。v2.9.3 起失败页会直接显示这条原因并给出提示，不再笼统地说「下载中途中断」。
+
+常见原因和排查顺序：
+
+1. **MTU 不匹配（云服务器 + Docker 最常见）**：登录、收发消息正常，但每个文件下载都在固定位置超时，通常是 Docker 网络 MTU 1500 与云厂商链路不一致，大包被丢弃。
+   ```bash
+   # 在宿主机上测试（能通则 MTU 正常，超时/丢包则说明链路有问题）
+   ping -M do -s 1472 -c 3 149.154.167.51
+   # 不行就依次试小一点的包，直到能通，例如 -s 1400
+   ```
+   给 Compose 网络加 MTU 后重启容器：
+   ```yaml
+   networks:
+     default:
+       driver_opts:
+         com.docker.network.driver.mtu: "1400"
+   ```
+2. **并发过高被 Telegram 限速**：把 `max_download_task` 降到 1-2，`max_concurrent_transmissions` 降到 1-2，重启后再试。
+3. **出口 IP 被限**：换个出口 IP，或在 `config.yaml` 配置代理（用户客户端和 bot 都会走）：
+   ```yaml
+   proxy:
+     scheme: socks5
+     hostname: 127.0.0.1
+     port: 1080
+   ```
+4. **只有个别文件失败**：可能是该文件所在的存储 DC 暂时异常，隔一段时间重试，或换代理线路。
 
 **Q：下载任务一直 0%，是不是卡住了？**
 看 `log/tdl.log`。Web 的「下载中」标签只反映开始过下载的消息，队列里的大量消息不会同时推进；把 `max_download_task` 控制在 2-3 更稳。如果某条任务显示 100% 但一直不动，通常是该文件还在等待上传或收尾，可点「删除」清掉。

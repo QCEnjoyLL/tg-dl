@@ -2,6 +2,25 @@
 
 版本号规则：MAJOR（破坏性改动或核心重写）/ MINOR（新增功能）/ PATCH（修复、依赖、文档、UI 打磨）。
 
+## v2.9.3
+
+### 修复
+
+- **`[-500 TIMEOUT] ... caused by "upload.GetFile"` 反复失败且看不出原因**
+  - 根因：Pyrogram fork 的 `get_file` 把异常写进日志后**静默结束数据流**，
+    `handle_download` 又把这个异常吞掉、返回 `None`，下载器只能报
+    「下载中途中断，未生成文件」。外层重试 3 次、每次再续传 3 次，
+    一条 210MB 的文件能卡 10 分钟以上，日志里还只有 `client.py` 的 traceback
+  - `pyrogram_guard` 现在会捕获 fork 日志里的真实异常并挂到
+    `DownloadIncomplete.cause`；同时给 `handle_download` 打补丁，把
+    `DownloadIncomplete` 抛回下载器，不再被吞成 `None`
+  - 确认是 Telegram 侧 5xx（如 `[-500 TIMEOUT]`）时不再无意义地重开同一个
+    offset，直接带上原因失败；`download_media` 用指数退避重试（网络类错误 10s / 20s / 40s，其他 3s / 6s / 12s）
+  - 失败原因写入失败记录：Web UI「失败」页新增**失败原因**列（窄屏显示在文件名下方），
+    日志与重试提示也会带上真实原因和排查建议
+  - 网络类失败的提示会指出常见原因：服务器到 Telegram 存储节点的链路问题、
+    Docker/主机 MTU（可尝试 1400）、出口 IP 被限速、需要配置 `proxy`、或并发过高
+
 ## v2.9.2
 
 ### 文档

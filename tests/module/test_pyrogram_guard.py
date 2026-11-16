@@ -1,5 +1,7 @@
 """Regression tests for the resume-on-truncation get_file guard."""
 
+import asyncio
+import logging
 import unittest
 from unittest import mock
 
@@ -9,7 +11,9 @@ from module import pyrogram_guard
 from module.pyrogram_guard import (
     CHUNK_SIZE,
     DownloadIncomplete,
+    _captured_error,
     guard_get_file,
+    guard_handle_download,
 )
 
 
@@ -47,6 +51,19 @@ class StalledStream:
     async def stream(self, *args, **kwargs):
         for _ in ():
             yield b""
+
+
+class FailingStream:
+    """A get_file that raises a protocol error instead of ending silently."""
+
+    def __init__(self, error: BaseException):
+        self.error = error
+        self.calls = 0
+
+    async def stream(self, *args, **kwargs):
+        self.calls += 1
+        raise self.error
+        yield b""  # pragma: no cover
 
 
 class GuardGetFileTestCase(unittest.IsolatedAsyncioTestCase):
@@ -98,6 +115,84 @@ class GuardGetFileTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(caught.exception.received, 0)
         self.assertEqual(caught.exception.expected, len(data))
 
+    async def test_server_timeout_fails_fast_with_cause(self):
+        """[-500 TIMEOUT] means the storage node is not serving the file.
+
+        Reopening the stream only waits for another timeout, so the guard must
+        surface the cause on the first attempt.
+        """
+        timeout = pyrogram.errors.exceptions.internal_server_error_500.Timeout()
+        stream = FailingStream(timeout)
+
+        with self.assertRaises(DownloadIncomplete) as caught:
+            await self.collect(stream, 2 * CHUNK_SIZE)
+
+        self.assertIs(caught.exception.cause, timeout)
+        self.assertIn("Timeout", str(caught.exception))
+        self.assertEqual(stream.calls, 1)
+
+    async def test_unexpected_error_is_attached_to_download_incomplete(self):
+        error = RuntimeError("connection reset by peer")
+        stream = FailingStream(error)
+
+        with self.assertRaises(DownloadIncomplete) as caught:
+            await self.collect(stream, CHUNK_SIZE)
+
+        self.assertIs(caught.exception.cause, error)
+
+    async def test_cancelled_error_is_not_swallowed(self):
+        stream = FailingStream(asyncio.CancelledError())
+
+        with self.assertRaises(asyncio.CancelledError):
+            await self.collect(stream, CHUNK_SIZE)
+
+    async def test_swallowed_exception_is_captured_from_pyrogram_log(self):
+        """The fork logs the error it swallowed; the guard must report it."""
+        timeout = pyrogram.errors.exceptions.internal_server_error_500.Timeout()
+        pyrogram_guard._install_error_capture()  # pylint: disable = W0212
+
+        async def stream(*args, **kwargs):
+            logging.getLogger("pyrogram.client").error(
+                "get_file failed", exc_info=timeout
+            )
+            for _ in ():
+                yield b""
+
+        holder = mock.Mock(stream=stream)
+        with mock.patch.object(pyrogram_guard, "RESUME_SLEEP", 0):
+            with self.assertRaises(DownloadIncomplete) as caught:
+                await self.collect(holder, CHUNK_SIZE)
+
+        self.assertIs(caught.exception.cause, timeout)
+
+    def test_handle_download_reraises_download_incomplete(self):
+        """Stock Pyrogram returns None; the guard must propagate the failure."""
+
+        async def original_handle_download(_self, _packet):
+            _captured_error.set(DownloadIncomplete(10, 100))
+            return None
+
+        guarded = guard_handle_download(original_handle_download)
+
+        async def run():
+            return await guarded(None, None)
+
+        with self.assertRaises(DownloadIncomplete) as caught:
+            asyncio.run(run())
+
+        self.assertEqual(caught.exception.received, 10)
+
+    def test_handle_download_passes_success_through(self):
+        async def original_handle_download(_self, _packet):
+            return "/downloads/file.mp4"
+
+        guarded = guard_handle_download(original_handle_download)
+
+        async def run():
+            return await guarded(None, None)
+
+        self.assertEqual(asyncio.run(run()), "/downloads/file.mp4")
+
     async def test_unknown_size_stream_is_not_guarded(self):
         data = b"w" * 100
         stream = FakeStream(data)
@@ -112,12 +207,17 @@ class GuardGetFileTestCase(unittest.IsolatedAsyncioTestCase):
         # media_downloader.main() installs the guard, and under some pytest
         # versions the media_downloader tests run before this module, so the
         # first call here may already be a no-op. Idempotency is the contract.
-        original = pyrogram.Client.get_file
+        original_get_file = pyrogram.Client.get_file
+        original_handle_download = pyrogram.Client.handle_download
         try:
             pyrogram_guard.install_get_file_guard()
             self.assertFalse(pyrogram_guard.install_get_file_guard())
             self.assertTrue(
                 getattr(pyrogram.Client.get_file, "__tdl_guarded__", False)
             )
+            self.assertTrue(
+                getattr(pyrogram.Client.handle_download, "__tdl_guarded__", False)
+            )
         finally:
-            pyrogram.Client.get_file = original
+            pyrogram.Client.get_file = original_get_file
+            pyrogram.Client.handle_download = original_handle_download

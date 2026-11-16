@@ -599,6 +599,10 @@ main {
   white-space: nowrap;
 }
 
+.col-reason {
+  width: 34%;
+}
+
 .col-progress {
   width: 200px;
 }
@@ -640,6 +644,19 @@ main {
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+.cell-reason {
+  color: var(--text-muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Only used on narrow screens, where the reason column is hidden. */
+.reason-inline {
+  display: none;
 }
 
 .cell-path {
@@ -1351,8 +1368,20 @@ main {
   .col-time,
   .cell-time,
   .col-size,
-  .cell-size {
+  .cell-size,
+  .col-reason,
+  .cell-reason {
     display: none;
+  }
+
+  .reason-inline {
+    display: block;
+    margin-top: 2px;
+    color: var(--text-faint);
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .col-actions {

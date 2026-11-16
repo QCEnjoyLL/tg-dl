@@ -31,6 +31,7 @@ from module.pyrogram_extension import (
     record_download_status,
     reset_download_cache,
 )
+from module.pyrogram_guard import DownloadIncomplete
 
 from .test_common import (
     Chat,
@@ -340,6 +341,13 @@ class MockClient:
             raise pyrogram.errors.exceptions.flood_420.FloodWait(value=420)
         elif mock_message.id == 421:
             raise Exception
+        elif mock_message.id == 423:
+            # A stream that the fork silently ended after a [-500 TIMEOUT].
+            raise DownloadIncomplete(
+                0,
+                1024,
+                cause=pyrogram.errors.exceptions.internal_server_error_500.Timeout(),
+            )
         return kwargs["file_name"]
 
     async def edit_message_text(self, *args, **kwargs):
@@ -853,6 +861,41 @@ class MediaDownloaderTestCase(unittest.TestCase):
             )
         )
         self.assertEqual((DownloadStatus.FailedDownload, None), result)
+
+    @mock.patch("media_downloader.app.save_path", new=MOCK_DIR)
+    @mock.patch("media_downloader.asyncio.sleep", return_value=None)
+    @mock.patch("media_downloader.logger")
+    @mock.patch("media_downloader._is_exist", new=is_exist)
+    def test_download_media_network_timeout_reason(self, mock_logger, patch_sleep):
+        """A swallowed [-500 TIMEOUT] must surface the real cause and a hint."""
+        reset_download_cache()
+        rest_app(MOCK_CONF)
+        client = MockClient()
+        message = MockMessage(
+            id=423,
+            media=True,
+            video=MockVideo(
+                file_name="timeout.mp4",
+                mime_type="video/mp4",
+                file_size=1024,
+            ),
+        )
+        result = self.loop.run_until_complete(
+            async_download_media(
+                client, message, ["video", "photo"], {"video": ["all"]}
+            )
+        )
+        self.assertEqual((DownloadStatus.FailedDownload, None), result)
+
+        cause = pyrogram.errors.exceptions.internal_server_error_500.Timeout()
+        reason = (
+            f"only received 0 of 1024 bytes (Timeout: {cause}); "
+            "download failed due to network timeout"
+        )
+        mock_logger.error.assert_called_with(
+            f"Message[423]: {reason}; "
+            "download incomplete after 3 retries, download skipped."
+        )
 
     @mock.patch("media_downloader.HookClient", new=MockClient)
     @mock.patch("media_downloader.asyncio.Queue.put")

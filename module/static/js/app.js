@@ -405,6 +405,13 @@
       esc(row.filename || row.reason) +
       '">' +
       nameHtml(row.filename) +
+      '<span class="reason-inline">' +
+      esc(row.reason) +
+      "</span></td>" +
+      '<td class="cell-reason" title="' +
+      esc(row.reason) +
+      '">' +
+      esc(row.reason) +
       "</td>" +
       '<td class="cell-time">' +
       timeText(row.time) +
@@ -421,6 +428,19 @@
     if (retryBtn) retryBtn.setAttribute("aria-label", "重试下载 " + row.filename);
     const deleteBtn = tr.querySelector('[data-action="delete"]');
     if (deleteBtn) deleteBtn.setAttribute("aria-label", "删除失败记录 " + row.filename);
+
+    const text = row.reason || "";
+    const reasonCell = tr.querySelector(".cell-reason");
+    if (reasonCell) {
+      if (reasonCell.textContent !== text) reasonCell.textContent = text;
+      reasonCell.title = text;
+    }
+    // Narrow layouts hide the dedicated column and show the reason under the
+    // file name instead.
+    const inlineReason = tr.querySelector(".reason-inline");
+    if (inlineReason) {
+      if (inlineReason.textContent !== text) inlineReason.textContent = text;
+    }
   }
 
   function tabRows(tab) {

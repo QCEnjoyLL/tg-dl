@@ -128,6 +128,25 @@ class WebApiTestCase(unittest.TestCase):
         self.assertEqual(response.mimetype, "application/json")
         self.assertEqual(len(response.get_json()), 2)
 
+    def test_failed_list_exposes_the_reason(self):
+        failed = {
+            -100123: {
+                132: {
+                    "file_name": "sample.mp4",
+                    "time": 1763000000,
+                    "reason": "only received 0 of 1024 bytes (Timeout: ...)",
+                }
+            }
+        }
+        with mock.patch.object(web, "get_failed_downloads", return_value=failed):
+            response = self.client.get("/get_failed_list")
+
+        rows = response.get_json()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["id"], 132)
+        # The Web UI shows this column, so the key must be part of the contract.
+        self.assertIn("only received 0 of 1024 bytes", rows[0]["reason"])
+
     def test_download_status_is_json(self):
         with mock.patch.object(
             web, "get_total_download_speed", return_value=1024

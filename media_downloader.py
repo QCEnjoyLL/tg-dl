@@ -91,7 +91,10 @@ def _check_download_finish(media_size: int, download_path: str, ui_file_name: st
             f"{media_size}, {_t('file name')}: {ui_file_name}"
         )
         os.remove(download_path)
-        raise pyrogram.errors.exceptions.bad_request_400.BadRequest()
+        # Report the real numbers instead of pretending the file reference
+        # expired (the old code raised BadRequest here, which is why a
+        # truncated transfer was logged as "file reference expired").
+        raise DownloadIncomplete(download_size, media_size)
 
 
 def _move_to_download_path(temp_download_path: str, download_path: str):
@@ -127,6 +130,45 @@ def _check_timeout(retry: int, _: int):
     if retry == 2:
         return True
     return False
+
+
+def _retry_delay(retry: int, network: bool = False) -> float:
+    """Exponential backoff between download attempts.
+
+    A failed ``upload.GetFile`` usually means the route to the Telegram storage
+    node is unhealthy; retrying immediately only burns through the queue. Give
+    DC/timeout failures a longer base so a temporarily overloaded storage node
+    has time to recover before the task is marked as failed.
+    """
+    base = 10.0 if network else float(RETRY_TIME_OUT)
+    return min(60.0, base * (2**retry))
+
+
+def _is_network_cause(exc: Optional[BaseException]) -> bool:
+    """Whether a download failure came from the Telegram/network layer."""
+    if exc is None:
+        return False
+    if isinstance(exc, (OSError, ConnectionError, asyncio.TimeoutError)):
+        return True
+    try:
+        import pyrogram  # pylint: disable = C0415
+
+        if isinstance(exc, pyrogram.errors.RPCError):
+            code = getattr(exc, "CODE", None)
+            return isinstance(code, int) and code >= 500
+    except Exception:  # pylint: disable = W0703
+        pass
+    return False
+
+
+def _describe_download_error(
+    incomplete: DownloadIncomplete, cause: Optional[BaseException]
+) -> str:
+    """Human readable reason stored in the failed-task list."""
+    reason = str(incomplete)
+    if _is_network_cause(cause):
+        return f"{reason}; {_t('download failed due to network timeout')}"
+    return reason
 
 
 def _can_download(_type: str, file_formats: dict, file_format: Optional[str]) -> bool:
@@ -567,16 +609,17 @@ async def download_media(
             # No path came back: the client aborted and removed its temp file.
             # Pause before the next attempt instead of hammering the queue.
             last_error = _t("download aborted before the file was written")
+            delay = _retry_delay(retry)
             logger.warning(
                 f"Message[{message.id}]: {last_error}, "
-                f"{_t('retrying after')} {RETRY_TIME_OUT} {_t('seconds')}"
+                f"{_t('retrying after')} {delay:g} {_t('seconds')}"
             )
-            await asyncio.sleep(RETRY_TIME_OUT)
+            await asyncio.sleep(delay)
         except pyrogram.errors.exceptions.bad_request_400.BadRequest:
             logger.warning(
                 f"Message[{message.id}]: {_t('file reference expired, refetching')}..."
             )
-            await asyncio.sleep(RETRY_TIME_OUT)
+            await asyncio.sleep(_retry_delay(retry))
             message = await fetch_message(client, message)
             last_error = _t("file reference expired")
             if _check_timeout(retry, message.id):
@@ -586,12 +629,16 @@ async def download_media(
                     f"{_t('file reference expired for 3 retries, download skipped.')}"
                 )
         except DownloadIncomplete as incomplete:
-            last_error = str(incomplete)
+            # The fork swallowed the protocol error; keep its cause so a
+            # [-500 TIMEOUT] on upload.GetFile is not reported as a generic
+            # interruption. Network causes also get an actionable hint.
+            last_error = _describe_download_error(incomplete, incomplete.cause)
+            delay = _retry_delay(retry, network=_is_network_cause(incomplete.cause))
             logger.warning(
-                f"Message[{message.id}]: {incomplete}; "
-                f"{_t('retrying after')} {RETRY_TIME_OUT} {_t('seconds')}"
+                f"Message[{message.id}]: {last_error}; "
+                f"{_t('retrying after')} {delay:g} {_t('seconds')}"
             )
-            await asyncio.sleep(RETRY_TIME_OUT)
+            await asyncio.sleep(delay)
             # A truncated stream can also be a stale file reference that the
             # fork swallowed; refetch so the next attempt gets a fresh one.
             try:
@@ -600,7 +647,7 @@ async def download_media(
                 logger.warning(f"Message[{message.id}]: refetch failed: {fetch_err}")
             if _check_timeout(retry, message.id):
                 logger.error(
-                    f"Message[{message.id}]: "
+                    f"Message[{message.id}]: {last_error}; "
                     f"{_t('download incomplete after 3 retries, download skipped.')}"
                 )
         except pyrogram.errors.exceptions.flood_420.FloodWait as wait_err:

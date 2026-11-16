@@ -157,14 +157,14 @@ FAILED = [
         "id": "785",
         "filename": "785 - 示例视频_08.mov",
         "time": NOW - 3600,
-        "reason": "timeout",
+        "reason": "only received 0 of 10485760 bytes (Timeout: Telegram says: [500 TIMEOUT] - A timeout occurred while fetching data from the worker); download failed due to network timeout",
     },
     {
         "chat": "@example_channel",
         "id": "801",
         "filename": "801 - 会议纪要_录音转写.mp4",
         "time": NOW - 7200,
-        "reason": "FloodWait",
+        "reason": "FloodWait: 420 seconds",
     },
 ]
 
