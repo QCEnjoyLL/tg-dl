@@ -76,13 +76,17 @@ async def get_chat_history_v2(
         )
 
         if not messages:
-            break_count = offset_id - 1
-            async for message in self.get_chat_history(chat_id):
-                if break_count:
-                    break_count -= 1
-                    continue
-                if len(messages) >= limit + 1:
-                    break
+            # ``get_chunk_v2`` answered with an empty page (transient error or
+            # an empty history): retry once through the stock history iterator.
+            # The old code treated ``offset_id`` — a Telegram message id that
+            # can reach millions — as a *count* of messages to skip, so it
+            # silently downloaded the wrong range whenever this path was hit.
+            async for message in self.get_chat_history(
+                chat_id,
+                limit=limit + 1,
+                offset=offset,
+                offset_id=offset_id,
+            ):
                 messages.append(message)
             if not messages:
                 return

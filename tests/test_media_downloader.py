@@ -933,6 +933,24 @@ class MediaDownloaderTestCase(unittest.TestCase):
             _can_download("video", {"video": ["mp4"]}, "mkv"), False
         )
 
+        # The configured value is an extension ("mov", "docx") while the mime
+        # type only exposes the subtype ("quicktime", the long vendor string).
+        # Both spellings must match, otherwise every such file is skipped.
+        self.assertEqual(
+            _can_download("audio", {"audio": ["mp3"]}, ["mp3", "mpeg"]), True
+        )
+        self.assertEqual(
+            _can_download("audio", {"audio": ["mp3"]}, ["flac", "x-flac"]), False
+        )
+        self.assertEqual(
+            _can_download(
+                "document",
+                {"document": ["docx"]},
+                ["docx", "vnd.openxmlformats-officedocument.wordprocessingml.document"],
+            ),
+            True,
+        )
+
     def test_is_exist(self):
         this_dir = os.path.dirname(os.path.abspath(__file__))
         result = _is_exist(os.path.join(this_dir, "__init__.py"))
@@ -1051,6 +1069,75 @@ class MediaDownloaderTestCase(unittest.TestCase):
         )
 
         self.assertEqual(res, (DownloadStatus.SkipDownload, None))
+
+    @mock.patch("media_downloader.RETRY_TIME_OUT", new=0)
+    @mock.patch("media_downloader.os.path.getsize", new=lambda _: 512)
+    @mock.patch("media_downloader.fetch_message", new=new_fetch_message)
+    @mock.patch(
+        "media_downloader._check_download_finish", new=mock_check_download_finish
+    )
+    @mock.patch("media_downloader._is_exist", new=lambda _: True)
+    @mock.patch(
+        "media_downloader._move_to_download_path", new=mock_move_to_download_path
+    )
+    def test_truncated_leftover_is_downloaded_again(self):
+        """A leftover file of the wrong size is a partial download, not a skip.
+
+        v2.9.0 accepted truncated `get_file` streams, so a file on disk can be
+        shorter than Telegram's metadata.  Treating any non-empty file as
+        "already downloaded" kept it forever and reported a skip.
+        """
+        rest_app(MOCK_CONF)
+        client = MockClient()
+
+        message = MockMessage(
+            id=314,
+            media=True,
+            video=MockVideo(
+                file_name="truncated_down.mp4",
+                mime_type="video/mp4",
+                file_size=1024,
+            ),
+        )
+
+        res = self.loop.run_until_complete(
+            async_download_media(
+                client, message, ["video", "photo"], {"video": ["mp4"]}
+            )
+        )
+
+        self.assertEqual(res[0], DownloadStatus.SuccessDownload)
+
+    @mock.patch("media_downloader.RETRY_TIME_OUT", new=0)
+    @mock.patch("media_downloader.os.path.getsize", new=lambda _: 0)
+    @mock.patch("media_downloader.fetch_message", new=new_fetch_message)
+    @mock.patch(
+        "media_downloader._check_download_finish", new=mock_check_download_finish
+    )
+    @mock.patch("media_downloader._is_exist", new=lambda _: False)
+    @mock.patch(
+        "media_downloader._move_to_download_path", new=mock_move_to_download_path
+    )
+    def test_file_formats_match_extension_not_only_mime_subtype(self):
+        """`file_formats: video: [mov]` must accept a ``video/quicktime`` file."""
+        rest_app(MOCK_CONF)
+        client = MockClient()
+
+        message = MockMessage(
+            id=315,
+            media=True,
+            video=MockVideo(
+                file_name="clip.mov",
+                mime_type="video/quicktime",
+                file_size=1024,
+            ),
+        )
+
+        res = self.loop.run_until_complete(
+            async_download_media(client, message, ["video"], {"video": ["mov"]})
+        )
+
+        self.assertEqual(res[0], DownloadStatus.SuccessDownload)
 
     @mock.patch("media_downloader.HookClient", new=MockClient)
     @mock.patch("media_downloader.RETRY_TIME_OUT", new=1)

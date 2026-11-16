@@ -217,6 +217,18 @@ def truncate_filename(path: str, limit: int = 230) -> str:
     return os.path.join(p, f_trunc + e)
 
 
+def _to_int(value: str) -> int:
+    """Convert a numeric Telegram id segment, with a readable error.
+
+    ``https://t.me/username/abc`` used to raise ``invalid literal for int()``,
+    which the bot then echoed to the user as the whole error message.
+    """
+    try:
+        return int(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"invalid numeric id {value!r}") from error
+
+
 def extract_info_from_link(link: str) -> Link:
     """Extract info from link"""
     if link in ("me", "self"):
@@ -233,27 +245,27 @@ def extract_info_from_link(link: str) -> Link:
 
     if "comment" in query:
         result.group_id = paths[0]
-        result.comment_id = int(query["comment"][0])
+        result.comment_id = _to_int(query["comment"][0])
     elif len(paths) == 1 and paths[0] != "c":
         result.group_id = paths[0]
     elif len(paths) == 2:
         if paths[0] == "c":
-            result.group_id = int(f"-100{paths[1]}")
+            result.group_id = _to_int(f"-100{paths[1]}")
         else:
             result.group_id = paths[0]
-            result.post_id = int(paths[1])
+            result.post_id = _to_int(paths[1])
     elif len(paths) == 3:
         if paths[0] == "c":
-            result.group_id = int(f"-100{paths[1]}")
-            result.post_id = int(paths[2])
+            result.group_id = _to_int(f"-100{paths[1]}")
+            result.post_id = _to_int(paths[2])
         else:
             result.group_id = paths[0]
-            result.topic_id = int(paths[1])
-            result.post_id = int(paths[2])
+            result.topic_id = _to_int(paths[1])
+            result.post_id = _to_int(paths[2])
     elif len(paths) == 4 and paths[0] == "c":
-        result.group_id = int(f"-100{paths[1]}")
-        result.topic_id = int(paths[2])
-        result.post_id = int(paths[3])
+        result.group_id = _to_int(f"-100{paths[1]}")
+        result.topic_id = _to_int(paths[2])
+        result.post_id = _to_int(paths[3])
 
     return result
 

@@ -9,6 +9,9 @@ services:
       - TZ=Asia/Shanghai
     volumes:
       - ./downloads:/app/downloads
+      # config.yaml / data.yaml are not in git (they hold api_hash etc.).
+      # Create them first, or Docker makes empty *directories* at these paths:
+      #   cp config.yaml.example config.yaml && touch data.yaml
       - ./config.yaml:/app/config.yaml
       - ./data.yaml:/app/data.yaml
       - ./log:/app/log

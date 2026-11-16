@@ -477,6 +477,7 @@ class CloudDrive:
             logger.warning("please config aligo! see README.md")
             return None
 
+        zip_file_path: str = ""
         try:
             remote_dir = CloudDrive.remote_dir_for(
                 drive_config, save_path, local_file_path
@@ -488,7 +489,6 @@ class CloudDrive:
                 if aligo_dir:
                     drive_config.dir_cache[remote_dir] = aligo_dir.file_id
 
-            zip_file_path: str = ""
             file_paths = []
             if drive_config.before_upload_file_zip:
                 zip_file_path = CloudDrive.zip_file(local_file_path)
@@ -507,14 +507,19 @@ class CloudDrive:
                 if drive_config.after_upload_file_delete:
                     os.remove(local_file_path)
 
-                if drive_config.before_upload_file_zip:
-                    os.remove(zip_file_path)
-
                 return UPLOAD_NEW
 
         except Exception as e:
             logger.error(f"{e.__class__} {e}")
             return None
+        finally:
+            # Same as the rclone path: the zip is only a transport artifact and
+            # must not pile up in downloads/ when the upload fails.
+            if zip_file_path and os.path.exists(zip_file_path):
+                try:
+                    os.remove(zip_file_path)
+                except OSError as zip_err:
+                    logger.warning(f"remove zip {zip_file_path} failed: {zip_err}")
 
         return None
 

@@ -739,11 +739,13 @@ def convert_entities(
 
 
 async def convect_caption_entities(client, text):
-    # Convert back to entities format
+    # ``process_caption`` renders the caption with ``Parser.unparse(..., True)``
+    # (HTML), so it has to be parsed back as HTML. Parsing with the client's
+    # default mode (markdown) turned every entity into literal "<b>…</b>" text.
     try:
-        return (await client.parser.parse(text, None)).values()
+        return (await client.parser.parse(text, enums.ParseMode.HTML)).values()
     except Exception as e:
-        print(f"Error parsing markdown: {e}")
+        logger.warning(f"Error parsing caption HTML: {e}")
         # If parsing fails, return cleaned text without entities
         return text, None
 
@@ -1142,6 +1144,15 @@ async def report_bot_status(
         logger.debug(f"{e}")
 
 
+def _percentage_value(percentage) -> int:
+    """Parse a percentage that may be ``N/A`` before the first progress line."""
+    raw = str(percentage or "").split("%")[0].strip()
+    try:
+        return int(float(raw))
+    except ValueError:
+        return 0
+
+
 async def _report_bot_status(
     client: pyrogram.Client,
     node: TaskNode,
@@ -1194,7 +1205,7 @@ async def _report_bot_status(
                 f" │   ├─ 📏 : {value.total}\n"
                 f" │   ├─ ⏫ : {value.speed}\n"
                 f" │   └─ 📊 : ["
-                f'{create_progress_bar(int(value.percentage.split("%")[0]))}]'
+                f'{create_progress_bar(_percentage_value(value.percentage))}]'
                 f" ({value.percentage})%\n"
             )
         if len(pending_cloud_uploads) > MAX_PROGRESS_ITEMS:
@@ -1247,7 +1258,8 @@ async def _report_bot_status(
         ]
         for idx, value in pending_uploads[:MAX_PROGRESS_ITEMS]:
             temp_file_name = truncate_filename(os.path.basename(value.file_name), 10)
-            progress = int(value.upload_size / value.total_size * 100)
+            total_size = value.total_size or 0
+            progress = int(value.upload_size / total_size * 100) if total_size else 0
             upload_result_str += (
                 f" ├─ 🆔 {_t('Message ID')}: {idx}\n"
                 f" │   ├─ 📁 : {temp_file_name}\n"

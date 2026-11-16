@@ -6,8 +6,9 @@ import logging
 import os
 import re
 import secrets
-import tempfile
 import threading
+import time
+from concurrent import futures
 from typing import Optional, Tuple, Union
 
 from flask import Flask, jsonify, redirect, render_template, request
@@ -33,6 +34,7 @@ from module.download_stat import (
     normalize_chat_id,
     set_task_paused,
 )
+from utils.atomic_write import write_text_atomic
 from utils.format import format_byte
 
 log = logging.getLogger("werkzeug")
@@ -110,8 +112,18 @@ def run_web_server(app: Application, host: str):
     """
     Runs a web server using the Flask framework.
     """
-
-    get_flask_app().run(host, app.web_port, debug=app.debug_web, use_reloader=False)
+    # debug=True installs Werkzeug's interactive debugger (/console), which is
+    # remote code execution for anyone who can reach the port. Only allow it on
+    # loopback, where the operator is the only client.
+    loopback = host in ("127.0.0.1", "localhost", "::1")
+    debug = bool(app.debug_web) and loopback
+    if app.debug_web and not loopback:
+        app_log.warning(
+            "debug_web=true would expose Werkzeug's interactive debugger on %s; "
+            "ignoring it. Bind to 127.0.0.1 if you really need the debugger.",
+            host,
+        )
+    get_flask_app().run(host, app.web_port, debug=debug, use_reloader=False)
 
 
 def _effective_web_host(app: Application) -> str:
@@ -224,6 +236,21 @@ def login():
     - If the request method is not "POST", it returns the rendered "login.html" template.
     """
     if request.method == "POST":
+        client_ip = request.remote_addr or "unknown"
+        retry_after = _login_retry_after(client_ip)
+        if retry_after > 0:
+            app_log.warning(
+                "login blocked for %s: too many failures (%.0fs left)",
+                client_ip,
+                retry_after,
+            )
+            return jsonify(
+                {
+                    "code": "0",
+                    "msg": f"尝试次数过多，请 {int(retry_after) + 1} 秒后再试",
+                }
+            )
+
         username = "root"
         # TLS terminates in front of the app; the previous AES-in-JS layer used
         # a key shipped with the page and added no protection over plain HTTP.
@@ -234,13 +261,82 @@ def login():
 
         secret = web_login_users.get(username)
         if secret and _verify_password(str(secret), password):
+            _clear_login_failures(client_ip)
             user = User()
             login_user(user)
             return jsonify({"code": "1"})
 
+        _register_login_failure(client_ip)
         return jsonify({"code": "0"})
 
     return render_template("login.html", version=utils.__version__)
+
+
+#: A single shared password protects the whole Web UI, so unlimited guessing is
+#: the cheapest attack once the UI is reachable from the network.
+_LOGIN_MAX_FAILURES = 5
+_LOGIN_LOCKOUT_SECONDS = 60.0
+#: Failed attempts are forgotten after this long. Without it, every address that
+#: ever guessed wrong once kept an entry forever, and a public scanner grew the
+#: dict without bound.
+_LOGIN_FAILURE_WINDOW_SECONDS = 15 * 60.0
+#: Pruning scans the whole dict, so do it at most this often.
+_LOGIN_PRUNE_INTERVAL_SECONDS = 60.0
+#: ``ip -> (failures, last_attempt, locked_until)``
+_login_failures: dict = {}
+#: ``-inf`` means "never pruned yet", so the first failure always runs a sweep.
+_login_last_prune = float("-inf")
+_login_failures_lock = threading.Lock()
+
+
+def _login_retry_after(client_ip: str) -> float:
+    """Seconds the client has to wait before another attempt (0 = go ahead)."""
+    now = time.monotonic()
+    with _login_failures_lock:
+        entry = _login_failures.get(client_ip)
+        if not entry:
+            return 0.0
+        failures, _, locked_until = entry
+        if failures < _LOGIN_MAX_FAILURES:
+            return 0.0
+        # The lockout expired: start a fresh count instead of re-locking on the
+        # very next attempt.
+        remaining = locked_until - now
+        if remaining <= 0:
+            _login_failures.pop(client_ip, None)
+            return 0.0
+        return remaining
+
+
+def _prune_login_failures(now: float) -> None:
+    """Forget attempts old enough that they cannot lock anyone out (lock held)."""
+    stale = [
+        client_ip
+        for client_ip, (_, last_attempt, _) in _login_failures.items()
+        if now - last_attempt >= _LOGIN_FAILURE_WINDOW_SECONDS
+    ]
+    for client_ip in stale:
+        _login_failures.pop(client_ip, None)
+
+
+def _register_login_failure(client_ip: str) -> None:
+    """Count a failed attempt and start the lockout once the limit is hit."""
+    global _login_last_prune  # pylint: disable = global-statement
+    now = time.monotonic()
+    with _login_failures_lock:
+        if now - _login_last_prune >= _LOGIN_PRUNE_INTERVAL_SECONDS:
+            _login_last_prune = now
+            _prune_login_failures(now)
+        failures = _login_failures.get(client_ip, (0, now, 0.0))[0] + 1
+        locked_until = (
+            now + _LOGIN_LOCKOUT_SECONDS if failures >= _LOGIN_MAX_FAILURES else 0.0
+        )
+        _login_failures[client_ip] = (failures, now, locked_until)
+
+
+def _clear_login_failures(client_ip: str) -> None:
+    with _login_failures_lock:
+        _login_failures.pop(client_ip, None)
 
 
 @_flask_app.route("/logout", methods=["POST", "GET"])
@@ -461,7 +557,9 @@ def retry_failed():
         try:
             message_id = int(message_id_arg)
         except ValueError:
-            message_id = None
+            # None means "retry every failed message of the chat"; a single
+            # typo must not trigger that bulk action.
+            return jsonify({"code": "0", "msg": "invalid message_id"})
 
     if _retry_handler is None:
         return jsonify({"code": "0", "msg": "downloader is not ready"})
@@ -474,6 +572,17 @@ def retry_failed():
             # actually queued; before this it always answered {"code":"1"}.
             try:
                 result = future.result(timeout=10)
+            except futures.TimeoutError:
+                # The coroutine keeps running, so the messages *will* be
+                # queued: reporting a failure here made operators click retry
+                # again and queue everything twice.
+                return jsonify(
+                    {
+                        "code": "1",
+                        "msg": "已提交，稍后刷新查看结果",
+                        "pending": True,
+                    }
+                )
             except Exception as wait_err:  # noqa: BLE001 - becomes the API answer
                 return jsonify({"code": "0", "msg": str(wait_err)})
             if isinstance(result, tuple):
@@ -587,32 +696,6 @@ def _restore_masked_config_text(new_text: str, current_text: str) -> str:
     return "\n".join(lines) + suffix
 
 
-def _write_config_atomic(path: str, text: str) -> None:
-    """Write the file through a temp file so a crash cannot truncate it.
-
-    Docker setups bind-mount ``config.yaml`` as a single file, and ``os.replace``
-    onto a mount point fails with EBUSY. Fall back to an in-place write there
-    instead of leaving the config unsaveable.
-    """
-    directory = os.path.dirname(path) or "."
-    handle, temp_path = tempfile.mkstemp(dir=directory, prefix=".config-", suffix=".yaml")
-    try:
-        with os.fdopen(handle, "w", encoding="utf-8") as config_file:
-            config_file.write(text)
-            config_file.flush()
-            os.fsync(config_file.fileno())
-        os.replace(temp_path, path)
-    except OSError:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-        with open(path, "w", encoding="utf-8") as config_file:
-            config_file.write(text)
-    except Exception:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-        raise
-
-
 @_flask_app.route("/get_config")
 @login_required
 def get_config():
@@ -710,7 +793,7 @@ def set_config_form():
 
     new_text = stream.getvalue()
     try:
-        _write_config_atomic(path, new_text)
+        write_text_atomic(path, new_text)
     except OSError as write_err:
         return jsonify({"code": "0", "msg": f"写入失败：{write_err}"})
 
@@ -761,7 +844,7 @@ def set_config():
         return jsonify({"code": "0", "msg": "缺少必填项：" + ", ".join(missing)})
 
     try:
-        _write_config_atomic(path, restored_text)
+        write_text_atomic(path, restored_text)
     except OSError as write_err:
         return jsonify({"code": "0", "msg": f"写入失败：{write_err}"})
 

@@ -58,5 +58,7 @@ web_port: 5000
 # 需要远程访问必须设置密码，并建议放在 HTTPS 反向代理之后。
 # 也可以填 werkzeug 的 pbkdf2: 哈希，而不是明文。
 # web_login_secret: "change-me"
+# 仅本机调试：Werkzeug 交互式调试器可执行任意代码，只在监听 127.0.0.1 时生效。
+# debug_web: true
 
 language: ZH

@@ -140,7 +140,7 @@
               window.location.href = "/";
               return;
             }
-            fail("密码错误，请重试");
+            fail(data && data.msg ? data.msg : "密码错误，请重试");
             input.value = "";
           })
           .catch(function () {

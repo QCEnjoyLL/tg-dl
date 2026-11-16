@@ -2,6 +2,40 @@
 
 版本号规则：MAJOR（破坏性改动或核心重写）/ MINOR（新增功能）/ PATCH（修复、依赖、文档、UI 打磨）。
 
+## v2.9.4
+
+### 修复
+
+- **已存在的文件被误判为「已下载」**：判断条件写成了 `file_size or file_size == media_size`，
+  只要目标路径上有非空文件就会跳过；v2.9.0 及更早版本留下的半截文件会因此被永久当成完成品。
+  现在只有**字节数完全一致**才跳过
+- **`file_formats` 按扩展名配置却整类文件被跳过**：之前拿 mime 子类型比较，`mp3` 实际是 `audio/mpeg`（`mpeg`）、
+  `mov` 是 `video/quicktime`、`docx` 是一长串 `vnd.openxmlformats-...`。现在扩展名和 mime 子类型任一命中即放行
+- **`media_types` 写成字符串时全部消息被跳过**（`media_types: video` 会被逐字符迭代）：加载和热加载时统一归一化为列表，
+  未识别的类型会告警
+- **配置写入不再截断文件**：`config.yaml` / `data.yaml` 改为经由 `utils.atomic_write` 原子写入；
+  bind mount 场景的兜底改为「复制已写完的临时文件」，磁盘写满等失败不会再先把原配置清空
+- **运行期清空 `web_login_secret` 不再立刻解除鉴权**：监听地址只在启动时收敛，
+  运行期清空密码会让已暴露在 `0.0.0.0` 的 UI 变成无鉴权；现在保持旧密码并提示需要重启
+- **`debug_web` 只在 `127.0.0.1` 生效**：否则会打开 Werkzeug 交互式调试器（网络可达即可执行代码）
+- **`/login` 增加失败限速**：同一 IP 连续失败 5 次后锁定 60 秒，登录页会显示提示文案；
+  失败记录 15 分钟后过期，公网扫描换 IP 也不会让计数器无限增长
+- **仓库不再跟踪 `config.yaml` / `data.yaml`**：两者本来就在 `.gitignore` / `.dockerignore` 里，
+  但历史遗留的跟踪状态会让用户把 `api_hash` 等真实密钥提交进公开仓库。仓库改为跟踪
+  `config.yaml.example`，首次运行会自动从模板创建 `config.yaml`；如果 Docker 因为宿主机缺少
+  对应文件而把挂载点建成目录，启动/退出时会给出明确提示而不是 `IsADirectoryError`
+- **bot 配置写错文件**：`stop_download_bot()` 把配置写进了名为 `d` 的文件而不是 `bot.yaml`，
+  `/add_filter` 的改动重启后丢失
+- **非法 `download_filter` 不再继续建任务**：`/forward`、`/listen_forward` 里过滤表达式写错时，
+  之前会照常入队并让每条消息在 `filter.exec()` 里抛异常
+- **`get_chat_history_v2` 空页兜底**：把消息 ID 当「跳过条数」，会从最新消息开始跳过成千上万条并下错范围
+- **Web `/retry_failed`**：非法 `message_id` 不再退化成「整频道重试」；等待超时改为返回「已提交」而不是「失败」
+- **进度卡片**：上传进度为 0 字节时除零、rclone 输出 `N/A` 百分比时解析异常，都会导致进度卡片渲染失败
+- **关闭流程**：取消并等待所有后台任务（含 `download_all_chat`），任一关闭步骤失败不再跳过配置落盘
+- **工具**：`manage_duplicate_file` 改为分块计算 md5（GB 级文件不再整个读进内存）；
+  `extract_info_from_link` 遇到非数字路径会给出可读错误
+- **云盘**：aligo 上传失败时不再残留临时 zip
+
 ## v2.9.3
 
 ### 修复

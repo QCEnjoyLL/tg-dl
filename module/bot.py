@@ -130,7 +130,9 @@ class DownloadBot:
         """Update config from str."""
         self.config["download_filter"] = self.download_filter
 
-        with open("d", "w", encoding="utf-8") as yaml_file:
+        # ``self.config_path`` is ``bot.yaml``; a hard-coded "d" here silently
+        # wrote the bot config to an unrelated file in the CWD.
+        with open(self.config_path, "w", encoding="utf-8") as yaml_file:
             self._yaml.dump(self.config, yaml_file)
 
     async def start(
@@ -790,8 +792,11 @@ async def remove_replace_advertisement_filter(
                 message.from_user.id, f"{_t('Remove filter')} : {filter_str}"
             )
         else:
-            _bot.app.replace_advertisement_list.append(filter_str)
-            await client.send_message()
+            # The old code appended the filter here (the opposite of what
+            # /remove_replace_ad means) and called send_message() without args.
+            await client.send_message(
+                message.from_user.id, f"{_t('Filter')} : {filter_str} not exist"
+            )
         _bot.app.update_config(True)
     except Exception as e:
         await client.send_message(
@@ -1071,6 +1076,9 @@ async def get_forward_task_node(
             await client.send_message(
                 message.from_user.id, err, reply_to_message_id=message.id
             )
+            # Without this the task was created with an invalid filter and every
+            # later message raised inside filter.exec(), silently killing the job.
+            return None
 
     last_reply_message = await client.send_message(
         message.from_user.id,

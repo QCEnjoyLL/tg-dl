@@ -2,7 +2,9 @@
 
 import asyncio
 import functools
+import io
 import os
+import shutil
 import time
 from asyncio import Lock
 from concurrent.futures import ThreadPoolExecutor
@@ -15,9 +17,10 @@ from loguru import logger
 from ruamel import yaml
 
 from module.cloud_drive import CloudDrive, CloudDriveConfig
-from module.config_form import parse_format_list
+from module.config_form import MEDIA_TYPE_OPTIONS, parse_format_list
 from module.filter import Filter
 from module.language import Language, set_language
+from utils.atomic_write import write_text_atomic
 from utils.format import replace_date_time, validate_title
 from utils.meta_data import MetaData
 
@@ -462,7 +465,7 @@ class Application:
         self.api_hash = _config["api_hash"]
         self.bot_token = _config.get("bot_token", "")
 
-        self.media_types = _config["media_types"]
+        self.media_types = self._normalize_media_types(_config.get("media_types"))
         self.file_formats = self._normalize_file_formats(_config.get("file_formats"))
 
         self.hide_file_name = _config.get("hide_file_name", False)
@@ -942,12 +945,51 @@ class Application:
         self.config["group_add_advertisement"] = self.group_add_advertisement
 
         if immediate:
-            with open(self.config_file, "w", encoding="utf-8") as yaml_file:
-                _yaml.dump(self.config, yaml_file)
+            base = os.path.abspath(".")
+            config_buffer = io.StringIO()
+            _yaml.dump(self.config, config_buffer)
+            write_text_atomic(
+                os.path.join(base, self.config_file), config_buffer.getvalue()
+            )
 
-        if immediate:
-            with open(self.app_data_file, "w", encoding="utf-8") as yaml_file:
-                _yaml.dump(self.app_data, yaml_file)
+            data_buffer = io.StringIO()
+            _yaml.dump(self.app_data, data_buffer)
+            write_text_atomic(
+                os.path.join(base, self.app_data_file), data_buffer.getvalue()
+            )
+
+    #: Every media type the downloader understands (mirrors the Web UI form).
+    MEDIA_TYPES = tuple(name for name, _ in MEDIA_TYPE_OPTIONS)
+
+    @classmethod
+    def _normalize_media_types(cls, raw) -> List[str]:
+        """Always keep ``media_types`` as a list of known media types.
+
+        The raw YAML editor (and a hand edit) used to be accepted verbatim, so
+        ``media_types: video`` turned into ``for media_type in "video"`` and
+        every message was silently skipped.
+        """
+        if isinstance(raw, str):
+            items = parse_format_list(raw)
+        elif isinstance(raw, (list, tuple)):
+            items = [str(item).strip() for item in raw if str(item).strip()]
+        else:
+            items = []
+
+        known = [item for item in items if item in cls.MEDIA_TYPES]
+        if known:
+            unknown = [item for item in items if item not in cls.MEDIA_TYPES]
+            if unknown:
+                logger.warning(
+                    f"media_types 中未识别的类型 {unknown} 已忽略；"
+                    f"可选值：{list(cls.MEDIA_TYPES)}"
+                )
+            return known
+
+        logger.warning(
+            f"media_types 配置无效（{raw!r}），已按全部媒体类型处理。"
+        )
+        return list(cls.MEDIA_TYPES)
 
     @staticmethod
     def _normalize_file_formats(raw) -> dict:
@@ -1003,11 +1045,11 @@ class Application:
         # values the operator just saved.
         self.config = config
 
-        if "media_types" in config and list(config["media_types"]) != list(
-            self.media_types
-        ):
-            self.media_types = list(config["media_types"])
-            applied.append("media_types")
+        if "media_types" in config:
+            normalized_types = self._normalize_media_types(config["media_types"])
+            if normalized_types != self.media_types:
+                self.media_types = normalized_types
+                applied.append("media_types")
 
         if "file_formats" in config:
             normalized = self._normalize_file_formats(config["file_formats"])
@@ -1090,8 +1132,17 @@ class Application:
             applied.append("group_add_advertisement")
 
         if "web_login_secret" in config:
-            self.web_login_secret = str(config["web_login_secret"] or "")
-            applied.append("web_login_secret")
+            new_secret = str(config["web_login_secret"] or "")
+            if not new_secret and self.web_login_secret:
+                # The HTTP listener is already bound (possibly to 0.0.0.0) and
+                # the "no password -> loopback only" guard runs at startup only.
+                # Clearing the password at runtime would expose an
+                # unauthenticated Web UI to the network until the next restart,
+                # so keep the old password and ask for a restart instead.
+                restart.append("web_login_secret")
+            elif new_secret != self.web_login_secret:
+                self.web_login_secret = new_secret
+                applied.append("web_login_secret")
 
         upload_drive = config.get("upload_drive")
         if isinstance(upload_drive, dict):
@@ -1147,23 +1198,63 @@ class Application:
 
     def load_config(self):
         """Load user config"""
-        with open(
-            os.path.join(os.path.abspath("."), self.config_file), encoding="utf-8"
-        ) as f:
+        config_path = os.path.join(os.path.abspath("."), self.config_file)
+        self._ensure_config_file(config_path)
+        with open(config_path, encoding="utf-8") as f:
             config = _yaml.load(f.read())
             if config:
                 self.config = config
                 self.assign_config(self.config)
 
-        if os.path.exists(os.path.join(os.path.abspath("."), self.app_data_file)):
+        app_data_path = os.path.join(os.path.abspath("."), self.app_data_file)
+        if os.path.isdir(app_data_path):
+            # docker-compose bind-mounts this path; if the host file did not
+            # exist, Docker created a *directory* here instead of a file.
+            logger.warning(
+                f"{self.app_data_file} 是一个目录而不是文件（很可能是 Docker 挂载时"
+                f"宿主机上还没有这个文件），已忽略；请 touch {self.app_data_file}"
+            )
+        elif os.path.exists(app_data_path):
             with open(
-                os.path.join(os.path.abspath("."), self.app_data_file),
+                app_data_path,
                 encoding="utf-8",
             ) as f:
                 app_data = _yaml.load(f.read())
                 if app_data:
                     self.app_data = app_data
                     self.assign_app_data(self.app_data)
+
+    #: ``config.yaml`` holds api_hash / bot_token / proxy passwords and is
+    #: git-ignored; the repository tracks this template instead.
+    CONFIG_TEMPLATE_FILE = "config.yaml.example"
+
+    @classmethod
+    def _ensure_config_file(cls, config_path: str) -> None:
+        """Create ``config.yaml`` from the tracked template on first run.
+
+        A fresh checkout has no ``config.yaml`` (it is git-ignored), so without
+        this the process died with a bare ``FileNotFoundError``.
+        """
+        if os.path.isdir(config_path):
+            # Same Docker footgun as data.yaml: a missing bind-mount source
+            # becomes a directory, and the next ``open()`` would only say
+            # "IsADirectoryError" without explaining how to fix it.
+            raise IsADirectoryError(
+                f"{config_path} 是一个目录而不是文件；请删掉它并执行 "
+                f"`cp {cls.CONFIG_TEMPLATE_FILE} {os.path.basename(config_path)}`"
+            )
+        if os.path.exists(config_path):
+            return
+        template_path = os.path.join(
+            os.path.dirname(config_path) or ".", cls.CONFIG_TEMPLATE_FILE
+        )
+        if not os.path.exists(template_path):
+            return
+        shutil.copyfile(template_path, config_path)
+        logger.warning(
+            f"config.yaml 不存在，已从 {cls.CONFIG_TEMPLATE_FILE} 创建；"
+            "请填写 api_id / api_hash / chat 后重新启动。"
+        )
 
     def pre_run(self):
         """before run application do"""

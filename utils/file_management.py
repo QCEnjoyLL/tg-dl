@@ -4,6 +4,19 @@ import os
 import pathlib
 from hashlib import md5
 
+#: Read size for hashing. Telegram media is routinely 1-2 GB, so the whole file
+#: must never be loaded into memory at once.
+_HASH_CHUNK_SIZE = 1024 * 1024
+
+
+def file_md5(file_path: str) -> str:
+    """Hash a file in chunks so large media cannot exhaust memory."""
+    digest = md5()
+    with open(file_path, "rb") as file:
+        for chunk in iter(lambda: file.read(_HASH_CHUNK_SIZE), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
 
 def get_next_name(file_path: str) -> str:
     """
@@ -69,9 +82,9 @@ def manage_duplicate_file(file_path: str):
     )
     if file_path in old_files:
         old_files.remove(file_path)
-    current_file_md5: str = md5(open(file_path, "rb").read()).hexdigest()
+    current_file_md5: str = file_md5(file_path)
     for old_file_path in old_files:
-        old_file_md5: str = md5(open(old_file_path, "rb").read()).hexdigest()
+        old_file_md5: str = file_md5(old_file_path)
         if current_file_md5 == old_file_md5:
             os.remove(file_path)
             return old_file_path

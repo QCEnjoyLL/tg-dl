@@ -171,7 +171,29 @@ def _describe_download_error(
     return reason
 
 
-def _can_download(_type: str, file_formats: dict, file_format: Optional[str]) -> bool:
+def _format_candidates(mime_format: Optional[str], file_name: str) -> List[str]:
+    """Spellings of one media object that may appear in ``file_formats``.
+
+    Operators configure real extensions (``mp3``, ``docx``, ``mov``) while the
+    mime type only exposes the subtype (``audio/mpeg`` -> ``mpeg``,
+    ``application/vnd.openxmlformats-officedocument...`` -> the long vendor
+    string). Matching only the subtype silently skipped every file for such a
+    config, so both the extension and the subtype are accepted.
+    """
+    candidates: List[str] = []
+    suffix = os.path.splitext(file_name or "")[1].lstrip(".").lower()
+    if suffix:
+        candidates.append(suffix)
+    if mime_format:
+        candidates.append(str(mime_format).lower())
+    return candidates
+
+
+def _can_download(
+    _type: str,
+    file_formats: dict,
+    file_format: Union[str, List[str], None],
+) -> bool:
     """
     Check if the given file format can be downloaded.
 
@@ -183,8 +205,9 @@ def _can_download(_type: str, file_formats: dict, file_format: Optional[str]) ->
         Dictionary containing the list of file_formats
         to be downloaded for `audio`, `document` & `video`
         media types
-    file_format: str
-        Format of the current file to be downloaded.
+    file_format: str | list
+        Format of the current file to be downloaded. A list holds every
+        accepted spelling (extension and mime subtype).
 
     Returns
     -------
@@ -201,8 +224,14 @@ def _can_download(_type: str, file_formats: dict, file_format: Optional[str]) ->
             allowed_formats = parse_format_list(allowed_formats)
         if not allowed_formats:
             return True
-        if "all" not in allowed_formats and file_format not in allowed_formats:
-            return False
+        allowed = {str(item).strip().lower() for item in allowed_formats}
+        if "all" in allowed:
+            return True
+        if isinstance(file_format, str):
+            candidates = {file_format.strip().lower()}
+        else:
+            candidates = {str(item).strip().lower() for item in (file_format or [])}
+        return bool(candidates & allowed)
     return True
 
 
@@ -557,10 +586,16 @@ async def download_media(
             if app.hide_file_name:
                 ui_file_name = f"****{os.path.splitext(file_name)[-1]}"
 
-            if _can_download(_type, file_formats, file_format):
+            if _can_download(
+                _type, file_formats, _format_candidates(file_format, file_name)
+            ):
                 if _is_exist(file_name):
                     file_size = os.path.getsize(file_name)
-                    if file_size or file_size == media_size:
+                    # Only a byte-exact match proves the file is complete. The
+                    # old `file_size or ...` shortcut treated every non-empty
+                    # leftover as finished, so a truncated file (older releases
+                    # accepted partial streams) was skipped forever.
+                    if file_size == media_size:
                         logger.info(
                             f"id={message.id} {ui_file_name} "
                             f"{_t('already download,download skipped')}.\n"
@@ -954,7 +989,10 @@ def main():
             )
         )
 
-        app.loop.create_task(download_all_chat(client))
+        # download_all_chat and the workers are cancelled together below; the
+        # former used to be created without keeping a reference, so shutdown
+        # left a pending task behind.
+        tasks.append(app.loop.create_task(download_all_chat(client)))
         for _ in range(app.max_download_task):
             task = app.loop.create_task(worker(client))
             tasks.append(task)
@@ -970,15 +1008,32 @@ def main():
         logger.exception("{}", e)
     finally:
         app.is_running = False
+        # Every shutdown step must run even if an earlier one fails, otherwise a
+        # failed client.stop() would skip persisting config.yaml / data.yaml.
         if app.bot_token:
-            app.loop.run_until_complete(stop_download_bot())
-        app.loop.run_until_complete(stop_server(client))
+            try:
+                app.loop.run_until_complete(stop_download_bot())
+            except Exception as stop_err:  # pylint: disable = W0703
+                logger.warning(f"stop bot error: {stop_err}")
+        try:
+            app.loop.run_until_complete(stop_server(client))
+        except Exception as stop_err:  # pylint: disable = W0703
+            logger.warning(f"stop client error: {stop_err}")
         for task in tasks:
             task.cancel()
+        if tasks:
+            # Await the cancellations, otherwise asyncio warns about pending
+            # tasks that were destroyed at interpreter shutdown.
+            app.loop.run_until_complete(asyncio.gather(*tasks, return_exceptions=True))
         logger.info(_t("Stopped!"))
         # check_for_updates(app.proxy)
         logger.info(f"{_t('update config')}......")
-        app.update_config()
+        try:
+            app.update_config()
+        except OSError as save_err:
+            # e.g. data.yaml exists as a directory because docker created the
+            # bind-mount source; report it instead of crashing on the way out.
+            logger.error(f"save config failed: {save_err}")
         logger.success(
             f"{_t('Updated last read message_id to config file')},"
             f"{_t('total download')} {app.total_download_task}, "

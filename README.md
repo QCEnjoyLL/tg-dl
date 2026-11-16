@@ -3,11 +3,35 @@
 > 基于 [tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader) 的修复分支。
 > 保留原项目的全部功能（Telegram bot 指令、Web UI、rclone 上传、受保护内容下载），并持续修复实际使用中的问题。
 
-当前版本：**v2.9.3**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
+当前版本：**v2.9.4**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
 
 [![Docker](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml)
 [![Tests](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/unittest.yml/badge.svg)](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/unittest.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+---
+
+## v2.9.4 更新内容
+
+- **已存在的文件按字节数校验**：旧条件 `file_size or file_size == media_size` 会把任何非空残留文件当成已完成，半截文件永远不再重下
+- **`file_formats` 支持按扩展名填**：`mp3` / `mov` / `docx` 不再因为 mime 子类型（`mpeg` / `quicktime` / 长串 `vnd.openxmlformats-...`）而整类文件被静默跳过
+- **`config.yaml` / `data.yaml` 不再进 git**：仓库只跟踪 `config.yaml.example`，首次运行自动创建；`api_hash` 等密钥不会被误提交到公开仓库
+- **配置写入改为原子写**：进程退出、磁盘写满、bind mount 场景下不再把 `config.yaml` 截断成空文件
+- **安全加固**：`debug_web` 仅在 `127.0.0.1` 生效；`/login` 连续失败 5 次锁定 60 秒；运行期清空 `web_login_secret` 不再立刻解除鉴权
+- **bot**：修复配置写到名为 `d` 的文件、非法过滤表达式仍继续建任务、`/remove_replace_ad` 逻辑反了等问题
+- 其它：`media_types` 写成字符串不再导致所有消息被跳过；`get_chat_history_v2` 空页兜底不再下错范围；失败重试提示更准确；GB 级文件去重不再整文件读进内存
+
+> **从 v2.9.3 及更早版本升级（源码运行）**：`config.yaml` / `data.yaml` 在旧版本里是被 git 跟踪的，
+> 直接 `git pull` 会因本地改动被拒绝，或被删掉。先备份再升级：
+>
+> ```bash
+> cp config.yaml ~/config.yaml.bak && cp data.yaml ~/data.yaml.bak
+> git checkout -- config.yaml data.yaml   # 让 git 能接受上游删除这两个文件
+> git pull
+> mv ~/config.yaml.bak config.yaml && mv ~/data.yaml.bak data.yaml
+> ```
+>
+> Docker / compose 用户不受影响（配置本来就是挂载进容器的，从未进过镜像）。
 
 ---
 
@@ -193,8 +217,10 @@ docker pull ghcr.io/qcenjoyll/tg-dl:latest
 
 mkdir -p ~/tg-dl/{downloads,log,sessions,temp}
 cd ~/tg-dl
-cp config.yaml.example config.yaml 2>/dev/null || curl -fsSLO https://raw.githubusercontent.com/QCEnjoyLL/tg-dl/master/config.yaml
-curl -fsSLO https://raw.githubusercontent.com/QCEnjoyLL/tg-dl/master/data.yaml
+# config.yaml / data.yaml 已被 .gitignore 忽略（避免把 api_hash 等提交进仓库），
+# 这里直接下载模板；data.yaml 需要先创建成文件，否则 bind mount 会建成目录。
+curl -fsSL https://raw.githubusercontent.com/QCEnjoyLL/tg-dl/master/config.yaml.example -o config.yaml
+touch data.yaml
 
 # 编辑 config.yaml 填入 api_id / api_hash / chat
 vi config.yaml
@@ -228,6 +254,8 @@ docker run -d --name tg-dl --restart unless-stopped \
 ```bash
 git clone https://github.com/QCEnjoyLL/tg-dl.git
 cd tg-dl
+cp config.yaml.example config.yaml   # 模板不含任何真实密钥，仓库不跟踪 config.yaml
+touch data.yaml
 vi config.yaml        # 填 api_id / api_hash / chat
 docker compose run --rm tg-dl     # 首次登录
 docker compose up -d
@@ -240,6 +268,8 @@ docker compose up -d
 ```bash
 git clone https://github.com/QCEnjoyLL/tg-dl.git
 cd tg-dl
+cp config.yaml.example config.yaml   # 首次运行会自动创建，但模板里是占位符
+vi config.yaml                      # 填 api_id / api_hash / chat
 pip3 install -r requirements.txt
 python3 media_downloader.py
 ```
@@ -250,7 +280,7 @@ Web UI 默认监听 `http://<host>:5000`。**未设置 `web_login_secret` 时只
 
 ## 配置说明
 
-完整模板见仓库根目录 [`config.yaml`](config.yaml)。
+完整模板见仓库根目录 [`config.yaml.example`](config.yaml.example)（`config.yaml` 本身被 git 忽略，首次运行会自动从模板创建）。
 
 ### 必填
 
@@ -303,6 +333,9 @@ bot 进度卡片已限制长度，不会再因为任务多而停止更新。
 web_host: 0.0.0.0
 web_port: 5000
 web_login_secret: "改成你的密码"
+# 仅在本机调试时打开：Werkzeug 交互式调试器可执行任意代码，
+# 因此只在监听 127.0.0.1 时生效，绑定到 0.0.0.0 会被忽略并告警。
+# debug_web: true
 ```
 
 > **安全提示**：登录密码现在由浏览器直接提交到后端比较（旧的 AES 加密 key 硬编码在前端，只是混淆），所以务必通过 HTTPS 反向代理访问。`web_login_secret` 也支持 werkzeug 的 `pbkdf2:` 哈希。会话签名密钥默认每个进程随机生成；需要重启后保持登录可设置 `TDL_WEB_SECRET_KEY` 环境变量。
@@ -313,6 +346,10 @@ web_login_secret: "改成你的密码"
 
 界面完全重写过，不再依赖 layui，静态资源从 ~880KB 降到 ~35KB（CSS/JS 合计，不含 logo 等文档图片）。
 页面品牌名为 **TeleVault**（仓库名仍是 tg-dl），Logo 为「归档环 + 下载箭头」，登录页与 favicon 一致。
+
+**登录页**
+
+![登录页](docs/ui-login.png)
 
 **浅色**
 

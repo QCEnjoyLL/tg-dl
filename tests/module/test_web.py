@@ -1,5 +1,6 @@
 """Regression tests for the Web UI JSON contract, auth and task controls."""
 
+import errno
 import os
 import tempfile
 import unittest
@@ -8,6 +9,7 @@ from unittest import mock
 import utils
 from module import web
 from module.download_stat import DownloadState, set_download_state
+from utils import atomic_write
 
 
 SAMPLE_PROGRESS = {
@@ -247,6 +249,30 @@ class WebApiTestCase(unittest.TestCase):
         payload = response.get_json()
         self.assertEqual(payload["code"], "0")
         self.assertEqual(payload["msg"], "消息 132 已不可访问")
+
+    def test_retry_with_an_invalid_message_id_does_not_retry_the_chat(self):
+        """A typo used to fall back to "retry every failed message"."""
+        handler = mock.Mock()
+        with mock.patch.object(web, "_retry_handler", handler):
+            response = self.client.post(
+                "/retry_failed?chat_id=-100123&message_id=abc"
+            )
+
+        payload = response.get_json()
+        self.assertEqual(payload["code"], "0")
+        self.assertIn("message_id", payload["msg"])
+        handler.assert_not_called()
+
+    def test_retry_timeout_is_reported_as_submitted(self):
+        """The coroutine keeps running, so it must not answer "failed"."""
+        future = mock.Mock()
+        future.result.side_effect = web.futures.TimeoutError()
+        with mock.patch.object(web, "_retry_handler", return_value=future):
+            response = self.client.post("/retry_failed?chat_id=-100123")
+
+        payload = response.get_json()
+        self.assertEqual(payload["code"], "1")
+        self.assertTrue(payload["pending"])
 
     def test_delete_task_accepts_a_text_chat_id(self):
         # The table renders the chat id as text; the handler must convert it back
@@ -582,6 +608,95 @@ class WebLoginTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json(), {"code": "0"})
 
+    def test_repeated_failures_lock_the_client_out(self):
+        try:
+            web._login_failures.clear()  # pylint: disable = W0212
+            with mock.patch.dict(
+                web.web_login_users, {"root": "s3cret"}, clear=True
+            ):
+                for _ in range(web._LOGIN_MAX_FAILURES):  # pylint: disable = W0212
+                    self.client.post("/login", data={"password": "wrong"})
+                # Even the right password must not be accepted while locked out.
+                response = self.client.post("/login", data={"password": "s3cret"})
+
+            payload = response.get_json()
+            self.assertEqual(payload["code"], "0")
+            self.assertIn("尝试次数过多", payload["msg"])
+        finally:
+            web._login_failures.clear()  # pylint: disable = W0212
+
+    def test_successful_login_clears_the_failure_counter(self):
+        try:
+            web._login_failures.clear()  # pylint: disable = W0212
+            with mock.patch.dict(
+                web.web_login_users, {"root": "s3cret"}, clear=True
+            ):
+                self.client.post("/login", data={"password": "wrong"})
+                response = self.client.post("/login", data={"password": "s3cret"})
+
+            self.assertEqual(response.get_json()["code"], "1")
+            self.assertEqual(web._login_failures, {})  # pylint: disable = W0212
+        finally:
+            web._login_failures.clear()  # pylint: disable = W0212
+            self.client.post("/logout")
+
+    def test_stale_failure_entries_are_pruned(self):
+        """An address that guessed once and left must not be remembered forever.
+
+        Public scanners hit /login from a new address every few seconds; the
+        dict has to stay bounded, or the process leaks memory over weeks.
+        """
+        try:
+            web._login_failures.clear()  # pylint: disable = W0212
+            web._login_last_prune = float("-inf")  # pylint: disable = W0212
+            # A scanner that tried once long ago and never came back.
+            web._login_failures["203.0.113.7"] = (  # pylint: disable = W0212
+                1,
+                -web._LOGIN_FAILURE_WINDOW_SECONDS * 2,  # pylint: disable = W0212
+                0.0,
+            )
+            with mock.patch.dict(
+                web.web_login_users, {"root": "s3cret"}, clear=True
+            ):
+                self.client.post("/login", data={"password": "wrong"})
+
+            self.assertNotIn(
+                "203.0.113.7", web._login_failures  # pylint: disable = W0212
+            )
+            # The current client is still counted, so pruning is not a bypass.
+            self.assertEqual(len(web._login_failures), 1)  # pylint: disable = W0212
+        finally:
+            web._login_failures.clear()  # pylint: disable = W0212
+
+    def test_lockout_allows_retry_after_it_expires(self):
+        """The lockout must end: one more failure must not re-lock immediately."""
+        try:
+            web._login_failures.clear()  # pylint: disable = W0212
+            web._login_last_prune = float("-inf")  # pylint: disable = W0212
+            with mock.patch.dict(
+                web.web_login_users, {"root": "s3cret"}, clear=True
+            ):
+                for _ in range(web._LOGIN_MAX_FAILURES):  # pylint: disable = W0212
+                    self.client.post("/login", data={"password": "wrong"})
+
+                # Pretend the lockout is over.
+                for client_ip in list(web._login_failures):  # pylint: disable = W0212
+                    failures, last_attempt, _ = web._login_failures[  # pylint: disable = W0212
+                        client_ip
+                    ]
+                    web._login_failures[client_ip] = (  # pylint: disable = W0212
+                        failures,
+                        last_attempt,
+                        -1.0,
+                    )
+
+                response = self.client.post("/login", data={"password": "s3cret"})
+
+            self.assertEqual(response.get_json()["code"], "1")
+        finally:
+            web._login_failures.clear()  # pylint: disable = W0212
+            self.client.post("/logout")
+
     def test_secret_key_is_not_the_public_upstream_value(self):
         self.assertNotEqual(web.get_flask_app().secret_key, "tdl")
 
@@ -604,3 +719,56 @@ class WebLoginTestCase(unittest.TestCase):
         index_response = self.client.get("/")
         self.assertEqual(index_response.status_code, 302)
         self.assertIn("/login", index_response.headers["Location"])
+
+
+class WriteConfigAtomicTestCase(unittest.TestCase):
+    """Saving config.yaml must never truncate the existing file."""
+
+    def _write_old(self, tmp_dir):
+        path = os.path.join(tmp_dir, "config.yaml")
+        with open(path, "w", encoding="utf-8") as config_file:
+            config_file.write("old: value\n")
+        return path
+
+    def _read(self, path):
+        with open(path, encoding="utf-8") as config_file:
+            return config_file.read()
+
+    def test_bind_mount_fallback_copies_complete_text(self):
+        """os.replace on a bind-mounted file fails with EBUSY; copy instead."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = self._write_old(tmp_dir)
+            with mock.patch.object(
+                atomic_write.os, "replace", side_effect=OSError(errno.EBUSY, "busy")
+            ):
+                atomic_write.write_text_atomic(path, "new: value\n")
+
+            self.assertEqual(self._read(path), "new: value\n")
+
+    def test_failed_copy_raises_and_cleans_the_temp_file(self):
+        """A failing fallback write surfaces the error instead of hiding it."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = self._write_old(tmp_dir)
+            with mock.patch.object(
+                atomic_write.os, "replace", side_effect=OSError(errno.EBUSY, "busy")
+            ), mock.patch.object(
+                atomic_write.shutil, "copyfile", side_effect=OSError(errno.ENOSPC, "full")
+            ):
+                with self.assertRaises(OSError):
+                    atomic_write.write_text_atomic(path, "new: value\n")
+
+            self.assertEqual(self._read(path), "old: value\n")
+            self.assertEqual(
+                [name for name in os.listdir(tmp_dir) if name != "config.yaml"], []
+            )
+
+    def test_disk_full_propagates_without_touching_the_file(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = self._write_old(tmp_dir)
+            with mock.patch.object(
+                atomic_write.os, "replace", side_effect=OSError(errno.ENOSPC, "full")
+            ):
+                with self.assertRaises(OSError):
+                    atomic_write.write_text_atomic(path, "new: value\n")
+
+            self.assertEqual(self._read(path), "old: value\n")

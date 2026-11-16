@@ -1,5 +1,6 @@
 """Utility module to check for new release of telegram-media-downloader"""
 import json
+import re
 
 import requests  # type: ignore
 from loguru import logger
@@ -7,6 +8,11 @@ from rich.console import Console
 from rich.markdown import Markdown
 
 from . import __version__
+
+
+def _safe_error(error: BaseException) -> str:
+    """Describe an error without leaking proxy credentials embedded in URLs."""
+    return re.sub(r"//[^/@\s]*@", "//***@", f"{type(error).__name__}: {error}")
 
 
 # pylint: disable = C0301
@@ -48,14 +54,18 @@ def get_latest_release(proxy_config: dict = None) -> dict:
             proxies=proxies,
             timeout=60,
         )
-
+        # A rate-limited GitHub answers 403 with {"message": ...}; parsing that
+        # as a release and indexing ["tag_name"] raised KeyError later on.
+        response.raise_for_status()
+        latest_release: dict = json.loads(response.text)
     except Exception as e:
-        logger.warning(f"{e}")
+        logger.warning(_safe_error(e))
         return {}
 
-    latest_release: dict = json.loads(response.text)
+    if not isinstance(latest_release, dict) or not latest_release.get("tag_name"):
+        return {}
 
-    if f"v{__version__}" != latest_release["tag_name"]:
+    if f"v{__version__}" != latest_release.get("tag_name"):
         return latest_release
 
     return {}

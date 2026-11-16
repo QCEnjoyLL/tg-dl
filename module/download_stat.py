@@ -282,8 +282,16 @@ def clear_task_cancelled(chat_id, message_id: int) -> None:
         _cancelled_tasks.discard(_task_key(chat_id, message_id))
 
 
+#: The speed is only recomputed from inside the progress callbacks. Once the
+#: queue drains nothing updates it again, so an old value would be shown as the
+#: current speed forever.
+_TOTAL_SPEED_STALE_AFTER = 3.0
+
+
 def get_total_download_speed() -> int:
-    """get total download speed"""
+    """get total download speed (0 when no callback has run recently)"""
+    if time.time() - _last_download_time > _TOTAL_SPEED_STALE_AFTER:
+        return 0
     return _total_download_speed
 
 

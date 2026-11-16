@@ -162,3 +162,71 @@ class AppTestCase(unittest.TestCase):
         # Worker count is fixed at startup, so it must be reported, not applied.
         self.assertIn("max_download_task", restart)
         self.assertIn("api_id", restart)
+
+    def test_media_types_string_is_normalized(self):
+        # The raw YAML editor can save `media_types: video`; iterating that
+        # string downloads nothing at all.
+        app = Application("", "")
+        app.assign_config(
+            {"api_id": 1, "api_hash": "hash", "media_types": "video"}
+        )
+        self.assertEqual(app.media_types, ["video"])
+
+    def test_unknown_media_types_fall_back_to_all(self):
+        app = Application("", "")
+        self.assertEqual(
+            app._normalize_media_types(["nope"]),  # pylint: disable = W0212
+            list(Application.MEDIA_TYPES),
+        )
+        self.assertEqual(
+            app._normalize_media_types(["video", "nope"]),  # pylint: disable = W0212
+            ["video"],
+        )
+
+    def test_web_login_secret_cannot_be_cleared_at_runtime(self):
+        # Clearing the password while the listener stays bound to 0.0.0.0 would
+        # expose an unauthenticated UI; it has to wait for a restart.
+        app = Application("", "")
+        app.web_login_secret = "s3cret"
+        applied, restart = app.reload_hot_config({"web_login_secret": ""})
+
+        self.assertNotIn("web_login_secret", applied)
+        self.assertIn("web_login_secret", restart)
+        self.assertEqual(app.web_login_secret, "s3cret")
+
+    def test_web_login_secret_can_be_changed_at_runtime(self):
+        app = Application("", "")
+        app.web_login_secret = "s3cret"
+        applied, _ = app.reload_hot_config({"web_login_secret": "new-secret"})
+
+        self.assertIn("web_login_secret", applied)
+        self.assertEqual(app.web_login_secret, "new-secret")
+
+    def test_missing_config_is_created_from_the_template(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            template_path = os.path.join(tmp_dir, "config.yaml.example")
+            with open(template_path, "w", encoding="utf-8") as template_file:
+                template_file.write("api_id: your_api_id\n")
+            config_path = os.path.join(tmp_dir, "config.yaml")
+
+            Application._ensure_config_file(  # pylint: disable = W0212
+                config_path
+            )
+
+            self.assertTrue(os.path.exists(config_path))
+            with open(config_path, encoding="utf-8") as config_file:
+                self.assertIn("your_api_id", config_file.read())
+
+    def test_config_path_that_is_a_directory_is_reported_clearly(self):
+        """Docker creates a directory when a bind-mount source is missing."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = os.path.join(tmp_dir, "config.yaml")
+            os.makedirs(config_path)
+
+            with self.assertRaises(IsADirectoryError) as caught:
+                Application._ensure_config_file(  # pylint: disable = W0212
+                    config_path
+                )
+
+            # The message has to tell the operator what to do, not just fail.
+            self.assertIn("config.yaml.example", str(caught.exception))
