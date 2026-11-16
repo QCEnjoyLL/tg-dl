@@ -80,8 +80,8 @@ FIELDS: List[Dict[str, Any]] = [
         "label": "下载的频道 / 群组",
         "group": "基础",
         "type": "chat_list",
-        "hint": "每行一个：-1001234567890 或 @username。已有的过滤器等设置会按 chat 保留。",
-        "placeholder": "-1001234567890\n@some_channel",
+        "hint": "每行一个频道数字 ID 或 @username。已有的过滤器等设置会按 chat 保留。",
+        "placeholder": "@example_channel",
     },
     {
         "name": "media_types",

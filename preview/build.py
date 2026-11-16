@@ -44,36 +44,36 @@ VERSION = project_version()
 
 DOWNLOADING = [
     {
-        "chat": "-1001234567890",
+        "chat": "@example_channel",
         "id": "392",
-        "filename": "392 - 城市夜景延时_4K.mov",
+        "filename": "392 - 示例视频_01.mov",
         "total_size": "2.09GB",
         "download_progress": "82.6",
         "download_speed": "12.48MB/s",
         "paused": False,
     },
     {
-        "chat": "-1001234567890",
+        "chat": "@example_channel",
         "id": "393",
-        "filename": "393 - 纪录片_第4集_未剪辑.mov",
+        "filename": "393 - 示例视频_02.mov",
         "total_size": "2.3GB",
         "download_progress": "77.0",
         "download_speed": "10.99MB/s",
         "paused": True,
     },
     {
-        "chat": "-1001234567890",
+        "chat": "@example_channel",
         "id": "405",
-        "filename": "405 - copy_G4DAB80_F7A_4E81_BF62_8F23D25DGAB_master_v2.mov",
+        "filename": "405 - 示例视频_03.mov",
         "total_size": "2.01GB",
         "download_progress": "48.3",
         "download_speed": "8.34MB/s",
         "paused": False,
     },
     {
-        "chat": "-1001234567890",
+        "chat": "@example_channel",
         "id": "790",
-        "filename": "790 - 航拍素材_海边.mp4",
+        "filename": "790 - 示例视频_04.mp4",
         "total_size": "89.1MB",
         "download_progress": "52.7",
         "download_speed": "5.99MB/s",
@@ -83,57 +83,57 @@ DOWNLOADING = [
 
 DOWNLOADED = [
     {
-        "chat": "-1001234567890",
+        "chat": "@example_channel",
         "id": "388",
-        "filename": "388 - 城市风光_合集_01.mov",
+        "filename": "388 - 示例视频_05.mov",
         "total_size": "2.12GB",
         "completed_time": NOW - 120,
         "upload_state": "uploaded",
         "upload_success": True,
-        "save_path": "/app/downloads/示例频道/2026_11/388 - 城市风光_合集_01.mov",
+        "save_path": "/app/downloads/示例频道/2026_11/388 - 示例视频_05.mov",
     },
     {
-        "chat": "-1001234567890",
+        "chat": "@example_channel",
         "id": "390",
-        "filename": "390 - 延时摄影_日落.mov",
+        "filename": "390 - 示例视频_06.mov",
         "total_size": "1.95GB",
         "completed_time": NOW - 900,
         "upload_state": "exists",
         "upload_success": True,
-        "save_path": "/app/downloads/示例频道/2026_11/390 - 延时摄影_日落.mov",
+        "save_path": "/app/downloads/示例频道/2026_11/390 - 示例视频_06.mov",
     },
     {
-        "chat": "-1001234567890",
+        "chat": "@example_channel",
         "id": "772",
-        "filename": "772 - 直播回放_产品发布会_全程_with_chat.mp4",
+        "filename": "772 - 示例视频_07.mp4",
         "total_size": "928.01MB",
         "completed_time": NOW - 3600,
         "upload_state": None,
         "upload_success": False,
-        "save_path": "/app/downloads/示例频道/2026_11/772 - 直播回放_产品发布会.mp4",
+        "save_path": "/app/downloads/示例频道/2026_11/772 - 示例视频_07.mp4",
     },
 ]
 
 # Extra completed rows so the preview (and the docs screenshots) show the
 # 25-per-page pagination instead of a single short table.
 _DEMO_TITLES = [
-    "素材归档_批次01",
-    "素材归档_批次02",
-    "花絮_幕后采访",
-    "空镜_城市延时",
-    "空镜_海岸线",
-    "广告片_15s",
-    "广告片_30s",
-    "纪录片_第1集",
-    "纪录片_第2集",
-    "纪录片_第3集",
+    "示例视频_18",
+    "示例视频_19",
+    "示例视频_10",
+    "示例视频_11",
+    "示例视频_12",
+    "示例视频_13",
+    "示例视频_14",
+    "示例视频_15",
+    "示例视频_16",
+    "示例视频_17",
 ]
 for _index in range(27):
     _num = 700 - _index * 7
     _title = _DEMO_TITLES[_index % len(_DEMO_TITLES)]
     DOWNLOADED.append(
         {
-            "chat": "-1001234567890",
+            "chat": "@example_channel",
             "id": str(_num),
             "filename": f"{_num} - {_title}.mp4",
             "total_size": f"{(_index % 9) + 1}.{_index % 10}GB",
@@ -146,21 +146,21 @@ for _index in range(27):
 
 FAILED = [
     {
-        "chat": "-1001234567890",
+        "chat": "@example_channel",
         "id": "132",
-        "filename": "132 - 素材包_2026_第3批.zip",
+        "filename": "132 - 示例文档_01.zip",
         "time": NOW - 900,
         "reason": "file reference expired",
     },
     {
-        "chat": "-1001234567890",
+        "chat": "@example_channel",
         "id": "785",
-        "filename": "785 - 0C697705-3141-40F3-A0CD-BA6825CD629C.mov",
+        "filename": "785 - 示例视频_08.mov",
         "time": NOW - 3600,
         "reason": "timeout",
     },
     {
-        "chat": "-1001234567890",
+        "chat": "@example_channel",
         "id": "801",
         "filename": "801 - 会议纪要_录音转写.mp4",
         "time": NOW - 7200,
@@ -172,7 +172,7 @@ MOCK_CONFIG = """api_hash: ********
 api_id: 12345678
 
 chat:
-- chat_id: -1001234567890
+- chat_id: @example_channel
   last_read_message_id: 0
 
 media_types:
@@ -198,7 +198,7 @@ FORM_VALUES = {
     "api_id": "12345678",
     "api_hash": config_form.MASK,
     "bot_token": "",
-    "chat": "-1001234567890\n@some_channel",
+    "chat": "@example_channel\n@another_channel",
     "media_types": ["video", "document"],
     "save_path": "/app/downloads",
     "language": "ZH",

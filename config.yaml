@@ -1,7 +1,7 @@
 api_hash: your_api_hash
 api_id: your_api_id
 
-# 频道/群组列表，支持 -1001234567890、@username
+# 频道/群组列表，支持频道数字 ID、@username
 # 每个 chat 可单独设置 download_filter / upload_telegram_chat_id
 chat:
 - chat_id: telegram_chat_id

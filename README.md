@@ -3,11 +3,18 @@
 > 基于 [tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader) 的修复分支。
 > 保留原项目的全部功能（Telegram bot 指令、Web UI、rclone 上传、受保护内容下载），并持续修复实际使用中的问题。
 
-当前版本：**v2.9.1**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
+当前版本：**v2.9.2**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
 
 [![Docker](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml)
 [![Tests](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/unittest.yml/badge.svg)](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/unittest.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+---
+
+## v2.9.2 更新内容
+
+- **隐私清理**：README、`config.yaml` 模板、配置表单提示与预览页里的示例频道 ID、示例文件名
+  统一换成通用占位数据，文档截图同步重拍，不再出现真实使用场景中的频道 / 文件信息
 
 ---
 
@@ -56,7 +63,7 @@
 
 ## v2.7.4 更新内容
 
-- 任务列表显示完整 chat id（不再截断为 `…37217082`）
+- 任务列表显示完整 chat id（不再被截断）
 - 「已完成」标签增加数量徽标
 - 表格顶部对齐，ID/文件名/时间不再错位；「已上传 / 仅本地」状态移到文件名前
 
@@ -241,7 +248,7 @@ Web UI 默认监听 `http://<host>:5000`。**未设置 `web_login_secret` 时只
 | 配置 | 说明 |
 | --- | --- |
 | `api_id` / `api_hash` | 在 [my.telegram.org/apps](https://my.telegram.org/apps) 申请 |
-| `chat` | 要下载的频道/群组，`chat_id` 支持 `-1001234567890`、`@username` |
+| `chat` | 要下载的频道/群组，`chat_id` 填写频道的数字 ID 或 `@username` |
 | `save_path` | 本地保存目录，容器内默认 `/app/downloads` |
 | `media_types` | `video` / `photo` / `document` / `audio` / `voice` / `video_note` |
 
