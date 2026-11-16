@@ -36,7 +36,8 @@ class FormatTestCase(unittest.TestCase):
             "CB",
         ]
 
-        self.assertEqual(format_byte(0.1), "0.8b")
+        self.assertEqual(format_byte(0.1), "0.1B")
+        self.assertEqual(format_byte(0), "0B")
         self.assertEqual(format_byte(1), "1B")
 
         for i, value in enumerate(byte_list):

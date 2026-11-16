@@ -124,10 +124,6 @@ def rest_app(conf: dict):
     app.assign_app_data(conf)
 
 
-def mock_manage_duplicate_file(file_path: str) -> str:
-    return file_path
-
-
 def raise_keyboard_interrupt():
     raise KeyboardInterrupt
 

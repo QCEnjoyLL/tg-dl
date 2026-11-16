@@ -2,6 +2,25 @@
 
 版本号规则：MAJOR（破坏性改动或核心重写）/ MINOR（新增功能）/ PATCH（修复、依赖、文档、UI 打磨）。
 
+## v2.10.3
+
+### 清理
+
+- 删除 `utils/crypto.py`（前端 AES 登录在 v2.6 之后就不用了，模块已无调用方）
+- 删除 `utils/file_management.py`（`get_next_name` / `manage_duplicate_file` 早已没有调用点）
+- 从 `requirements.txt` 去掉 `pycryptodome`：它只被上面那个模块引用，镜像构建少编译一个 C 扩展
+- 同步删掉这两个模块的测试，以及 `tests/test_media_downloader.py` 里遗留的 `mock_manage_duplicate_file`
+
+### 修复
+
+- `format_byte` 把「小于 1 字节」按**位**显示（`0.8b`），所以空闲时顶部速度显示成 `0.0b/s`；
+  现在统一按字节显示（`0B/s`、`0.1B`）
+
+### 文档
+
+- README 的「更新日志」整块移到文末（「与上游的差异」之后、「致谢」之前），
+  首屏只保留简介、版本徽章、为什么有这个分支和快速开始
+
 ## v2.10.2
 
 ### 修复

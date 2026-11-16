@@ -12,223 +12,6 @@
 
 ---
 
-## 更新日志
-
-> **从 v2.9.3 及更早版本升级（源码运行）**：`config.yaml` / `data.yaml` 在旧版本里是被 git 跟踪的，
-> 直接 `git pull` 会因本地改动被拒绝，或被删掉。先备份再升级：
->
-> ```bash
-> cp config.yaml ~/config.yaml.bak && cp data.yaml ~/data.yaml.bak
-> git checkout -- config.yaml data.yaml   # 让 git 能接受上游删除这两个文件
-> git pull
-> mv ~/config.yaml.bak config.yaml && mv ~/data.yaml.bak data.yaml
-> ```
->
-> Docker / compose 用户不受影响（配置本来就是挂载进容器的，从未进过镜像）。
-
-逐条历史记录见 [CHANGELOG.md](CHANGELOG.md)；当前版本见顶部的 Release 徽章。
-
-<details>
-<summary><b>v2.10.2</b> — 处理 Telegram 免费账号限流、修正顶部速度</summary>
-
-- **`FLOOD_PREMIUM_WAIT` 不再直接判失败**：Telegram 对免费账号会回
-  `[420 FLOOD_PREMIUM_WAIT_X]`（等 X 秒，或订阅 Premium 解除），以前只有 `FloodWait` 被处理，
-  这个错误会直接让文件标记失败。现在按秒数等待后继续，单文件下载途中也会边等边续传
-- **顶部速度 = 列表各行速度之和**：以前顶部读的是另一套全局计数器（3 秒无回调就归零），
-  被限速时顶部一直是 `0 B/s`、列表却显示几十 KB/s
-- 失败原因里会写明这是账号级限流，并给出「降低并发 / 稍后重试 / 改用 Premium」的建议
-
-</details>
-
-<details>
-<summary><b>v2.10.1</b> — 修 `/download N 0` 扫不完、bot 没有进度卡片</summary>
-
-- **`/download ... N 0`（下到最新）永远跑不完**：v2.9.4 的空页兜底改调了 `Client.get_chat_history`
-  续扫，但它不支持 `reverse`，返回的是「最新消息」而不是「offset 之后的消息」；反向扫描到达历史
-  末尾后会被拽回最新处，从此在同一段里来回重扫，`node.is_running` 永远不置位
-- **空页 = 没有更多消息**：现在只重试一次（防瞬时失败），仍为空就结束，不再换 API
-- **扫描阶段也显示进度卡片**：新增 `TaskNode.is_scanning`，扫描历史时卡片照常刷新
-  （任务数 / 已完成 / 正在下载的文件进度），扫描结束再转常规状态；异常中断也会退出扫描态
-
-</details>
-
-<details>
-<summary><b>v2.10.0</b> — 单文件并行分片下载（默认关闭）</summary>
-
-- **单文件提速**：以前一个文件只有一条顺序流，速度被 `1 MiB ÷ 往返延迟` 锁死，
-  `max_download_task` 只在队列里堆了多个文件时才有用。新增 `max_concurrent_chunks`：
-  把一个文件切成 N 段并发拉取，共用同一条媒体会话（不多开会话、不多建连接）
-- **默认 1，行为完全不变**；网络延迟高（>100 ms）时设 4-8，单个大文件也能跑满带宽。
-  段与段之间仍保留「流提前结束自动续传」语义，只有连续 3 次无进展才判失败
-- 并行段各占一个传输槽位，启动时自动把 `max_concurrent_transmissions` 抬到
-  `max_download_task × max_concurrent_chunks`，避免并行段互相排队
-- Web UI「并发与超时」新增「单文件并行分片」，改完即时生效（新任务生效，进行中的任务不变）
-- README 补「下载速度慢」排查：先分清是单文件慢、队列慢还是线路慢
-
-</details>
-
-<details>
-<summary><b>v2.9.6</b> — 操作列不再裁掉「确认删除」</summary>
-
-- **「确认删除」按钮被裁掉**：操作列固定 150px，而「暂停 / 继续 + 确认删除」需要 156px，
-  表格是 `table-layout: fixed` + `overflow: hidden`，超出部分直接被切掉；实测连未进入确认态的
-  「删除」也已被裁掉 10px。桌面端操作列加宽到 196px
-- **窄屏（≤900px）两个操作按钮一起溢出**：操作列只有 104px 却要塞两个带文字的按钮（需要 148px）。
-  现在窄屏（含平板竖屏）按钮改为纯图标，与移动端原有一致；每个按钮补上 `title`，悬停可看完整说明
-- 操作按钮的可访问名称统一走 `setActionLabel()`，`aria-label` 与 `title` 不再各写一份
-
-</details>
-
-<details>
-<summary><b>v2.9.5</b> — 构建镜像时自动发 Release</summary>
-
-> Release 自动化上线后的第一个版本。v2.9.4 没有单独发布过，它的全部修复都包含在本版本里。
-
-- **构建镜像时自动创建对应版本的 GitHub Release**：版本号只有 `utils/__init__.py` 一处来源，
-  镜像标签、git tag、Release 不会再各说各话
-- 镜像推送成功后才发 Release（失败不留半成品）；已存在的 Release 自动跳过，可安全重跑
-- 手动推 `v*` tag 会校验与 `__version__` 是否一致；`CHANGELOG.md` 缺对应章节时在构建前就失败
-- 镜像注入 `org.opencontainers.image.version`，`docker inspect` 可查版本；README 增加 Release 徽章
-- 本版本同时包含 v2.9.4 的全部修复，见下一节
-
-</details>
-
-<details>
-<summary><b>v2.9.4</b> — 已下载判定、配置原子写入、Web 鉴权加固</summary>
-
-- **已存在的文件按字节数校验**：旧条件 `file_size or file_size == media_size` 会把任何非空残留文件当成已完成，半截文件永远不再重下
-- **`file_formats` 支持按扩展名填**：`mp3` / `mov` / `docx` 不再因为 mime 子类型（`mpeg` / `quicktime` / 长串 `vnd.openxmlformats-...`）而整类文件被静默跳过
-- **`config.yaml` / `data.yaml` 不再进 git**：仓库只跟踪 `config.yaml.example`，首次运行自动创建；`api_hash` 等密钥不会被误提交到公开仓库
-- **配置写入改为原子写**：进程退出、磁盘写满、bind mount 场景下不再把 `config.yaml` 截断成空文件
-- **安全加固**：`debug_web` 仅在 `127.0.0.1` 生效；`/login` 连续失败 5 次锁定 60 秒；运行期清空 `web_login_secret` 不再立刻解除鉴权
-- **bot**：修复配置写到名为 `d` 的文件、非法过滤表达式仍继续建任务、`/remove_replace_ad` 逻辑反了等问题
-- 其它：`media_types` 写成字符串不再导致所有消息被跳过；`get_chat_history_v2` 空页兜底不再下错范围；失败重试提示更准确；GB 级文件去重不再整文件读进内存
-
-</details>
-
-<details>
-<summary><b>v2.9.3</b> — 失败原因可诊断（-500 TIMEOUT）</summary>
-
-- 修复 **`[-500 TIMEOUT] ... caused by "upload.GetFile"` 反复失败、看不出原因**：
-  Pyrogram fork 吞掉的真实异常现在会被捕获并写进失败原因，不再只报「下载中途中断，未生成文件」
-- Telegram 侧 5xx 不再无意义地重开同一 offset，直接带原因失败；网络类错误按指数退避重试
-- Web UI「失败」页新增**失败原因**列，并给出可执行的排查提示（MTU / 出口 IP / proxy / 并发）
-
-</details>
-
-<details>
-<summary><b>v2.9.2</b> — 文档隐私清理</summary>
-
-- **隐私清理**：README、`config.yaml` 模板、配置表单提示与预览页里的示例频道 ID、示例文件名
-  统一换成通用占位数据，文档截图同步重拍，不再出现真实使用场景中的频道 / 文件信息
-
-</details>
-
-<details>
-<summary><b>v2.9.1</b> — 大文件截断自动续传</summary>
-
-- 修复**大文件下载中途截断却被误报为「文件引用过期」**：Pyrogram fork 会吞掉 `GetFile` 异常，
-  只收到 5MB 的残缺文件会被当成下载完成，随后又被当成引用过期反复重试
-- 新增 `pyrogram_guard`：数据流少于 `file_size` 时按 1MiB 边界自动续传，连续 3 次无进展才判定失败
-- 下载失败原因会写入失败记录（传输中断 / 引用过期 / 其他异常），日志更准确
-
-</details>
-
-<details>
-<summary><b>v2.9.0</b> — 任务列表分页、暂停/删除/重试修复</summary>
-
-- **任务列表分页**：默认 25 条/页，可选 25 / 50 / 100 / 全部，每页条数会被记住
-- 修复**全局暂停后列表没有暂停反馈**：新增暂停横幅、行内「已暂停 / 单条暂停」标签，速度显示 `—`
-- 修复**删除任务无效**：Web 传的字符串 `chat_id` 与 int 键不匹配导致删除/重试/单条暂停全部静默失效，现在统一规范化
-- 修复**失败任务无法重试**：同一类型问题；频道不在配置中时改用临时任务节点重试，并给出具体失败原因
-
-</details>
-
-<details>
-<summary><b>v2.8.2</b> — 远端目录跨平台计算</summary>
-
-- 远端目录计算与平台无关（先统一分隔符再 `dirname`/`relpath`），修复 Linux 下 Windows 风格路径目录丢失
-- `remote_dir` 为 `115:` 这类裸远端时不再生成 `115://`
-
-</details>
-
-<details>
-<summary><b>v2.8.1</b> — 云端已有文件判定</summary>
-
-- 修复「云端已有文件却显示新文件上传成功、云端日期还是几天前」：上传前用 `rclone lsjson --stat`
-  检查同名同大小文件并直接跳过（标记 **云端已有**）；上传后再核对远端，若服务端去重保留旧对象也改判为云端已有
-- 修复 `save_path` 带斜杠/反斜杠时远端目录残留本地绝对路径、导致重复上传到新目录的问题
-- 上传日志现在同时打印本地路径与完整远端路径，便于核对
-
-</details>
-
-<details>
-<summary><b>v2.8.0</b> — Web UI 更名 TeleVault、上传结果可区分</summary>
-
-- **Web UI 更名为 TeleVault**，换用新的归档 + 下载箭头 Logo（登录页、favicon 同步）
-- **上传结果可区分**：「已完成」标签现在区分 `已上传`（真正传了新文件）、`云端已有`（rclone 判定远端已有相同文件、跳过上传）和 `仅本地`；
-  bot 卡片与日志也会分别统计这两种成功
-- 修复 `aligo` 上传适配器在上传时必然抛 `TypeError` 的问题
-
-</details>
-
-<details>
-<summary><b>v2.7.4</b> — 完整 chat id、列表细节</summary>
-
-- 任务列表显示完整 chat id（不再被截断）
-- 「已完成」标签增加数量徽标
-- 表格顶部对齐，ID/文件名/时间不再错位；「已上传 / 仅本地」状态移到文件名前
-
-</details>
-
-<details>
-<summary><b>v2.7.3</b> — 保存配置后下载被静默跳过</summary>
-
-- 修复「保存配置后所有下载都被跳过、日志里没有任何报错」：
-  `file_formats` 被早期表单写成字符串 `"['all']"`、空 `chat_id` 被写成 `null`，导致整批任务静默失败。
-  现在加载时会自动修复 `file_formats`、跳过空频道并给出明确日志。
-- 若日志提示「config.yaml 中有一个 chat 缺少 chat_id」，到 Web UI「下载的频道 / 群组」重新填写一次即可。
-
-</details>
-
-<details>
-<summary><b>v2.7.2</b> — YAML 原文编辑、file_formats 兼容</summary>
-
-- 修复配置面板「YAML 原文」显示不全：文本框铺满对话框、自动换行、只有自身滚动
-- `file_formats` 兼容列表与文本两种写法（`all` / `mp3, flac` / 粘贴的 `['all']` 都会正确写成列表）
-- 只有旧版 `chat_id` 的配置会正确回填到频道列表
-
-</details>
-
-<details>
-<summary><b>v2.7.1</b> — 静态缓存导致页面空白</summary>
-
-- **修复旧静态缓存导致后台空白**：升级镜像后如果浏览器还在用上一版 `app.js`，会出现「连接异常：Cannot set properties of null」并且配置 / 退出按钮点不动。现在静态资源带 `?v=<版本号>`、HTML 禁止缓存，页面与后端版本不一致时会直接提示强制刷新。
-- 界面初始化失败时顶部会显示错误原因和「重新加载」按钮，而不是静默失效。
-
-> 升级后若仍显示旧界面，按一次 `Ctrl+F5`（Mac：`Cmd+Shift+R`）即可。
-
-</details>
-
-<details>
-<summary><b>v2.7.0</b> — 配置表单</summary>
-
-- **配置表单**：Web UI 的配置编辑从纯 YAML 文本框改成带中文说明的表单，已填写的项自动回填、未填写的留空；
-  另保留「YAML 原文」标签页用于表单没覆盖的高级配置
-- 字段级校验与逐项报错，保存时原子写入并保留未在表单中暴露的字段
-
-</details>
-
-<details>
-<summary><b>v2.6.6</b> — Web UI 重做、版本号规范化</summary>
-
-- **Web UI 重做**：全新视觉与交互，支持登录/退出登录、配置在线编辑、单任务暂停/恢复/删除
-- **任务状态真实化**：下载完成后从「下载中」移入「已完成」，不再出现 bot 已成功而网页仍显示 100% 的僵尸任务；已完成列表有上限，不会无限吃内存
-- **配置在线编辑**：Web UI 可直接编辑 `config.yaml`，密钥默认掩码显示；保存后立即生效的项会提示，需要重启的项会单独列出
-- **CI 变严格**：测试 job 改为必过（不再是 `continue-on-error`），并修掉了上游遗留的测试腐化
-- **版本号规范化**：去掉 `-fork.1` 后缀，改为语义化版本
-
-</details>
 
 ---
 
@@ -713,6 +496,237 @@ v2.8.1 起上传前会先 `rclone lsjson --stat` 检查目标：同名且大小�
 - 清理上游遗留配置：`dependabot.yml`（会自动开一堆依赖 PR）、`stale.yml`、`issue_label_bot.yaml`、issue 模板、`codecov.yml`、赞赏二维码图片
 
 功能、配置项和 Telegram 侧行为与上游保持一致，可以直接替换使用；已有的 `config.yaml` / `data.yaml` / session 文件可以继续复用。
+
+---
+
+## 更新日志
+
+> **从 v2.9.3 及更早版本升级（源码运行）**：`config.yaml` / `data.yaml` 在旧版本里是被 git 跟踪的，
+> 直接 `git pull` 会因本地改动被拒绝，或被删掉。先备份再升级：
+>
+> ```bash
+> cp config.yaml ~/config.yaml.bak && cp data.yaml ~/data.yaml.bak
+> git checkout -- config.yaml data.yaml   # 让 git 能接受上游删除这两个文件
+> git pull
+> mv ~/config.yaml.bak config.yaml && mv ~/data.yaml.bak data.yaml
+> ```
+>
+> Docker / compose 用户不受影响（配置本来就是挂载进容器的，从未进过镜像）。
+
+逐条历史记录见 [CHANGELOG.md](CHANGELOG.md)；当前版本见顶部的 Release 徽章。
+
+<details>
+<summary><b>v2.10.3</b> — 清理死代码与依赖，修正速度单位</summary>
+
+- 删除 `utils/crypto.py` 与 `utils/file_management.py`（都已没有调用方），并从
+  `requirements.txt` 去掉只被它们用到的 `pycryptodome`，镜像构建少编译一个 C 扩展
+- `format_byte` 不再把「小于 1 字节」按位显示，空闲时的顶部速度由 `0.0b/s` 变成 `0B/s`
+- README 的「更新日志」移到文末，首屏只留简介、徽章和快速开始
+
+</details>
+
+<details>
+<summary><b>v2.10.2</b> — 处理 Telegram 免费账号限流、修正顶部速度</summary>
+
+- **`FLOOD_PREMIUM_WAIT` 不再直接判失败**：Telegram 对免费账号会回
+  `[420 FLOOD_PREMIUM_WAIT_X]`（等 X 秒，或订阅 Premium 解除），以前只有 `FloodWait` 被处理，
+  这个错误会直接让文件标记失败。现在按秒数等待后继续，单文件下载途中也会边等边续传
+- **顶部速度 = 列表各行速度之和**：以前顶部读的是另一套全局计数器（3 秒无回调就归零），
+  被限速时顶部一直是 `0 B/s`、列表却显示几十 KB/s
+- 失败原因里会写明这是账号级限流，并给出「降低并发 / 稍后重试 / 改用 Premium」的建议
+
+</details>
+
+<details>
+<summary><b>v2.10.1</b> — 修 `/download N 0` 扫不完、bot 没有进度卡片</summary>
+
+- **`/download ... N 0`（下到最新）永远跑不完**：v2.9.4 的空页兜底改调了 `Client.get_chat_history`
+  续扫，但它不支持 `reverse`，返回的是「最新消息」而不是「offset 之后的消息」；反向扫描到达历史
+  末尾后会被拽回最新处，从此在同一段里来回重扫，`node.is_running` 永远不置位
+- **空页 = 没有更多消息**：现在只重试一次（防瞬时失败），仍为空就结束，不再换 API
+- **扫描阶段也显示进度卡片**：新增 `TaskNode.is_scanning`，扫描历史时卡片照常刷新
+  （任务数 / 已完成 / 正在下载的文件进度），扫描结束再转常规状态；异常中断也会退出扫描态
+
+</details>
+
+<details>
+<summary><b>v2.10.0</b> — 单文件并行分片下载（默认关闭）</summary>
+
+- **单文件提速**：以前一个文件只有一条顺序流，速度被 `1 MiB ÷ 往返延迟` 锁死，
+  `max_download_task` 只在队列里堆了多个文件时才有用。新增 `max_concurrent_chunks`：
+  把一个文件切成 N 段并发拉取，共用同一条媒体会话（不多开会话、不多建连接）
+- **默认 1，行为完全不变**；网络延迟高（>100 ms）时设 4-8，单个大文件也能跑满带宽。
+  段与段之间仍保留「流提前结束自动续传」语义，只有连续 3 次无进展才判失败
+- 并行段各占一个传输槽位，启动时自动把 `max_concurrent_transmissions` 抬到
+  `max_download_task × max_concurrent_chunks`，避免并行段互相排队
+- Web UI「并发与超时」新增「单文件并行分片」，改完即时生效（新任务生效，进行中的任务不变）
+- README 补「下载速度慢」排查：先分清是单文件慢、队列慢还是线路慢
+
+</details>
+
+<details>
+<summary><b>v2.9.6</b> — 操作列不再裁掉「确认删除」</summary>
+
+- **「确认删除」按钮被裁掉**：操作列固定 150px，而「暂停 / 继续 + 确认删除」需要 156px，
+  表格是 `table-layout: fixed` + `overflow: hidden`，超出部分直接被切掉；实测连未进入确认态的
+  「删除」也已被裁掉 10px。桌面端操作列加宽到 196px
+- **窄屏（≤900px）两个操作按钮一起溢出**：操作列只有 104px 却要塞两个带文字的按钮（需要 148px）。
+  现在窄屏（含平板竖屏）按钮改为纯图标，与移动端原有一致；每个按钮补上 `title`，悬停可看完整说明
+- 操作按钮的可访问名称统一走 `setActionLabel()`，`aria-label` 与 `title` 不再各写一份
+
+</details>
+
+<details>
+<summary><b>v2.9.5</b> — 构建镜像时自动发 Release</summary>
+
+> Release 自动化上线后的第一个版本。v2.9.4 没有单独发布过，它的全部修复都包含在本版本里。
+
+- **构建镜像时自动创建对应版本的 GitHub Release**：版本号只有 `utils/__init__.py` 一处来源，
+  镜像标签、git tag、Release 不会再各说各话
+- 镜像推送成功后才发 Release（失败不留半成品）；已存在的 Release 自动跳过，可安全重跑
+- 手动推 `v*` tag 会校验与 `__version__` 是否一致；`CHANGELOG.md` 缺对应章节时在构建前就失败
+- 镜像注入 `org.opencontainers.image.version`，`docker inspect` 可查版本；README 增加 Release 徽章
+- 本版本同时包含 v2.9.4 的全部修复，见下一节
+
+</details>
+
+<details>
+<summary><b>v2.9.4</b> — 已下载判定、配置原子写入、Web 鉴权加固</summary>
+
+- **已存在的文件按字节数校验**：旧条件 `file_size or file_size == media_size` 会把任何非空残留文件当成已完成，半截文件永远不再重下
+- **`file_formats` 支持按扩展名填**：`mp3` / `mov` / `docx` 不再因为 mime 子类型（`mpeg` / `quicktime` / 长串 `vnd.openxmlformats-...`）而整类文件被静默跳过
+- **`config.yaml` / `data.yaml` 不再进 git**：仓库只跟踪 `config.yaml.example`，首次运行自动创建；`api_hash` 等密钥不会被误提交到公开仓库
+- **配置写入改为原子写**：进程退出、磁盘写满、bind mount 场景下不再把 `config.yaml` 截断成空文件
+- **安全加固**：`debug_web` 仅在 `127.0.0.1` 生效；`/login` 连续失败 5 次锁定 60 秒；运行期清空 `web_login_secret` 不再立刻解除鉴权
+- **bot**：修复配置写到名为 `d` 的文件、非法过滤表达式仍继续建任务、`/remove_replace_ad` 逻辑反了等问题
+- 其它：`media_types` 写成字符串不再导致所有消息被跳过；`get_chat_history_v2` 空页兜底不再下错范围；失败重试提示更准确；GB 级文件去重不再整文件读进内存
+
+</details>
+
+<details>
+<summary><b>v2.9.3</b> — 失败原因可诊断（-500 TIMEOUT）</summary>
+
+- 修复 **`[-500 TIMEOUT] ... caused by "upload.GetFile"` 反复失败、看不出原因**：
+  Pyrogram fork 吞掉的真实异常现在会被捕获并写进失败原因，不再只报「下载中途中断，未生成文件」
+- Telegram 侧 5xx 不再无意义地重开同一 offset，直接带原因失败；网络类错误按指数退避重试
+- Web UI「失败」页新增**失败原因**列，并给出可执行的排查提示（MTU / 出口 IP / proxy / 并发）
+
+</details>
+
+<details>
+<summary><b>v2.9.2</b> — 文档隐私清理</summary>
+
+- **隐私清理**：README、`config.yaml` 模板、配置表单提示与预览页里的示例频道 ID、示例文件名
+  统一换成通用占位数据，文档截图同步重拍，不再出现真实使用场景中的频道 / 文件信息
+
+</details>
+
+<details>
+<summary><b>v2.9.1</b> — 大文件截断自动续传</summary>
+
+- 修复**大文件下载中途截断却被误报为「文件引用过期」**：Pyrogram fork 会吞掉 `GetFile` 异常，
+  只收到 5MB 的残缺文件会被当成下载完成，随后又被当成引用过期反复重试
+- 新增 `pyrogram_guard`：数据流少于 `file_size` 时按 1MiB 边界自动续传，连续 3 次无进展才判定失败
+- 下载失败原因会写入失败记录（传输中断 / 引用过期 / 其他异常），日志更准确
+
+</details>
+
+<details>
+<summary><b>v2.9.0</b> — 任务列表分页、暂停/删除/重试修复</summary>
+
+- **任务列表分页**：默认 25 条/页，可选 25 / 50 / 100 / 全部，每页条数会被记住
+- 修复**全局暂停后列表没有暂停反馈**：新增暂停横幅、行内「已暂停 / 单条暂停」标签，速度显示 `—`
+- 修复**删除任务无效**：Web 传的字符串 `chat_id` 与 int 键不匹配导致删除/重试/单条暂停全部静默失效，现在统一规范化
+- 修复**失败任务无法重试**：同一类型问题；频道不在配置中时改用临时任务节点重试，并给出具体失败原因
+
+</details>
+
+<details>
+<summary><b>v2.8.2</b> — 远端目录跨平台计算</summary>
+
+- 远端目录计算与平台无关（先统一分隔符再 `dirname`/`relpath`），修复 Linux 下 Windows 风格路径目录丢失
+- `remote_dir` 为 `115:` 这类裸远端时不再生成 `115://`
+
+</details>
+
+<details>
+<summary><b>v2.8.1</b> — 云端已有文件判定</summary>
+
+- 修复「云端已有文件却显示新文件上传成功、云端日期还是几天前」：上传前用 `rclone lsjson --stat`
+  检查同名同大小文件并直接跳过（标记 **云端已有**）；上传后再核对远端，若服务端去重保留旧对象也改判为云端已有
+- 修复 `save_path` 带斜杠/反斜杠时远端目录残留本地绝对路径、导致重复上传到新目录的问题
+- 上传日志现在同时打印本地路径与完整远端路径，便于核对
+
+</details>
+
+<details>
+<summary><b>v2.8.0</b> — Web UI 更名 TeleVault、上传结果可区分</summary>
+
+- **Web UI 更名为 TeleVault**，换用新的归档 + 下载箭头 Logo（登录页、favicon 同步）
+- **上传结果可区分**：「已完成」标签现在区分 `已上传`（真正传了新文件）、`云端已有`（rclone 判定远端已有相同文件、跳过上传）和 `仅本地`；
+  bot 卡片与日志也会分别统计这两种成功
+- 修复 `aligo` 上传适配器在上传时必然抛 `TypeError` 的问题
+
+</details>
+
+<details>
+<summary><b>v2.7.4</b> — 完整 chat id、列表细节</summary>
+
+- 任务列表显示完整 chat id（不再被截断）
+- 「已完成」标签增加数量徽标
+- 表格顶部对齐，ID/文件名/时间不再错位；「已上传 / 仅本地」状态移到文件名前
+
+</details>
+
+<details>
+<summary><b>v2.7.3</b> — 保存配置后下载被静默跳过</summary>
+
+- 修复「保存配置后所有下载都被跳过、日志里没有任何报错」：
+  `file_formats` 被早期表单写成字符串 `"['all']"`、空 `chat_id` 被写成 `null`，导致整批任务静默失败。
+  现在加载时会自动修复 `file_formats`、跳过空频道并给出明确日志。
+- 若日志提示「config.yaml 中有一个 chat 缺少 chat_id」，到 Web UI「下载的频道 / 群组」重新填写一次即可。
+
+</details>
+
+<details>
+<summary><b>v2.7.2</b> — YAML 原文编辑、file_formats 兼容</summary>
+
+- 修复配置面板「YAML 原文」显示不全：文本框铺满对话框、自动换行、只有自身滚动
+- `file_formats` 兼容列表与文本两种写法（`all` / `mp3, flac` / 粘贴的 `['all']` 都会正确写成列表）
+- 只有旧版 `chat_id` 的配置会正确回填到频道列表
+
+</details>
+
+<details>
+<summary><b>v2.7.1</b> — 静态缓存导致页面空白</summary>
+
+- **修复旧静态缓存导致后台空白**：升级镜像后如果浏览器还在用上一版 `app.js`，会出现「连接异常：Cannot set properties of null」并且配置 / 退出按钮点不动。现在静态资源带 `?v=<版本号>`、HTML 禁止缓存，页面与后端版本不一致时会直接提示强制刷新。
+- 界面初始化失败时顶部会显示错误原因和「重新加载」按钮，而不是静默失效。
+
+> 升级后若仍显示旧界面，按一次 `Ctrl+F5`（Mac：`Cmd+Shift+R`）即可。
+
+</details>
+
+<details>
+<summary><b>v2.7.0</b> — 配置表单</summary>
+
+- **配置表单**：Web UI 的配置编辑从纯 YAML 文本框改成带中文说明的表单，已填写的项自动回填、未填写的留空；
+  另保留「YAML 原文」标签页用于表单没覆盖的高级配置
+- 字段级校验与逐项报错，保存时原子写入并保留未在表单中暴露的字段
+
+</details>
+
+<details>
+<summary><b>v2.6.6</b> — Web UI 重做、版本号规范化</summary>
+
+- **Web UI 重做**：全新视觉与交互，支持登录/退出登录、配置在线编辑、单任务暂停/恢复/删除
+- **任务状态真实化**：下载完成后从「下载中」移入「已完成」，不再出现 bot 已成功而网页仍显示 100% 的僵尸任务；已完成列表有上限，不会无限吃内存
+- **配置在线编辑**：Web UI 可直接编辑 `config.yaml`，密钥默认掩码显示；保存后立即生效的项会提示，需要重启的项会单独列出
+- **CI 变严格**：测试 job 改为必过（不再是 `continue-on-error`），并修掉了上游遗留的测试腐化
+- **版本号规范化**：去掉 `-fork.1` 后缀，改为语义化版本
+
+</details>
+
 
 ---
 

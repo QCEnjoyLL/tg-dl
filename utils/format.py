@@ -24,9 +24,9 @@ def format_byte(size: float, dot=2):
     """format byte"""
 
     # pylint: disable = R0912
-    if 0 <= size < 1:
-        human_size = str(round(size / 0.125, dot)) + "b"
-    elif 1 <= size < 1024:
+    if 0 <= size < 1024:
+        # Sub-byte values used to be rendered in "bits" ("0.8b"), so an idle
+        # header read "0.0b/s" instead of "0.00B/s".
         human_size = str(round(size, dot)) + "B"
     elif math.pow(1024, 1) <= size < math.pow(1024, 2):
         human_size = str(round(size / math.pow(1024, 1), dot)) + "KB"
