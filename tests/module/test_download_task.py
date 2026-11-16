@@ -15,6 +15,7 @@ class DownloadTaskFinalizeTestCase(unittest.IsolatedAsyncioTestCase):
         node.upload_user = None
         node.upload_telegram_chat_id = None
         node.download_status = {}
+        node.last_error = {}
         message = mock.Mock()
         message.id = 42
         message.text = None
@@ -33,7 +34,7 @@ class DownloadTaskFinalizeTestCase(unittest.IsolatedAsyncioTestCase):
 
         self.assertIs(node.download_status[42], DownloadStatus.FailedDownload)
         remove_mock.assert_called_once_with(-100123, 42)
-        mark_mock.assert_called_once_with(-100123, 42, "")
+        mark_mock.assert_called_once_with(-100123, 42, "", "")
         set_id_mock.assert_called_once_with(node, 42, DownloadStatus.FailedDownload)
         report_mock.assert_awaited_once_with(
             None, node, DownloadStatus.FailedDownload, 0

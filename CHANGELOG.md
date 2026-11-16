@@ -2,6 +2,22 @@
 
 版本号规则：MAJOR（破坏性改动或核心重写）/ MINOR（新增功能）/ PATCH（修复、依赖、文档、UI 打磨）。
 
+## v2.9.1
+
+### 修复
+
+- **大文件下载到一半总是失败，并被误报为「文件引用过期」**
+  - 根因：Pyrogram fork 的 `Client.get_file` 会把 `upload.GetFile` 的所有异常吞掉、只写一行日志，
+    于是 200MB 的文件只收到 5MB 就被当成「下载完成」返回；`handle_download` 把残缺的临时文件
+    移正，随后的尺寸校验失败又被映射成 `BadRequest`，日志就变成了「文件引用过期」，
+    重试也只是重新拉取消息、继续得到同样的残片
+  - 新增 `module/pyrogram_guard.py`：包装 `Client.get_file`，当数据流提前结束（少于 `file_size`）时，
+    按 1 MiB 块边界用 `GetFile` 的 offset **自动续传**；连续 3 次完全没有进展才抛出 `DownloadIncomplete`
+  - `download_media` 新增 `DownloadIncomplete` 分支：等待后重新拉取消息（可能真是引用过期）再重试，
+    日志会写明「只收到 X / 应为 Y 字节」，不再谎称文件引用过期
+  - 失败原因写入 `node.last_error` 并随失败记录保存；Web UI 失败页与日志能看出是传输中断而不是引用过期
+- 下载返回空路径时增加间隔重试，避免瞬时打满队列
+
 ## v2.9.0
 
 ### 新增

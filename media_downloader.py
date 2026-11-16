@@ -29,6 +29,7 @@ from module.download_stat import (
 )
 from module.get_chat_history_v2 import get_chat_history_v2
 from module.language import _t
+from module.pyrogram_guard import DownloadIncomplete, install_get_file_guard
 from module.pyrogram_extension import (
     HookClient,
     fetch_message,
@@ -403,12 +404,20 @@ async def download_task(
 
         node.download_status[message.id] = download_status
 
+        # Consume the reason in both branches so a later success cannot leave a
+        # stale entry behind.
+        reason = ""
+        try:
+            reason = node.last_error.pop(message.id, "")
+        except Exception:  # pylint: disable = W0703
+            reason = ""
+
         if download_status is DownloadStatus.FailedDownload:
             # Upstream left the row in the Web UI at whatever percentage it
             # reached and never offered a way to retry or drop it. Remove the
             # stale row and record the failure for the "Failed" tab instead.
             remove_download_result(node.chat_id, message.id)
-            mark_download_failed(node.chat_id, message.id, file_name or "")
+            mark_download_failed(node.chat_id, message.id, file_name or "", reason)
         elif download_status is DownloadStatus.SuccessDownload:
             # Move the row into the completed list. Leaving it in the
             # in-progress dict was why the Web UI kept showing a finished
@@ -531,6 +540,7 @@ async def download_media(
         return DownloadStatus.SkipDownload, None
 
     message_id = message.id
+    last_error: str = ""
 
     for retry in range(3):
         try:
@@ -553,17 +563,45 @@ async def download_media(
                 _move_to_download_path(temp_download_path, file_name)
                 # TODO: if not exist file size or media
                 return DownloadStatus.SuccessDownload, file_name
+
+            # No path came back: the client aborted and removed its temp file.
+            # Pause before the next attempt instead of hammering the queue.
+            last_error = _t("download aborted before the file was written")
+            logger.warning(
+                f"Message[{message.id}]: {last_error}, "
+                f"{_t('retrying after')} {RETRY_TIME_OUT} {_t('seconds')}"
+            )
+            await asyncio.sleep(RETRY_TIME_OUT)
         except pyrogram.errors.exceptions.bad_request_400.BadRequest:
             logger.warning(
                 f"Message[{message.id}]: {_t('file reference expired, refetching')}..."
             )
             await asyncio.sleep(RETRY_TIME_OUT)
             message = await fetch_message(client, message)
+            last_error = _t("file reference expired")
             if _check_timeout(retry, message.id):
                 # pylint: disable = C0301
                 logger.error(
                     f"Message[{message.id}]: "
                     f"{_t('file reference expired for 3 retries, download skipped.')}"
+                )
+        except DownloadIncomplete as incomplete:
+            last_error = str(incomplete)
+            logger.warning(
+                f"Message[{message.id}]: {incomplete}; "
+                f"{_t('retrying after')} {RETRY_TIME_OUT} {_t('seconds')}"
+            )
+            await asyncio.sleep(RETRY_TIME_OUT)
+            # A truncated stream can also be a stale file reference that the
+            # fork swallowed; refetch so the next attempt gets a fresh one.
+            try:
+                message = await fetch_message(client, message)
+            except Exception as fetch_err:  # pylint: disable = W0703
+                logger.warning(f"Message[{message.id}]: refetch failed: {fetch_err}")
+            if _check_timeout(retry, message.id):
+                logger.error(
+                    f"Message[{message.id}]: "
+                    f"{_t('download incomplete after 3 retries, download skipped.')}"
                 )
         except pyrogram.errors.exceptions.flood_420.FloodWait as wait_err:
             await asyncio.sleep(wait_err.value)
@@ -592,8 +630,14 @@ async def download_media(
                 f"{_t('could not be downloaded due to following exception')}:\n[{e}].",
                 exc_info=True,
             )
+            last_error = f"{e.__class__.__name__}: {e}"
             break
 
+    if last_error:
+        try:
+            node.last_error[message.id] = last_error
+        except Exception:  # pylint: disable = W0703
+            pass
     return DownloadStatus.FailedDownload, None
 
 
@@ -833,6 +877,9 @@ def main():
     """Main function of the downloader."""
     # pylint: disable = W0603
     global _retry_client
+    # The bundled Pyrogram fork silently ends the chunk stream when a
+    # GetFile request fails; resume instead of accepting a partial file.
+    install_get_file_guard()
     tasks = []
     client = HookClient(
         "media_downloader",

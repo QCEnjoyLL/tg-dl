@@ -178,6 +178,9 @@ class TaskNode:
         self.topic_id = topic_id
         self.reply_to_message = None
         self.cloud_drive_upload_stat_dict: dict = {}
+        #: Per-message failure reason, filled by download_media and consumed by
+        #: download_task when it records the failure for the Web UI.
+        self.last_error: dict = {}
 
     def skip_msg_id(self, msg_id: int):
         """Skip if message id out of range"""

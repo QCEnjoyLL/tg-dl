@@ -3,11 +3,20 @@
 > 基于 [tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader) 的修复分支。
 > 保留原项目的全部功能（Telegram bot 指令、Web UI、rclone 上传、受保护内容下载），并持续修复实际使用中的问题。
 
-当前版本：**v2.9.0**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
+当前版本：**v2.9.1**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
 
 [![Docker](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml)
 [![Tests](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/unittest.yml/badge.svg)](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/unittest.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+---
+
+## v2.9.1 更新内容
+
+- 修复**大文件下载中途截断却被误报为「文件引用过期」**：Pyrogram fork 会吞掉 `GetFile` 异常，
+  只收到 5MB 的残缺文件会被当成下载完成，随后又被当成引用过期反复重试
+- 新增 `pyrogram_guard`：数据流少于 `file_size` 时按 1MiB 边界自动续传，连续 3 次无进展才判定失败
+- 下载失败原因会写入失败记录（传输中断 / 引用过期 / 其他异常），日志更准确
 
 ---
 
@@ -410,6 +419,11 @@ PAT 需要 `read:packages` 权限。
 ---
 
 ## 常见问题
+
+**Q：大文件下到一半总是失败，日志还写「文件引用过期」？**
+v2.9.1 已修。底层 Pyrogram fork 会吞掉 `upload.GetFile` 的异常，把只下载了一部分的临时文件当成完成品返回；
+旧版的大小校验又把它当成引用过期。现在下载器会在流提前结束时按 1 MiB 块边界自动续传，
+只有连续 3 次完全没有进展才判定失败，并在失败记录里写明「只收到 X / 应为 Y 字节」。
 
 **Q：下载任务一直 0%，是不是卡住了？**
 看 `log/tdl.log`。Web 的「下载中」标签只反映开始过下载的消息，队列里的大量消息不会同时推进；把 `max_download_task` 控制在 2-3 更稳。如果某条任务显示 100% 但一直不动，通常是该文件还在等待上传或收尾，可点「删除」清掉。
