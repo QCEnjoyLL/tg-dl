@@ -608,7 +608,10 @@ main {
 }
 
 .col-actions {
-  width: 150px;
+  /* Wide enough for the armed delete button: "确认删除" plus the 暂停/继续
+     button beside it needs 156px of content, and the cell clips rather than
+     growing (table-layout: fixed + overflow: hidden). */
+  width: 196px;
   text-align: right;
 }
 
@@ -1337,6 +1340,23 @@ main {
   .cell-path {
     display: none;
   }
+
+  /* From here the table is compact, so the action column shrinks to what two
+     icon buttons need. They stay labelled for screen readers and get a tooltip
+     for mouse users; labelled buttons would overflow the cell and be clipped. */
+  .col-actions {
+    width: 104px;
+  }
+
+  .btn-mini {
+    min-width: 32px;
+    justify-content: center;
+    padding-inline: 8px;
+  }
+
+  .btn-mini span {
+    display: none;
+  }
 }
 
 @media (max-width: 720px) {
@@ -1384,10 +1404,6 @@ main {
     white-space: nowrap;
   }
 
-  .col-actions {
-    width: 104px;
-  }
-
   .col-id {
     width: 100px;
   }
@@ -1398,10 +1414,6 @@ main {
     max-width: 96px;
     overflow: hidden;
     text-overflow: ellipsis;
-  }
-
-  .btn-mini {
-    padding-inline: 8px;
   }
 
   .dialog-foot {
@@ -1449,19 +1461,9 @@ main {
     padding-inline: 6px;
   }
 
-  .btn-mini span {
-    display: none;
-  }
-
   .btn-mini svg {
     width: 14px;
     height: 14px;
-  }
-
-  /* Icon-only action buttons still need a 24px+ hit area. */
-  .btn-mini {
-    min-width: 32px;
-    justify-content: center;
   }
 }
 

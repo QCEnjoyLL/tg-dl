@@ -276,6 +276,15 @@
     );
   }
 
+  /**
+   * Below 900px the action buttons lose their label (the column is too narrow
+   * for "确认删除"), so the accessible name doubles as the tooltip.
+   */
+  function setActionLabel(button, label) {
+    button.setAttribute("aria-label", label);
+    button.setAttribute("title", label);
+  }
+
   function buildDownloadingRow(row) {
     const tr = document.createElement("tr");
     tr.innerHTML =
@@ -336,14 +345,14 @@
       pauseBtn.dataset.tone = paused ? "warn" : "";
       pauseBtn.innerHTML =
         (paused ? ICON_PLAY : ICON_PAUSE) + "<span>" + (paused ? "继续" : "暂停") + "</span>";
-      pauseBtn.setAttribute(
-        "aria-label",
+      setActionLabel(
+        pauseBtn,
         (paused ? "继续下载 " : "暂停下载 ") + row.filename
       );
     }
 
     const deleteBtn = tr.querySelector('[data-action="delete"]');
-    if (deleteBtn) deleteBtn.setAttribute("aria-label", "删除任务 " + row.filename);
+    if (deleteBtn) setActionLabel(deleteBtn, "删除任务 " + row.filename);
   }
 
   function uploadChipHtml(row) {
@@ -392,9 +401,9 @@
 
   function updateDownloadedRow(tr, row) {
     const deleteBtn = tr.querySelector('[data-action="delete"]');
-    if (deleteBtn) deleteBtn.setAttribute("aria-label", "删除记录 " + row.filename);
+    if (deleteBtn) setActionLabel(deleteBtn, "删除记录 " + row.filename);
     const copyBtn = tr.querySelector('[data-action="copy"]');
-    if (copyBtn) copyBtn.setAttribute("aria-label", "复制保存路径 " + row.filename);
+    if (copyBtn) setActionLabel(copyBtn, "复制保存路径 " + row.filename);
   }
 
   function buildFailedRow(row) {
@@ -425,9 +434,9 @@
 
   function updateFailedRow(tr, row) {
     const retryBtn = tr.querySelector('[data-action="retry"]');
-    if (retryBtn) retryBtn.setAttribute("aria-label", "重试下载 " + row.filename);
+    if (retryBtn) setActionLabel(retryBtn, "重试下载 " + row.filename);
     const deleteBtn = tr.querySelector('[data-action="delete"]');
-    if (deleteBtn) deleteBtn.setAttribute("aria-label", "删除失败记录 " + row.filename);
+    if (deleteBtn) setActionLabel(deleteBtn, "删除失败记录 " + row.filename);
 
     const text = row.reason || "";
     const reasonCell = tr.querySelector(".cell-reason");
@@ -877,7 +886,7 @@
     button.innerHTML = ICON_CHECK + "<span>确认删除</span>";
     const previousLabel = button.getAttribute("aria-label") || "";
     button.dataset.previousAria = previousLabel;
-    button.setAttribute("aria-label", "确认删除？再点一次执行");
+    setActionLabel(button, "确认删除？再点一次执行");
 
     const timer = setTimeout(() => {
       button.dataset.confirm = "0";
@@ -892,7 +901,7 @@
       delete button.dataset.previousHtml;
     }
     if (button.dataset.previousAria !== undefined) {
-      button.setAttribute("aria-label", button.dataset.previousAria);
+      setActionLabel(button, button.dataset.previousAria);
       delete button.dataset.previousAria;
     }
   }

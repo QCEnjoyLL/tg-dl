@@ -3,7 +3,7 @@
 > 基于 [tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader) 的修复分支。
 > 保留原项目的全部功能（Telegram bot 指令、Web UI、rclone 上传、受保护内容下载），并持续修复实际使用中的问题。
 
-当前版本：**v2.9.5**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
+当前版本：**v2.9.6**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
 
 [![Docker](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml)
 [![Release](https://img.shields.io/github/v/release/QCEnjoyLL/tg-dl?label=release&color=blue)](https://github.com/QCEnjoyLL/tg-dl/releases/latest)
@@ -27,6 +27,18 @@
 > Docker / compose 用户不受影响（配置本来就是挂载进容器的，从未进过镜像）。
 
 逐条历史记录见 [CHANGELOG.md](CHANGELOG.md)；当前版本见顶部的 Release 徽章。
+
+<details>
+<summary><b>v2.9.6</b> — 操作列不再裁掉「确认删除」</summary>
+
+- **「确认删除」按钮被裁掉**：操作列固定 150px，而「暂停 / 继续 + 确认删除」需要 156px，
+  表格是 `table-layout: fixed` + `overflow: hidden`，超出部分直接被切掉；实测连未进入确认态的
+  「删除」也已被裁掉 10px。桌面端操作列加宽到 196px
+- **窄屏（≤900px）两个操作按钮一起溢出**：操作列只有 104px 却要塞两个带文字的按钮（需要 148px）。
+  现在窄屏（含平板竖屏）按钮改为纯图标，与移动端原有一致；每个按钮补上 `title`，悬停可看完整说明
+- 操作按钮的可访问名称统一走 `setActionLabel()`，`aria-label` 与 `title` 不再各写一份
+
+</details>
 
 <details>
 <summary><b>v2.9.5</b> — 构建镜像时自动发 Release</summary>
