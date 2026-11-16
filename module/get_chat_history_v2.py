@@ -1,5 +1,6 @@
 """Rewrite pyrogram.get_chat_history"""
 
+import asyncio
 from datetime import datetime
 from typing import AsyncGenerator, Optional, Union
 
@@ -7,6 +8,9 @@ import pyrogram
 
 # pylint: disable = W0611
 from pyrogram import raw, types, utils
+
+#: Pause before retrying a page that came back empty (tests set this to 0).
+EMPTY_PAGE_RETRY_SLEEP = 1.0
 
 
 async def get_chunk_v2(
@@ -62,6 +66,11 @@ async def get_chat_history_v2(
     current = 0
     total = limit or (1 << 31) - 1
     limit = min(100, total)
+    # ``GetHistory`` returns an empty page once the chat has no more messages —
+    # that is its only "end of history" signal, and an empty chat answers it
+    # from the very first page. Retry once in case the page was empty because of
+    # a transient failure, then stop.
+    empty_retries = 0
 
     while True:
         messages = await get_chunk_v2(
@@ -76,21 +85,18 @@ async def get_chat_history_v2(
         )
 
         if not messages:
-            # ``get_chunk_v2`` answered with an empty page (transient error or
-            # an empty history): retry once through the stock history iterator.
-            # The old code treated ``offset_id`` — a Telegram message id that
-            # can reach millions — as a *count* of messages to skip, so it
-            # silently downloaded the wrong range whenever this path was hit.
-            async for message in self.get_chat_history(
-                chat_id,
-                limit=limit + 1,
-                offset=offset,
-                offset_id=offset_id,
-            ):
-                messages.append(message)
-            if not messages:
+            # An empty page used to be "recovered" with Client.get_chat_history.
+            # That API has no ``reverse`` support and returns the *newest*
+            # messages, so a reverse scan restarted from the end of the chat and
+            # never finished: the task's progress card never appeared because
+            # ``is_running`` is only set once the scan completes.
+            if empty_retries >= 1:
                 return
+            empty_retries += 1
+            await asyncio.sleep(EMPTY_PAGE_RETRY_SLEEP)
+            continue
 
+        empty_retries = 0
         offset_id = messages[-1].id + (1 if reverse else 0)
 
         for message in messages:

@@ -170,6 +170,8 @@ class TaskNode:
         self.failed_forward_task: int = 0
         self.skip_forward_task: int = 0
         self.is_running: bool = False
+        #: True while the chat history is still being scanned for this task.
+        self.is_scanning: bool = False
         self.client = None
         self.upload_success_count: int = 0
         self.upload_skipped_count: int = 0
@@ -200,6 +202,7 @@ class TaskNode:
         """If is finish"""
         return self.is_stop_transmission or (
             self.is_running
+            and not self.is_scanning
             and self.task_type != TaskType.ListenForward
             and self.total_task == self.total_download_task
         )

@@ -101,7 +101,10 @@ class DownloadBot:
         """Update reply message"""
         while self.is_running:
             for key, value in self.task_node.copy().items():
-                if value.is_running:
+                # A task spends its first phase scanning the chat history; the
+                # card has to appear then too, otherwise a full-history task
+                # shows nothing at all until the scan is over.
+                if value.is_running or value.is_scanning:
                     await report_bot_status(self.bot, value)
 
             for key, value in self.task_node.copy().items():
