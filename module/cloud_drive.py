@@ -105,25 +105,38 @@ class CloudDrive:
         absolute path when ``save_path`` had a trailing slash or a different
         separator, so uploads landed in a new remote tree and looked "new" next
         to identical files that were already there.
+
+        Both separators are normalized before ``relpath`` so the result does not
+        depend on the host OS that runs the test or the service.
         """
-        local_dir = os.path.dirname(local_file_path)
+
+        def _posix(path) -> str:
+            return str(path or "").replace("\\", "/")
+
+        # Normalize separators before dirname: on a POSIX host a Windows-style
+        # path would otherwise have no directory part at all.
+        local_dir = os.path.dirname(_posix(local_file_path))
+        save_dir = _posix(save_path).rstrip("/")
         relative_dir = ""
+
         candidate = None
         try:
-            candidate = os.path.relpath(local_dir, save_path)
+            if local_dir:
+                candidate = os.path.relpath(local_dir, save_dir)
         except (TypeError, ValueError):
             candidate = None
+
         if candidate is not None and not candidate.startswith(".."):
             relative_dir = "" if candidate == "." else candidate
-        else:
-            relative_dir = local_dir.replace(save_path, "").strip("/\\")
+        elif save_dir:
+            relative_dir = local_dir.replace(save_dir, "").strip("/")
 
-        remote_dir = (
-            drive_config.remote_dir + "/" + relative_dir.replace("\\", "/") + "/"
+        remote_dir = _posix(
+            drive_config.remote_dir + "/" + relative_dir + "/"
         )
-        # Collapse duplicate slashes while keeping the scheme part intact.
-        remote_dir = re.sub(r"(?<!:)/{2,}", "/", remote_dir)
-        return remote_dir
+        # A bare remote ("115:") plus the join above yields "115:/": collapse
+        # repeated slashes but keep the single separator after the scheme.
+        return re.sub(r"/{2,}", "/", remote_dir)
 
     @staticmethod
     def rclone_mkdir_args(rclone_path: str, remote_dir: str) -> list:
