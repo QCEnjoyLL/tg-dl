@@ -5,6 +5,6 @@
 #   MINOR - new user-facing capability (Web UI feature, bot command, endpoint)
 #   PATCH - bug fix, dependency bump, docs or UI polish only
 # Keep this in sync with the git tag when releasing (v<version>).
-__version__ = "2.11.3"
+__version__ = "2.11.4"
 __license__ = "MIT License"
 __copyright__ = "Copyright (C) 2025 tangyoha <https://github.com/tangyoha>"

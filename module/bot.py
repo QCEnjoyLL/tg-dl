@@ -365,37 +365,45 @@ def build_help_text() -> str:
     """Body of the help card (Markdown).
 
     The bot client keeps the Pyrogram default parse mode, which parses Markdown,
-    so the backticks below are real formatting on Telegram.
+    so the backticks below are real formatting on Telegram. Every example is
+    two lines: the command itself, then a "#" line explaining what the command
+    does, naming the exact chat/range it works on.
     """
     examples = (
-        ("/help", "Show help"),
-        ("/get_info https://t.me/example_channel/123", "Get group and user info"),
+        ("/help", "Show this help card"),
+        (
+            "/get_info https://t.me/example_channel/123",
+            "Get group and user info from the linked message",
+        ),
         (
             "/download https://t.me/example_channel 1 0",
-            "Download from oldest to newest",
+            "Download all messages from channel example_channel "
+            "(1 = oldest, 0 = newest)",
         ),
         (
             "/download https://t.me/c/1234567890/500 0 0 " f"[{_t('Filter')}]",
-            "Download only filtered messages",
+            "Download only messages of group 1234567890 that match [Filter]",
         ),
         (
             "/forward https://t.me/c/1111111111 https://t.me/c/2222222222 1 400",
-            "Forward messages 1-400",
+            "Forward messages 1-400 from group 1111111111 to group 2222222222",
         ),
         (
             "/listen_forward https://t.me/c/1111111111 https://t.me/c/2222222222",
-            "Keep forwarding new messages",
+            "Keep forwarding new messages from group 1111111111 "
+            "to group 2222222222",
         ),
         (
             "/forward_to_comments https://t.me/c/1111111111 "
             "https://t.me/c/2222222222 100 200",
-            "Forward 100-200 messages to comments",
+            "Forward messages 100-200 from group 1111111111 to the comment "
+            "section of group 2222222222",
         ),
-        ("/set_language zh", "Switch language"),
-        ("/stop", "Stop current task"),
+        ("/set_language zh", "Switch the interface language"),
+        ("/stop", "Stop the current download or forward task"),
     )
-    example_lines = "\n".join(
-        f"{command}  # {_t(description)}" for command, description in examples
+    example_lines = "\n\n".join(
+        f"{command}\n# {_t(description)}" for command, description in examples
     )
 
     return (

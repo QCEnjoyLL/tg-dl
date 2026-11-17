@@ -58,14 +58,13 @@ class HelpTextTestCase(unittest.TestCase):
             self.assertIn("\n" + command, examples, command)
 
     def test_every_example_carries_an_annotation(self):
-        lines = self.example_lines()
+        lines = [line for line in self.example_lines() if line != "```"]
 
-        # ``` 围栏 + 每条命令一行，命令与说明之间用「  # 」分隔
-        self.assertEqual(len([line for line in lines if line != "```"]), 9)
-        for line in lines:
-            if line == "```":
-                continue
-            self.assertIn("  # ", line, line)
+        # 每条示例两行：命令一行，下一行以「# 」开头的说明
+        self.assertEqual(len(lines), 18)
+        for command, annotation in zip(lines[::2], lines[1::2]):
+            self.assertTrue(command.startswith("/"), command)
+            self.assertTrue(annotation.startswith("# "), annotation)
 
     def test_examples_block_is_fenced_code(self):
         examples = self.examples_block().strip()
@@ -80,9 +79,12 @@ class HelpTextTestCase(unittest.TestCase):
         kinds = [type(entity).__name__ for entity in entities]
 
         self.assertIn("MessageEntityPre", kinds, kinds)
-        # The command text itself survives the markdown pass untouched.
+        # The command text itself survives the markdown pass untouched, with the
+        # explanation on the next line.
         self.assertIn(
-            "/download https://t.me/example_channel 1 0  # Download from oldest to newest",
+            "/download https://t.me/example_channel 1 0\n"
+            "# Download all messages from channel example_channel "
+            "(1 = oldest, 0 = newest)",
             parsed["message"],
         )
 
@@ -98,9 +100,11 @@ class HelpTextTestCase(unittest.TestCase):
         language.set_language(Language.ZH)
         examples = self.examples_block("命令示例：")
 
-        self.assertIn("  # 查看帮助", examples)
-        self.assertIn("  # 从最早下载到最新", examples)
-        self.assertIn("  # 停止当前任务", examples)
+        self.assertIn("从群组 1111111111 转发第 1~400 条消息到群组 2222222222", examples)
+        self.assertIn("从频道 example_channel 下载全部消息", examples)
+        self.assertIn("从群组 1234567890 只下载符合 [过滤器] 的消息", examples)
+        self.assertIn("把群组 1111111111 的第 100~200 条消息转发到群组 2222222222", examples)
+        self.assertIn("停止当前下载或转发任务", examples)
 
 
 if __name__ == "__main__":
