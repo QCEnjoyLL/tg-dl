@@ -291,6 +291,14 @@ class WebApiTestCase(unittest.TestCase):
         self.assertEqual(response.get_json()["code"], "1")
         self.assertEqual(handler.call_args[0][0], "@mychannel")
 
+    def test_clear_failed_normalizes_chat_id(self):
+        with mock.patch.object(web, "clear_failed_downloads", return_value=2) as clear:
+            response = self.client.post("/clear_failed?chat_id=%20-100123%20")
+
+        self.assertEqual(response.get_json()["code"], "1")
+        self.assertEqual(response.get_json()["cleared"], 2)
+        clear.assert_called_once_with(-100123)
+
 
 class _ConfigFixture(unittest.TestCase):
     def setUp(self):
@@ -561,6 +569,14 @@ class WebAssetTestCase(unittest.TestCase):
         self.assertIn("app.js?v=", html)
         self.assertIn("TeleVault", html)
         self.assertIn("no-store", response.headers.get("Cache-Control", ""))
+        # Tabpanel & toolbar accessibility / controls
+        self.assertIn('role="tabpanel"', html)
+        self.assertIn('aria-controls="table-downloading"', html)
+        self.assertIn('id="task-search"', html)
+        self.assertIn('id="retry-all-btn"', html)
+        self.assertIn('id="clear-failed-btn"', html)
+        self.assertIn('id="poll-toggle"', html)
+        self.assertIn('id="config-search"', html)
 
     def test_static_assets_are_long_lived(self):
         response = self.client.get("/static/js/app.js?v=1")
@@ -574,6 +590,7 @@ class WebAssetTestCase(unittest.TestCase):
         html = response.get_data(as_text=True)
         self.assertIn("data-version=", html)
         self.assertIn("login.css?v=", html)
+        self.assertIn('id="pw-toggle"', html)
 
     def test_app_version_endpoint(self):
         response = self.client.get("/get_app_version")

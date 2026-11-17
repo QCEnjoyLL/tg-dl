@@ -1,4 +1,4 @@
-/* tg-dl web ui — polling, rendering, per-task controls, config editor. */
+/* tg-dl web ui — polling, rendering, filtering, per-task & bulk controls, config editor. */
 (() => {
   "use strict";
 
@@ -12,22 +12,31 @@
   const CONFIRM_TIMEOUT = 3500;
 
   const ICON_PAUSE =
-    '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M9 5v14M15 5v14"/></svg>';
+    '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 5v14M15 5v14"/></svg>';
   const ICON_PLAY =
-    '<svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M8 5.5v13l11-6.5z"/></svg>';
+    '<svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M9 5.5v13l10-6.5z"/></svg>';
   const ICON_TRASH =
-    '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9 7V5h6v2"/><path d="M6 7l1 13h10l1-13"/></svg>';
+    '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9 7V5h6v2"/><path d="M6 7l1 13h10l1-13"/></svg>';
   const ICON_RETRY =
-    '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.3-5.6"/><path d="M20 4v5h-5"/></svg>';
+    '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.3-5.6"/><path d="M20 4v5h-5"/></svg>';
   const ICON_COPY =
-    '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/></svg>';
+    '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/></svg>';
   const ICON_CHECK =
-    '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 13 4 4L19 7"/></svg>';
+    '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 13 4 4L19 7"/></svg>';
+  const ICON_CLOSE =
+    '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>';
+  const ICON_EYE =
+    '<svg class="icon-eye" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>';
+  const ICON_EYE_OFF =
+    '<svg class="icon-eye-off" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M9.9 4.2A10.6 10.6 0 0 1 12 4c6.4 0 10 8 10 8a17.6 17.6 0 0 1-3.2 4.3"/><path d="M6.6 6.6A17.2 17.2 0 0 0 2 12s3.6 8 10 8a9.8 9.8 0 0 0 5.4-1.6"/><path d="M14.1 14.1a3 3 0 0 1-4.2-4.2"/><path d="m2 2 20 20"/></svg>';
 
   const state = {
     tab: "downloading",
     action: $("#pause-btn") ? $("#pause-btn").dataset.value : "pause",
     configTab: "form",
+    query: "",
+    uploadFilter: "all",
+    pollingPaused: false,
     downloading: [],
     downloaded: [],
     failed: [],
@@ -49,8 +58,16 @@
     badgeFailed: $("#badge-failed"),
     updated: $("#updated"),
     liveDot: $("#live-dot"),
+    pollToggle: $("#poll-toggle"),
+    taskSearch: $("#task-search"),
+    taskSearchClear: $("#task-search-clear"),
+    uploadFilters: $("#upload-filters"),
+    failedBulkActions: $("#failed-bulk-actions"),
+    retryAllBtn: $("#retry-all-btn"),
+    clearFailedBtn: $("#clear-failed-btn"),
     empty: $("#empty"),
     emptyText: $("#empty-text"),
+    emptyAction: $("#empty-action"),
     pausedBanner: $("#paused-banner"),
     pager: $("#pager"),
     pagerInfo: $("#pager-info"),
@@ -71,6 +88,12 @@
     configClose: $("#config-close"),
     configForm: $("#config-form"),
     configLoading: $("#config-loading"),
+    configToolbar: $("#config-toolbar"),
+    configSearch: $("#config-search"),
+    configGroupNav: $("#config-group-nav"),
+    configEmpty: $("#config-empty"),
+    configFormSyncNote: $("#config-form-sync-note"),
+    configYamlSyncNote: $("#config-yaml-sync-note"),
     formPane: $("#config-form-pane"),
     yamlPane: $("#config-yaml-pane"),
     tables: {
@@ -100,8 +123,20 @@
   /* Every DOM write goes through a helper: a stale cached script running next to
      newer markup must degrade instead of throwing and killing the whole page. */
   function setText(node, text) {
-    if (node) node.textContent = text;
+    if (node && node.textContent !== text) node.textContent = text;
     return node;
+  }
+
+  function setBusy(button, busy) {
+    if (!button) return;
+    if (busy) button.setAttribute("aria-disabled", "true");
+    else button.removeAttribute("aria-disabled");
+  }
+
+  function isBusy(button) {
+    return Boolean(
+      button && (button.disabled || button.getAttribute("aria-disabled") === "true")
+    );
   }
 
   function showFatalBanner(message) {
@@ -146,14 +181,17 @@
     const dot = text.lastIndexOf(".");
     const hasExt = dot > 0 && text.length - dot <= 8;
     if (!hasExt) {
-      return esc(text) || '<span class="ext">(未命名)</span>';
+      return esc(text) || '<span class="ext">（未命名）</span>';
     }
-    return esc(text.slice(0, dot)) + '<span class="ext">' + esc(text.slice(dot)) + "</span>";
+    return (
+      esc(text.slice(0, dot)) +
+      '<span class="ext">' +
+      esc(text.slice(dot)) +
+      "</span>"
+    );
   }
 
   function chatLabel(chat) {
-    // Show the full chat id; the column is wide enough on desktop and truncates
-    // through CSS only on narrow screens.
     return String(chat === null || chat === undefined ? "" : chat);
   }
 
@@ -172,7 +210,7 @@
   }
 
   function timeText(ts) {
-    if (!ts) return "-";
+    if (!ts) return "—";
     const d = new Date(ts * 1000);
     const pad = (n) => String(n).padStart(2, "0");
     return (
@@ -190,19 +228,40 @@
     return row.chat + ":" + row.id;
   }
 
+  function removeToast(node) {
+    if (!node || node.dataset.closing === "1") return;
+    node.dataset.closing = "1";
+    node.classList.add("is-leaving");
+    setTimeout(() => node.remove(), 200);
+  }
+
   function toast(message, tone) {
+    if (!el.toasts) return;
     const node = document.createElement("div");
     node.className = "toast";
     node.dataset.tone = tone || "info";
-    node.textContent = message;
-    if (!el.toasts) return;
+    if (tone === "error") node.setAttribute("role", "alert");
+
+    const msgSpan = document.createElement("span");
+    msgSpan.className = "toast-msg";
+    msgSpan.textContent = message;
+    node.appendChild(msgSpan);
+
+    const closeBtn = document.createElement("button");
+    closeBtn.className = "toast-close";
+    closeBtn.type = "button";
+    closeBtn.setAttribute("aria-label", "关闭通知");
+    closeBtn.innerHTML = ICON_CLOSE;
+    closeBtn.addEventListener("click", () => removeToast(node));
+    node.appendChild(closeBtn);
+
     el.toasts.appendChild(node);
-    // Force a frame so the entrance transition runs.
     requestAnimationFrame(() => node.classList.add("is-visible"));
-    setTimeout(() => {
-      node.classList.add("is-leaving");
-      setTimeout(() => node.remove(), 200);
-    }, tone === "error" ? 5200 : 3200);
+
+    // Error notifications carry actionable diagnostics and stay until dismissed (WCAG 2.2.2).
+    if (tone !== "error") {
+      setTimeout(() => removeToast(node), 3200);
+    }
   }
 
   async function api(url, options) {
@@ -282,6 +341,7 @@
    * for "确认删除"), so the accessible name doubles as the tooltip.
    */
   function setActionLabel(button, label) {
+    if (!button) return;
     button.setAttribute("aria-label", label);
     button.setAttribute("title", label);
   }
@@ -290,24 +350,22 @@
     const tr = document.createElement("tr");
     tr.innerHTML =
       idCell(row) +
-      '<td class="cell-name" title="' +
-      esc(row.filename) +
-      '">' +
-      '<span class="row-chip state-chip is-paused" hidden>已暂停</span> ' +
-      nameHtml(row.filename) +
-      // The speed column is hidden on narrow screens, so the same value is
-      // repeated under the name there (CSS decides which one is visible).
-      '<span class="speed-inline">↓ --</span>' +
+      '<td class="cell-name">' +
+      '<div class="name-line">' +
+      '<span class="row-chip state-chip is-paused" hidden>已暂停</span>' +
+      '<span class="file-title"></span>' +
+      "</div>" +
+      '<div class="progress-inline">' +
+      '<div class="bar" aria-hidden="true"><i style="width:0%"></i></div>' +
+      '<span class="pct">0%</span>' +
+      "</div>" +
+      '<span class="speed-inline">↓ —</span>' +
       "</td>" +
-      '<td class="cell-size">' +
-      esc(row.total_size) +
-      "</td>" +
+      '<td class="cell-size"></td>' +
       '<td class="cell-progress"><div class="progress">' +
-      '<div class="bar"><i style="width:0%"></i></div>' +
+      '<div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="下载进度"><i style="width:0%"></i></div>' +
       '<span class="pct">0%</span></div></td>' +
-      '<td class="cell-speed">' +
-      esc(row.download_speed) +
-      "</td>" +
+      '<td class="cell-speed"></td>' +
       '<td class="col-actions"><div class="row-actions">' +
       actionButton("pause", "暂停", ICON_PAUSE) +
       actionButton("delete", "删除", ICON_TRASH, "danger") +
@@ -316,14 +374,28 @@
   }
 
   function updateDownloadingRow(tr, row) {
-    const pct = pctValue(row.download_progress);
-    const fill = tr.querySelector(".bar > i");
-    if (fill && fill.style.width !== pct + "%") fill.style.width = pct + "%";
-    const label = tr.querySelector(".pct");
-    if (label) {
-      const text = pctText(pct);
-      if (label.textContent !== text) label.textContent = text;
+    const name = String(row.filename || "");
+    if (tr.dataset.filename !== name) {
+      tr.dataset.filename = name;
+      const nameCell = tr.querySelector(".cell-name");
+      if (nameCell) nameCell.title = name;
+      const titleSpan = tr.querySelector(".file-title");
+      if (titleSpan) titleSpan.innerHTML = nameHtml(name);
     }
+
+    const sizeCell = tr.querySelector(".cell-size");
+    setText(sizeCell, row.total_size === undefined ? "" : String(row.total_size));
+
+    const pct = pctValue(row.download_progress);
+    const pctStr = pctText(pct);
+    const desktopBar = tr.querySelector(".cell-progress .bar");
+    if (desktopBar) desktopBar.setAttribute("aria-valuenow", String(pct));
+    tr.querySelectorAll(".bar > i").forEach((fill) => {
+      if (fill.style.width !== pct + "%") fill.style.width = pct + "%";
+    });
+    tr.querySelectorAll(".pct").forEach((label) => {
+      setText(label, pctStr);
+    });
 
     const globalPaused = state.action === "continue";
     const speed = tr.querySelector(".cell-speed");
@@ -333,77 +405,78 @@
       : row.download_speed === undefined
       ? ""
       : String(row.download_speed);
-    if (speed && speed.textContent !== value) speed.textContent = value;
+    setText(speed, value);
 
     const inlineSpeed = tr.querySelector(".speed-inline");
     if (inlineSpeed) {
-      const inlineText = "↓ " + (value || "—");
-      if (inlineSpeed.textContent !== inlineText) {
-        inlineSpeed.textContent = inlineText;
-      }
+      const sizePart = row.total_size ? " · " + row.total_size : "";
+      const inlineText = "↓ " + (value || "—") + sizePart;
+      setText(inlineSpeed, inlineText);
       inlineSpeed.classList.toggle("is-muted", !value || value === "—");
     }
 
     const chip = tr.querySelector(".row-chip");
     if (chip) {
       chip.hidden = !(globalPaused || row.paused);
-      chip.textContent = row.paused ? "单条暂停" : "已暂停";
+      setText(chip, row.paused ? "单条暂停" : "已暂停");
     }
     tr.classList.toggle("is-paused", globalPaused || Boolean(row.paused));
 
-    const pauseBtn = tr.querySelector('[data-action="pause"]');
+    const pauseBtn = tr.querySelector('[data-action="pause"], [data-action="resume"]');
     if (pauseBtn) {
       const paused = Boolean(row.paused);
-      pauseBtn.dataset.action = paused ? "resume" : "pause";
-      pauseBtn.dataset.tone = paused ? "warn" : "";
-      pauseBtn.innerHTML =
-        (paused ? ICON_PLAY : ICON_PAUSE) + "<span>" + (paused ? "继续" : "暂停") + "</span>";
-      setActionLabel(
-        pauseBtn,
-        (paused ? "继续下载 " : "暂停下载 ") + row.filename
-      );
+      const targetAction = paused ? "resume" : "pause";
+      if (pauseBtn.dataset.action !== targetAction) {
+        pauseBtn.dataset.action = targetAction;
+        pauseBtn.dataset.tone = paused ? "warn" : "";
+        pauseBtn.innerHTML =
+          (paused ? ICON_PLAY : ICON_PAUSE) + "<span>" + (paused ? "继续" : "暂停") + "</span>";
+      }
+      setActionLabel(pauseBtn, (paused ? "继续下载 " : "暂停下载 ") + name);
     }
 
     const deleteBtn = tr.querySelector('[data-action="delete"]');
-    if (deleteBtn) setActionLabel(deleteBtn, "删除任务 " + row.filename);
+    if (deleteBtn && deleteBtn.dataset.confirm !== "1") {
+      setActionLabel(deleteBtn, "删除任务 " + name);
+    }
   }
 
-  function uploadChipHtml(row) {
-    // upload_state: "uploaded" = bytes were transferred now,
-    // "exists" = remote already had an identical file (rclone skipped it),
-    // missing = still only local.
-    const uploadState = row.upload_state;
-    if (uploadState === "exists") {
-      return '<span class="state-chip is-remote">云端已有</span>';
+  function uploadStateKey(row) {
+    if (row.upload_state === "exists") return "exists";
+    if (row.upload_state === "uploaded" || (!row.upload_state && row.upload_success)) {
+      return "uploaded";
     }
-    if (uploadState === "uploaded" || (!uploadState && row.upload_success)) {
-      return '<span class="state-chip is-uploaded">已上传</span>';
-    }
+    return "local";
+  }
+
+  function uploadChipHtml(key) {
+    if (key === "exists") return '<span class="state-chip is-remote">云端已有</span>';
+    if (key === "uploaded") return '<span class="state-chip is-uploaded">已上传</span>';
     return '<span class="state-chip">仅本地</span>';
   }
 
   function buildDownloadedRow(row) {
     const tr = document.createElement("tr");
-    const uploadChip = uploadChipHtml(row);
     tr.innerHTML =
       idCell(row) +
-      '<td class="cell-name" title="' +
-      esc(row.filename) +
-      '">' +
-      uploadChip +
-      " " +
-      nameHtml(row.filename) +
+      '<td class="cell-name">' +
+      '<div class="name-line">' +
+      '<span class="chip-slot"></span>' +
+      '<span class="file-title"></span>' +
+      "</div>" +
+      '<span class="meta-inline"></span>' +
+      '<div class="path-inline trunc-wrap">' +
+      '<span class="trunc-text"></span>' +
+      '<button class="expand-btn" type="button" data-expand="1" aria-expanded="false" hidden>展开</button>' +
+      "</div>" +
       "</td>" +
-      '<td class="cell-size">' +
-      esc(row.total_size) +
-      "</td>" +
-      '<td class="cell-time">' +
-      timeText(row.completed_time) +
-      "</td>" +
-      '<td class="cell-path" title="' +
-      esc(row.save_path) +
-      '">' +
-      esc(row.save_path) +
+      '<td class="cell-size"></td>' +
+      '<td class="cell-time"></td>' +
+      '<td class="cell-path">' +
+      '<div class="trunc-wrap">' +
+      '<span class="trunc-text"></span>' +
+      '<button class="expand-btn" type="button" data-expand="1" aria-expanded="false" hidden>展开</button>' +
+      "</div>" +
       "</td>" +
       '<td class="col-actions"><div class="row-actions">' +
       actionButton("copy", "复制", ICON_COPY) +
@@ -412,32 +485,75 @@
     return tr;
   }
 
+  function syncExpandButtons(tr, show) {
+    const expanded = tr.classList.contains("is-expanded");
+    tr.querySelectorAll(".expand-btn").forEach((btn) => {
+      btn.hidden = !show;
+      btn.setAttribute("aria-expanded", expanded ? "true" : "false");
+      setText(btn, expanded ? "收起" : "展开");
+    });
+  }
+
   function updateDownloadedRow(tr, row) {
-    const deleteBtn = tr.querySelector('[data-action="delete"]');
-    if (deleteBtn) setActionLabel(deleteBtn, "删除记录 " + row.filename);
+    const name = String(row.filename || "");
+    if (tr.dataset.filename !== name) {
+      tr.dataset.filename = name;
+      const nameCell = tr.querySelector(".cell-name");
+      if (nameCell) nameCell.title = name;
+      const titleSpan = tr.querySelector(".file-title");
+      if (titleSpan) titleSpan.innerHTML = nameHtml(name);
+    }
+
+    const uKey = uploadStateKey(row);
+    if (tr.dataset.uploadKey !== uKey) {
+      tr.dataset.uploadKey = uKey;
+      const slot = tr.querySelector(".chip-slot");
+      if (slot) slot.innerHTML = uploadChipHtml(uKey);
+    }
+
+    const sizeStr = row.total_size === undefined ? "" : String(row.total_size);
+    const timeStr = timeText(row.completed_time);
+    setText(tr.querySelector(".cell-size"), sizeStr);
+    setText(tr.querySelector(".cell-time"), timeStr);
+    setText(
+      tr.querySelector(".meta-inline"),
+      [sizeStr, timeStr].filter(Boolean).join(" · ")
+    );
+
+    const pathStr = String(row.save_path || "");
+    const pathCell = tr.querySelector(".cell-path");
+    if (pathCell) pathCell.title = pathStr;
+    setText(tr.querySelector(".cell-path .trunc-text"), pathStr);
+    setText(tr.querySelector(".path-inline .trunc-text"), pathStr);
+    syncExpandButtons(tr, pathStr.length > 34);
+
     const copyBtn = tr.querySelector('[data-action="copy"]');
-    if (copyBtn) setActionLabel(copyBtn, "复制保存路径 " + row.filename);
+    if (copyBtn) setActionLabel(copyBtn, "复制保存路径 " + name);
+    const deleteBtn = tr.querySelector('[data-action="delete"]');
+    if (deleteBtn && deleteBtn.dataset.confirm !== "1") {
+      setActionLabel(deleteBtn, "删除记录 " + name);
+    }
   }
 
   function buildFailedRow(row) {
     const tr = document.createElement("tr");
     tr.innerHTML =
       idCell(row) +
-      '<td class="cell-name" title="' +
-      esc(row.filename || row.reason) +
-      '">' +
-      nameHtml(row.filename) +
-      '<span class="reason-inline">' +
-      esc(row.reason) +
-      "</span></td>" +
-      '<td class="cell-reason" title="' +
-      esc(row.reason) +
-      '">' +
-      esc(row.reason) +
+      '<td class="cell-name">' +
+      '<div class="name-line"><span class="file-title"></span></div>' +
+      '<span class="meta-inline"></span>' +
+      '<div class="reason-inline trunc-wrap">' +
+      '<span class="trunc-text"></span>' +
+      '<button class="expand-btn" type="button" data-expand="1" aria-expanded="false" hidden>展开</button>' +
+      "</div>" +
       "</td>" +
-      '<td class="cell-time">' +
-      timeText(row.time) +
+      '<td class="cell-reason">' +
+      '<div class="trunc-wrap">' +
+      '<span class="trunc-text"></span>' +
+      '<button class="expand-btn" type="button" data-expand="1" aria-expanded="false" hidden>展开</button>' +
+      "</div>" +
       "</td>" +
+      '<td class="cell-time"></td>' +
       '<td class="col-actions"><div class="row-actions">' +
       actionButton("retry", "重试", ICON_RETRY) +
       actionButton("delete", "删除", ICON_TRASH, "danger") +
@@ -446,24 +562,35 @@
   }
 
   function updateFailedRow(tr, row) {
-    const retryBtn = tr.querySelector('[data-action="retry"]');
-    if (retryBtn) setActionLabel(retryBtn, "重试下载 " + row.filename);
-    const deleteBtn = tr.querySelector('[data-action="delete"]');
-    if (deleteBtn) setActionLabel(deleteBtn, "删除失败记录 " + row.filename);
-
-    const text = row.reason || "";
-    const reasonCell = tr.querySelector(".cell-reason");
-    if (reasonCell) {
-      if (reasonCell.textContent !== text) reasonCell.textContent = text;
-      reasonCell.title = text;
+    const name = String(row.filename || "");
+    const reason = String(row.reason || "");
+    if (tr.dataset.filename !== name) {
+      tr.dataset.filename = name;
+      const nameCell = tr.querySelector(".cell-name");
+      if (nameCell) nameCell.title = name || reason;
+      const titleSpan = tr.querySelector(".file-title");
+      if (titleSpan) titleSpan.innerHTML = nameHtml(name);
     }
-    // Narrow layouts hide the dedicated column and show the reason under the
-    // file name instead.
-    const inlineReason = tr.querySelector(".reason-inline");
-    if (inlineReason) {
-      if (inlineReason.textContent !== text) inlineReason.textContent = text;
+
+    const timeStr = timeText(row.time);
+    setText(tr.querySelector(".cell-time"), timeStr);
+    setText(tr.querySelector(".meta-inline"), timeStr !== "—" ? "失败于 " + timeStr : "");
+
+    const reasonCell = tr.querySelector(".cell-reason");
+    if (reasonCell) reasonCell.title = reason;
+    setText(tr.querySelector(".cell-reason .trunc-text"), reason);
+    setText(tr.querySelector(".reason-inline .trunc-text"), reason);
+    syncExpandButtons(tr, reason.length > 42);
+
+    const retryBtn = tr.querySelector('[data-action="retry"]');
+    if (retryBtn) setActionLabel(retryBtn, "重试下载 " + name);
+    const deleteBtn = tr.querySelector('[data-action="delete"]');
+    if (deleteBtn && deleteBtn.dataset.confirm !== "1") {
+      setActionLabel(deleteBtn, "删除失败记录 " + name);
     }
   }
+
+  /* ------------------------------------------------- filtering & pagination */
 
   function tabRows(tab) {
     if (tab === "downloading") return state.downloading;
@@ -471,9 +598,36 @@
     return state.failed;
   }
 
-  /** Slice the full list into the current page for ``tab``. */
+  function hasActiveFilters(tab) {
+    if (state.query.trim()) return true;
+    if (tab === "downloaded" && state.uploadFilter !== "all") return true;
+    return false;
+  }
+
+  function filteredRows(tab) {
+    let rows = tabRows(tab);
+    if (tab === "downloaded" && state.uploadFilter !== "all") {
+      rows = rows.filter((row) => uploadStateKey(row) === state.uploadFilter);
+    }
+    const q = state.query.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((row) => {
+      const hay = [
+        row.id,
+        row.chat,
+        row.filename,
+        row.save_path,
+        row.reason,
+      ]
+        .map((v) => (v === null || v === undefined ? "" : String(v).toLowerCase()))
+        .join(" ");
+      return hay.indexOf(q) !== -1;
+    });
+  }
+
+  /** Slice the filtered list into the current page for ``tab``. */
   function pageInfo(tab) {
-    const rows = tabRows(tab);
+    const rows = filteredRows(tab);
     const total = rows.length;
     const size = state.pageSize;
     if (!size) {
@@ -496,11 +650,7 @@
 
   function renderPager(tab, info) {
     if (!el.pager) return;
-    // One shared pager: only the visible tab may update it (background loads
-    // for other tabs used to overwrite it mid-switch).
     if (tab !== state.tab) return;
-    // Keep the footer visible whenever there is data: the page-size selector
-    // lives there, so hiding it on a single page would trap the choice.
     if (!info.total) {
       el.pager.hidden = true;
       return;
@@ -511,7 +661,7 @@
       state.pageSize
         ? "第 " +
             (info.start + 1) +
-            "-" +
+            "–" +
             info.end +
             " 条 / 共 " +
             info.total +
@@ -523,8 +673,53 @@
         : "共 " + info.total + " 条"
     );
     if (el.pagePrev) el.pagePrev.disabled = !state.pageSize || info.page <= 1;
-    if (el.pageNext)
+    if (el.pageNext) {
       el.pageNext.disabled = !state.pageSize || info.page >= info.pages;
+    }
+  }
+
+  function syncToolbar() {
+    if (el.taskSearchClear) {
+      el.taskSearchClear.hidden = !state.query.length;
+    }
+    if (el.uploadFilters) {
+      el.uploadFilters.hidden = state.tab !== "downloaded";
+      $$("[data-upload-filter]", el.uploadFilters).forEach((btn) => {
+        const on = btn.dataset.uploadFilter === state.uploadFilter;
+        btn.classList.toggle("is-active", on);
+        btn.setAttribute("aria-pressed", on ? "true" : "false");
+      });
+    }
+    if (el.failedBulkActions) {
+      el.failedBulkActions.hidden =
+        state.tab !== "failed" || state.failed.length === 0;
+    }
+  }
+
+  function renderEmpty() {
+    const messages = {
+      downloading: "队列空闲，暂无正在下载的任务",
+      downloaded: "本次运行还没有完成的下载",
+      failed: "没有失败任务",
+    };
+    const rawRows = tabRows(state.tab);
+    const visibleRows = filteredRows(state.tab);
+    const isFiltered = hasActiveFilters(state.tab);
+
+    if (el.empty) el.empty.hidden = visibleRows.length > 0;
+    if (visibleRows.length === 0) {
+      if (rawRows.length > 0 && isFiltered) {
+        const q = state.query.trim();
+        setText(
+          el.emptyText,
+          q ? "没有与「" + q + "」匹配的任务" : "当前筛选条件下没有任务"
+        );
+        if (el.emptyAction) el.emptyAction.hidden = false;
+      } else {
+        setText(el.emptyText, messages[state.tab] || "");
+        if (el.emptyAction) el.emptyAction.hidden = true;
+      }
+    }
   }
 
   function renderDownloading() {
@@ -536,9 +731,12 @@
       buildDownloadingRow,
       updateDownloadingRow
     );
-    setText(el.statActive, state.downloading.length);
-    setText(el.badgeDownloading, state.downloading.length);
-    if (el.badgeDownloading) el.badgeDownloading.hidden = state.downloading.length === 0;
+    setText(el.statActive, String(state.downloading.length));
+    setText(el.badgeDownloading, String(state.downloading.length));
+    if (el.badgeDownloading) {
+      el.badgeDownloading.hidden = state.downloading.length === 0;
+    }
+    syncToolbar();
     renderPager("downloading", info);
     renderEmpty();
   }
@@ -552,9 +750,10 @@
       buildDownloadedRow,
       updateDownloadedRow
     );
-    setText(el.statDone, state.downloaded.length);
-    setText(el.badgeDone, state.downloaded.length);
+    setText(el.statDone, String(state.downloaded.length));
+    setText(el.badgeDone, String(state.downloaded.length));
     if (el.badgeDone) el.badgeDone.hidden = state.downloaded.length === 0;
+    syncToolbar();
     renderPager("downloaded", info);
     renderEmpty();
   }
@@ -568,19 +767,9 @@
       buildFailedRow,
       updateFailedRow
     );
+    syncToolbar();
     renderPager("failed", info);
     renderEmpty();
-  }
-
-  function renderEmpty() {
-    const messages = {
-      downloading: "队列空闲，暂无正在下载的任务",
-      downloaded: "本次运行还没有完成的下载",
-      failed: "没有失败任务",
-    };
-    const rows = tabRows(state.tab);
-    if (el.empty) el.empty.hidden = rows.length > 0;
-    setText(el.emptyText, messages[state.tab] || "");
   }
 
   function renderStatus() {
@@ -590,12 +779,15 @@
       el.statState.classList.toggle("is-running", running);
       el.statState.classList.toggle("is-paused", !running);
     }
-    if (el.liveDot) el.liveDot.classList.toggle("is-paused", !running);
+    if (el.liveDot) {
+      el.liveDot.classList.toggle("is-paused", !running || state.pollingPaused);
+    }
 
     if (el.pausedBanner) el.pausedBanner.hidden = running;
 
     if (el.pauseBtn) {
       el.pauseBtn.dataset.value = state.action;
+      el.pauseBtn.classList.add("has-icon");
       el.pauseBtn.innerHTML =
         (running ? ICON_PAUSE : ICON_PLAY) +
         '<span class="pause-label">' +
@@ -609,57 +801,93 @@
   }
 
   function renderSpeed(speed) {
-    setText(el.speed, speed || "--");
-    // Narrow screens hide the header pill; the same number is repeated next to
-    // the "更新于" clock so the mobile layout still shows the total speed.
-    setText(el.metaSpeed, speed ? "↓ " + speed : "↓ --");
+    const clean = speed && speed !== "--" ? speed : "—";
+    setText(el.speed, clean);
+    setText(el.metaSpeed, "↓ " + clean);
   }
 
   /* --------------------------------------------------------------- loading */
 
+  const inFlight = {
+    status: false,
+    downloading: false,
+    downloaded: false,
+    failed: false,
+  };
+
   async function loadDownloading() {
-    const rows = await api("/get_download_list?already_down=false");
-    state.downloading = Array.isArray(rows) ? rows : [];
-    renderDownloading();
+    if (inFlight.downloading) return;
+    inFlight.downloading = true;
+    try {
+      const rows = await api("/get_download_list?already_down=false");
+      state.downloading = Array.isArray(rows) ? rows : [];
+      renderDownloading();
+    } finally {
+      inFlight.downloading = false;
+    }
   }
 
   async function loadDownloaded() {
-    const rows = await api("/get_download_list?already_down=true");
-    state.downloaded = Array.isArray(rows) ? rows : [];
-    renderDownloaded();
+    if (inFlight.downloaded) return;
+    inFlight.downloaded = true;
+    try {
+      const rows = await api("/get_download_list?already_down=true");
+      state.downloaded = Array.isArray(rows) ? rows : [];
+      renderDownloaded();
+    } finally {
+      inFlight.downloaded = false;
+    }
   }
 
   async function loadFailed() {
-    const rows = await api("/get_failed_list");
-    state.failed = Array.isArray(rows) ? rows : [];
-    setText(el.statFailed, state.failed.length);
-    setText(el.badgeFailed, state.failed.length);
-    if (el.badgeFailed) el.badgeFailed.hidden = state.failed.length === 0;
-    if (state.tab === "failed") renderFailed();
+    if (inFlight.failed) return;
+    inFlight.failed = true;
+    try {
+      const rows = await api("/get_failed_list");
+      state.failed = Array.isArray(rows) ? rows : [];
+      setText(el.statFailed, String(state.failed.length));
+      if (el.statFailed) {
+        el.statFailed.classList.toggle("is-danger", state.failed.length > 0);
+      }
+      setText(el.badgeFailed, String(state.failed.length));
+      if (el.badgeFailed) el.badgeFailed.hidden = state.failed.length === 0;
+      if (state.tab === "failed") renderFailed();
+      else syncToolbar();
+    } finally {
+      inFlight.failed = false;
+    }
   }
 
   async function loadStatus() {
-    const res = await api("/get_download_status");
-    renderSpeed(res && res.download_speed ? res.download_speed : "");
-    if (res && typeof res.completed === "number") {
-      setText(el.statDone, res.completed);
-      setText(el.badgeDone, res.completed);
-      if (el.badgeDone) el.badgeDone.hidden = res.completed === 0;
+    if (inFlight.status) return;
+    inFlight.status = true;
+    try {
+      const res = await api("/get_download_status");
+      renderSpeed(res && res.download_speed ? res.download_speed : "");
+      if (res && typeof res.completed === "number") {
+        setText(el.statDone, String(res.completed));
+        setText(el.badgeDone, String(res.completed));
+        if (el.badgeDone) el.badgeDone.hidden = res.completed === 0;
+      }
+      const running = !(res && res.state === "paused");
+      const nextAction = running ? "pause" : "continue";
+      if (nextAction !== state.action) {
+        state.action = nextAction;
+        renderStatus();
+        if (state.tab === "downloading") renderDownloading();
+      }
+      if (!state.pollingPaused) {
+        setText(el.updated, "更新于 " + clockText());
+      }
+    } finally {
+      inFlight.status = false;
     }
-    const running = !(res && res.state === "paused");
-    const nextAction = running ? "pause" : "continue";
-    if (nextAction !== state.action) {
-      state.action = nextAction;
-      renderStatus();
-      if (state.tab === "downloading") renderDownloading();
-    }
-    setText(el.updated, "更新于 " + clockText());
   }
 
   function stepPage(delta) {
     if (!state.pageSize) return;
     const tab = state.tab;
-    const total = tabRows(tab).length;
+    const total = filteredRows(tab).length;
     const pages = Math.max(1, Math.ceil(total / state.pageSize));
     const next = Math.min(Math.max(1, (state.pages[tab] || 1) + delta), pages);
     if (next === state.pages[tab]) return;
@@ -704,7 +932,7 @@
   /* ------------------------------------------------------------------ tabs */
 
   function paintTab() {
-    $$(".tab").forEach((btn) => {
+    $$(".tab[data-tab]").forEach((btn) => {
       const on = btn.dataset.tab === state.tab;
       btn.classList.toggle("is-active", on);
       btn.setAttribute("aria-selected", on ? "true" : "false");
@@ -720,7 +948,6 @@
     if (state.tab === "downloading") renderDownloading();
     if (state.tab === "downloaded") renderDownloaded();
     if (state.tab === "failed") renderFailed();
-    renderEmpty();
   }
 
   function setTab(tab, focus) {
@@ -730,7 +957,9 @@
     renderCachedTab();
 
     lastTabFetch = 0;
-    refreshActive().catch(notifyError);
+    if (!state.pollingPaused) {
+      refreshActive().catch(notifyError);
+    }
 
     try {
       history.replaceState(null, "", "#" + tab);
@@ -739,7 +968,7 @@
     }
 
     if (focus) {
-      const target = $$(".tab").find((btn) => btn.dataset.tab === tab);
+      const target = $$(".tab[data-tab]").find((btn) => btn.dataset.tab === tab);
       if (target) target.focus();
     }
   }
@@ -804,7 +1033,8 @@
   /* --------------------------------------------------------------- actions */
 
   async function togglePause() {
-    el.pauseBtn.disabled = true;
+    if (isBusy(el.pauseBtn)) return;
+    setBusy(el.pauseBtn, true);
     try {
       const next = await api(
         "/set_download_state?state=" + encodeURIComponent(state.action),
@@ -824,7 +1054,7 @@
     } catch (err) {
       toast("操作失败：" + err.message, "error");
     } finally {
-      el.pauseBtn.disabled = false;
+      setBusy(el.pauseBtn, false);
     }
   }
 
@@ -858,7 +1088,7 @@
   async function retryRow(row) {
     const res = await api("/retry_failed?" + taskParams(row), { method: "POST" });
     if (!res || res.code !== "1") throw new Error((res && res.msg) || "未知错误");
-    toast("已重新加入下载队列", "success");
+    toast(res.msg || "已重新加入下载队列", "success");
     lastTabFetch = 0;
     await Promise.all([loadFailed(), loadDownloading().catch(() => {})]);
   }
@@ -887,9 +1117,8 @@
   /**
    * Two-step confirm: the first click arms the button for a few seconds.
    * Destructive actions get a distinct treatment instead of a silent delete.
-   * The armed state swaps icon and label, so it is not carried by colour alone.
    */
-  function confirmOrRun(button) {
+  function confirmOrRun(button, confirmText, confirmAria) {
     if (button.dataset.confirm === "1") {
       clearTimeout(Number(button.dataset.timer || 0));
       button.dataset.confirm = "0";
@@ -899,10 +1128,10 @@
 
     button.dataset.confirm = "1";
     button.dataset.previousHtml = button.innerHTML;
-    button.innerHTML = ICON_CHECK + "<span>确认删除</span>";
+    button.innerHTML = ICON_CHECK + "<span>" + (confirmText || "确认删除") + "</span>";
     const previousLabel = button.getAttribute("aria-label") || "";
     button.dataset.previousAria = previousLabel;
-    setActionLabel(button, "确认删除？再点一次执行");
+    setActionLabel(button, confirmAria || "确认删除？再点一次执行");
 
     const timer = setTimeout(() => {
       button.dataset.confirm = "0";
@@ -912,6 +1141,7 @@
   }
 
   function restoreLabel(button) {
+    if (!button) return;
     if (button.dataset.previousHtml) {
       button.innerHTML = button.dataset.previousHtml;
       delete button.dataset.previousHtml;
@@ -923,14 +1153,15 @@
   }
 
   async function handleRowAction(button, row) {
+    if (isBusy(button)) return;
     const action = button.dataset.action;
 
     if (action === "delete" && button.dataset.confirm !== "1") {
-      confirmOrRun(button);
+      confirmOrRun(button, "确认删除", "确认删除？再点一次执行");
       return;
     }
 
-    button.disabled = true;
+    setBusy(button, true);
     try {
       if (action === "delete") await deleteRow(row);
       else if (action === "pause") await setTaskPaused(row, true);
@@ -940,7 +1171,7 @@
     } catch (err) {
       toast("操作失败：" + err.message, "error");
     } finally {
-      button.disabled = false;
+      setBusy(button, false);
       if (action === "delete") {
         clearTimeout(Number(button.dataset.timer || 0));
         button.dataset.confirm = "0";
@@ -949,8 +1180,93 @@
     }
   }
 
+  async function retryAllFailed() {
+    if (isBusy(el.retryAllBtn) || !state.failed.length) return;
+    const chats = [];
+    state.failed.forEach((row) => {
+      const key = String(row.chat);
+      if (chats.indexOf(key) === -1) chats.push(key);
+    });
+
+    setBusy(el.retryAllBtn, true);
+    const originalText = el.retryAllBtn.textContent;
+    setText(el.retryAllBtn, "提交中…");
+    try {
+      let totalRetried = 0;
+      let anyPending = false;
+      const errors = [];
+      for (const chatId of chats) {
+        try {
+          const res = await api(
+            "/retry_failed?chat_id=" + encodeURIComponent(chatId),
+            { method: "POST" }
+          );
+          if (res && res.code === "1") {
+            if (res.pending) anyPending = true;
+            totalRetried += Number(res.retried || 0);
+          } else {
+            errors.push((res && res.msg) || chatId + " 重试失败");
+          }
+        } catch (err) {
+          errors.push(chatId + ": " + err.message);
+        }
+      }
+
+      if (totalRetried > 0 || anyPending) {
+        const msg = anyPending
+          ? "已提交批量重试，稍后刷新查看结果"
+          : "已重新加入 " + totalRetried + " 个失败任务";
+        toast(msg, "success");
+      }
+      if (errors.length) {
+        toast("部分重试失败：" + errors[0], "error");
+      }
+      lastTabFetch = 0;
+      await Promise.all([loadFailed(), loadDownloading().catch(() => {})]);
+    } finally {
+      setBusy(el.retryAllBtn, false);
+      setText(el.retryAllBtn, originalText);
+    }
+  }
+
+  async function clearAllFailed() {
+    if (isBusy(el.clearFailedBtn) || !state.failed.length) return;
+    if (el.clearFailedBtn.dataset.confirm !== "1") {
+      confirmOrRun(el.clearFailedBtn, "确认清空", "确认清空全部失败记录？再点一次执行");
+      return;
+    }
+
+    clearTimeout(Number(el.clearFailedBtn.dataset.timer || 0));
+    el.clearFailedBtn.dataset.confirm = "0";
+    restoreLabel(el.clearFailedBtn);
+
+    setBusy(el.clearFailedBtn, true);
+    try {
+      const res = await api("/clear_failed", { method: "POST" });
+      if (!res || res.code !== "1") throw new Error((res && res.msg) || "清空失败");
+      const count = Number(res.cleared || 0);
+      toast(count ? "已清空 " + count + " 条失败记录" : "已清空失败记录", "success");
+      lastTabFetch = 0;
+      await loadFailed();
+    } catch (err) {
+      toast("清空失败：" + err.message, "error");
+    } finally {
+      setBusy(el.clearFailedBtn, false);
+    }
+  }
+
   function bindTable(table, source) {
     table.addEventListener("click", (event) => {
+      const expandBtn = event.target.closest("[data-expand]");
+      if (expandBtn) {
+        const tr = expandBtn.closest("tr");
+        if (tr) {
+          tr.classList.toggle("is-expanded");
+          syncExpandButtons(tr, true);
+        }
+        return;
+      }
+
       const button = event.target.closest(".btn-mini");
       if (!button) return;
       const tr = button.closest("tr");
@@ -964,6 +1280,12 @@
 
   let configSaving = false;
   let configSchema = null;
+  let configGroupFilter = "all";
+  let configQuery = "";
+  let formDirty = false;
+  let yamlDirty = false;
+  let discardArmed = false;
+  let discardTimer = 0;
 
   function cfgId(prefix, name) {
     return prefix + "-" + name.replace(/\./g, "-");
@@ -971,6 +1293,22 @@
 
   function setConfigError(message) {
     setText(el.configError, message || "");
+  }
+
+  function resetDiscardPrompt() {
+    discardArmed = false;
+    clearTimeout(discardTimer);
+    setText(el.configCancel, "取消");
+    setConfigError("");
+  }
+
+  function syncDirtyNotes() {
+    if (el.configFormSyncNote) {
+      el.configFormSyncNote.hidden = !(state.configTab === "form" && yamlDirty);
+    }
+    if (el.configYamlSyncNote) {
+      el.configYamlSyncNote.hidden = !(state.configTab === "yaml" && formDirty);
+    }
   }
 
   function clearFieldErrors() {
@@ -987,6 +1325,14 @@
   }
 
   function showFieldErrors(errors) {
+    // Clear filters first so failing fields are always visible and focusable.
+    if (configQuery || configGroupFilter !== "all") {
+      configQuery = "";
+      configGroupFilter = "all";
+      if (el.configSearch) el.configSearch.value = "";
+      applyConfigFilter();
+    }
+
     let firstControl = null;
     Object.keys(errors || {}).forEach((name) => {
       const node = el.configForm.querySelector(
@@ -1025,6 +1371,10 @@
     const wrap = document.createElement("div");
     wrap.className = "cfg-field" + (field.span === 2 ? " cfg-span-2" : "");
     wrap.dataset.field = name;
+    wrap.dataset.search = [field.label, field.name, field.hint, field.group]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
 
     const hint = hintText(field);
     const hintHtml = hint
@@ -1148,6 +1498,34 @@
         : "";
     const autocomplete = field.type === "password" ? ' autocomplete="new-password"' : "";
 
+    const inputMarkup = isTextarea
+      ? '<textarea id="' +
+        id +
+        '" name="' +
+        esc(name) +
+        '" class="cfg-input cfg-textarea" rows="' +
+        (field.type === "chat_list" ? 4 : 3) +
+        '" placeholder="' +
+        esc(placeholder) +
+        '" spellcheck="false"' +
+        describedBy +
+        requiredAttr +
+        "></textarea>"
+      : '<input id="' +
+        id +
+        '" name="' +
+        esc(name) +
+        '" class="cfg-input" type="' +
+        inputType +
+        '" placeholder="' +
+        esc(placeholder) +
+        '"' +
+        bounds +
+        autocomplete +
+        describedBy +
+        requiredAttr +
+        ">";
+
     wrap.innerHTML =
       '<label class="cfg-label" for="' +
       id +
@@ -1155,39 +1533,89 @@
       esc(field.label) +
       requiredMark +
       "</label>" +
-      (isTextarea
-        ? '<textarea id="' +
-          id +
-          '" name="' +
-          esc(name) +
-          '" class="cfg-input cfg-textarea" rows="' +
-          (field.type === "chat_list" ? 4 : 3) +
-          '" placeholder="' +
-          esc(placeholder) +
-          '" spellcheck="false"' +
-          describedBy +
-          requiredAttr +
-          "></textarea>"
-        : '<input id="' +
-          id +
-          '" name="' +
-          esc(name) +
-          '" class="cfg-input" type="' +
-          inputType +
-          '" placeholder="' +
-          esc(placeholder) +
-          '"' +
-          bounds +
-          autocomplete +
-          describedBy +
-          requiredAttr +
-          ">") +
+      (field.type === "password"
+        ? '<div class="cfg-input-wrap">' +
+          inputMarkup +
+          '<button class="pw-toggle" type="button" aria-label="显示' +
+          esc(field.label) +
+          '" aria-pressed="false" title="显示' +
+          esc(field.label) +
+          '">' +
+          ICON_EYE +
+          ICON_EYE_OFF +
+          "</button></div>"
+        : inputMarkup) +
       hintHtml +
       errorHtml;
 
     const control = wrap.querySelector(".cfg-input");
     control.value = value === undefined || value === null ? "" : String(value);
+
+    const pwBtn = wrap.querySelector(".pw-toggle");
+    if (pwBtn && control) {
+      pwBtn.addEventListener("click", () => {
+        const visible = control.type === "text";
+        control.type = visible ? "password" : "text";
+        pwBtn.setAttribute("aria-pressed", visible ? "false" : "true");
+        const nextTitle = (visible ? "显示" : "隐藏") + field.label;
+        pwBtn.setAttribute("aria-label", nextTitle);
+        pwBtn.title = nextTitle;
+        control.focus();
+      });
+    }
+
     return wrap;
+  }
+
+  function renderConfigGroupNav(groups) {
+    if (!el.configGroupNav) return;
+    el.configGroupNav.innerHTML = "";
+    const allItems = ["all"].concat(groups || []);
+    allItems.forEach((group) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "filter-pill" + (configGroupFilter === group ? " is-active" : "");
+      btn.dataset.cfgGroup = group;
+      btn.textContent = group === "all" ? "全部" : group;
+      btn.setAttribute("aria-pressed", configGroupFilter === group ? "true" : "false");
+      btn.addEventListener("click", () => {
+        configGroupFilter = group;
+        applyConfigFilter();
+      });
+      el.configGroupNav.appendChild(btn);
+    });
+  }
+
+  function applyConfigFilter() {
+    const q = configQuery.trim().toLowerCase();
+    let visibleCount = 0;
+
+    if (el.configGroupNav) {
+      $$("[data-cfg-group]", el.configGroupNav).forEach((btn) => {
+        const on = btn.dataset.cfgGroup === configGroupFilter;
+        btn.classList.toggle("is-active", on);
+        btn.setAttribute("aria-pressed", on ? "true" : "false");
+      });
+    }
+
+    $$(".cfg-group", el.configForm).forEach((section) => {
+      const groupName = section.dataset.group || "";
+      const groupMatch = configGroupFilter === "all" || groupName === configGroupFilter;
+      let sectionHasVisible = false;
+
+      $$(".cfg-field", section).forEach((fieldEl) => {
+        const textMatch = !q || (fieldEl.dataset.search || "").indexOf(q) !== -1;
+        const show = groupMatch && textMatch;
+        fieldEl.hidden = !show;
+        if (show) {
+          sectionHasVisible = true;
+          visibleCount += 1;
+        }
+      });
+      section.hidden = !sectionHasVisible;
+    });
+
+    if (el.configEmpty) el.configEmpty.hidden = visibleCount > 0;
   }
 
   function renderConfigForm(payload) {
@@ -1196,12 +1624,15 @@
     const groups = (payload && payload.groups) || [];
     el.configForm.innerHTML = "";
 
+    const activeGroups = [];
     groups.forEach((group) => {
       const groupFields = fields.filter((field) => field.group === group);
       if (!groupFields.length) return;
+      activeGroups.push(group);
 
       const section = document.createElement("section");
       section.className = "cfg-group";
+      section.dataset.group = group;
       const title = document.createElement("h3");
       title.className = "cfg-group-title";
       title.textContent = group;
@@ -1215,6 +1646,9 @@
       section.appendChild(grid);
       el.configForm.appendChild(section);
     });
+
+    renderConfigGroupNav(activeGroups);
+    applyConfigFilter();
   }
 
   function labelForConfigKey(key) {
@@ -1234,6 +1668,7 @@
     });
     el.formPane.hidden = state.configTab !== "form";
     el.yamlPane.hidden = state.configTab !== "yaml";
+    syncDirtyNotes();
   }
 
   function switchConfigTab(tab, focus) {
@@ -1251,6 +1686,15 @@
   async function openConfig() {
     setConfigError("");
     clearFieldErrors();
+    formDirty = false;
+    yamlDirty = false;
+    resetDiscardPrompt();
+    configGroupFilter = "all";
+    configQuery = "";
+    if (el.configSearch) el.configSearch.value = "";
+    if (el.configToolbar) el.configToolbar.hidden = true;
+    if (el.configEmpty) el.configEmpty.hidden = true;
+
     el.configSave.disabled = true;
     el.configLoading.hidden = false;
     setText(el.configLoading, "正在读取 config.yaml…");
@@ -1273,6 +1717,7 @@
       el.configText.scrollTop = 0;
       renderConfigForm(res);
       el.configLoading.hidden = true;
+      if (el.configToolbar) el.configToolbar.hidden = false;
       el.configSave.disabled = false;
       const first = el.configForm.querySelector(".cfg-input, input, select, textarea");
       if (first) first.focus({ preventScroll: true });
@@ -1282,7 +1727,22 @@
     }
   }
 
-  function closeConfig() {
+  function requestCloseConfig() {
+    if ((formDirty || yamlDirty) && !discardArmed) {
+      discardArmed = true;
+      setText(el.configCancel, "确认放弃");
+      setConfigError("有未保存修改，再点一次「确认放弃」或按 Esc 关闭");
+      clearTimeout(discardTimer);
+      discardTimer = setTimeout(resetDiscardPrompt, 4500);
+      return;
+    }
+    forceCloseConfig();
+  }
+
+  function forceCloseConfig() {
+    formDirty = false;
+    yamlDirty = false;
+    resetDiscardPrompt();
     if (typeof el.dialog.close === "function") el.dialog.close();
     else el.dialog.removeAttribute("open");
     if (el.configBtn) el.configBtn.focus();
@@ -1293,7 +1753,11 @@
     const restart = (res.restart_required || []).map(labelForConfigKey);
     if (res.text !== undefined) el.configText.value = res.text;
     if (res.values) {
-      renderConfigForm({ fields: configSchema.fields, groups: configSchema.groups, values: res.values });
+      renderConfigForm({
+        fields: configSchema.fields,
+        groups: configSchema.groups,
+        values: res.values,
+      });
     }
     toast(
       "配置已保存。" +
@@ -1301,18 +1765,18 @@
         (restart.length ? "需要重启：" + restart.join("、") : ""),
       "success"
     );
-    closeConfig();
+    forceCloseConfig();
     lastTabFetch = 0;
     refreshActive().catch(() => {});
   }
 
   async function saveConfig() {
-    if (configSaving) return;
+    if (configSaving || isBusy(el.configSave)) return;
     configSaving = true;
     setConfigError("");
     clearFieldErrors();
-    el.configSave.disabled = true;
-    el.configSave.textContent = "保存中…";
+    setBusy(el.configSave, true);
+    setText(el.configSave, "保存中…");
 
     try {
       let res;
@@ -1340,8 +1804,8 @@
       setConfigError(err.message);
     } finally {
       configSaving = false;
-      el.configSave.disabled = false;
-      el.configSave.textContent = "保存";
+      setBusy(el.configSave, false);
+      setText(el.configSave, "保存");
     }
   }
 
@@ -1363,19 +1827,23 @@
 
   function notifyError(err) {
     errorCount += 1;
+    if (el.liveDot) el.liveDot.classList.add("is-error");
     if (errorCount === 1 || errorCount % 15 === 0) {
       setText(el.updated, "连接异常：" + err.message);
     }
   }
 
+  function clearPollError() {
+    errorCount = 0;
+    if (el.liveDot) el.liveDot.classList.remove("is-error");
+  }
+
   function tick() {
-    if (document.hidden) return;
+    if (document.hidden || state.pollingPaused) return;
     const now = Date.now();
 
     loadStatus()
-      .then(() => {
-        errorCount = 0;
-      })
+      .then(clearPollError)
       .catch(notifyError);
 
     const interval = TAB_REFRESH[state.tab] || 1000;
@@ -1398,10 +1866,35 @@
     }
   }
 
+  function togglePolling() {
+    state.pollingPaused = !state.pollingPaused;
+    if (el.pollToggle) {
+      el.pollToggle.setAttribute("aria-pressed", state.pollingPaused ? "true" : "false");
+      const label = state.pollingPaused ? "恢复自动刷新" : "暂停自动刷新";
+      el.pollToggle.setAttribute("aria-label", label);
+      el.pollToggle.title = label;
+    }
+    renderStatus();
+    if (state.pollingPaused) {
+      setText(el.updated, "已暂停自动刷新");
+    } else {
+      lastTabFetch = 0;
+      tick();
+    }
+  }
+
   /* ------------------------------------------------------------------ init */
 
+  function clearFilters() {
+    state.query = "";
+    state.uploadFilter = "all";
+    state.pages[state.tab] = 1;
+    if (el.taskSearch) el.taskSearch.value = "";
+    renderCachedTab();
+  }
+
   function bind() {
-    const tabs = $$(".tab");
+    const tabs = $$(".tab[data-tab]");
     tabs.forEach((btn) => {
       btn.addEventListener("click", () => setTab(btn.dataset.tab, false));
     });
@@ -1424,6 +1917,51 @@
       });
     }
 
+    window.addEventListener("hashchange", () => {
+      const target = (location.hash || "").replace("#", "");
+      if (el.tables[target] && target !== state.tab) {
+        setTab(target, false);
+      }
+    });
+
+    if (el.taskSearch) {
+      el.taskSearch.addEventListener("input", () => {
+        state.query = el.taskSearch.value || "";
+        state.pages[state.tab] = 1;
+        renderCachedTab();
+      });
+    }
+
+    if (el.taskSearchClear) {
+      el.taskSearchClear.addEventListener("click", () => {
+        state.query = "";
+        state.pages[state.tab] = 1;
+        if (el.taskSearch) {
+          el.taskSearch.value = "";
+          el.taskSearch.focus();
+        }
+        renderCachedTab();
+      });
+    }
+
+    if (el.uploadFilters) {
+      el.uploadFilters.addEventListener("click", (event) => {
+        const btn = event.target.closest("[data-upload-filter]");
+        if (!btn) return;
+        state.uploadFilter = btn.dataset.uploadFilter || "all";
+        state.pages.downloaded = 1;
+        renderDownloaded();
+      });
+    }
+
+    if (el.emptyAction) {
+      el.emptyAction.addEventListener("click", clearFilters);
+    }
+
+    if (el.retryAllBtn) el.retryAllBtn.addEventListener("click", retryAllFailed);
+    if (el.clearFailedBtn) el.clearFailedBtn.addEventListener("click", clearAllFailed);
+    if (el.pollToggle) el.pollToggle.addEventListener("click", togglePolling);
+
     el.pauseBtn.addEventListener("click", togglePause);
 
     bindTable(el.tables.downloading, () => state.downloading);
@@ -1431,9 +1969,32 @@
     bindTable(el.tables.failed, () => state.failed);
 
     if (el.configBtn) el.configBtn.addEventListener("click", openConfig);
-    if (el.configClose) el.configClose.addEventListener("click", closeConfig);
-    if (el.configCancel) el.configCancel.addEventListener("click", closeConfig);
+    if (el.configClose) el.configClose.addEventListener("click", requestCloseConfig);
+    if (el.configCancel) el.configCancel.addEventListener("click", requestCloseConfig);
     if (el.configSave) el.configSave.addEventListener("click", saveConfig);
+
+    if (el.configSearch) {
+      el.configSearch.addEventListener("input", () => {
+        configQuery = el.configSearch.value || "";
+        applyConfigFilter();
+      });
+    }
+
+    if (el.configForm) {
+      const markFormDirty = () => {
+        formDirty = true;
+        if (discardArmed) resetDiscardPrompt();
+      };
+      el.configForm.addEventListener("input", markFormDirty);
+      el.configForm.addEventListener("change", markFormDirty);
+    }
+
+    if (el.configText) {
+      el.configText.addEventListener("input", () => {
+        yamlDirty = true;
+        if (discardArmed) resetDiscardPrompt();
+      });
+    }
 
     $$("[data-cfg-tab]").forEach((btn) => {
       btn.addEventListener("click", () => switchConfigTab(btn.dataset.cfgTab, false));
@@ -1462,7 +2023,12 @@
     if (el.dialog) {
       el.dialog.addEventListener("cancel", (event) => {
         event.preventDefault();
-        closeConfig();
+        requestCloseConfig();
+      });
+      el.dialog.addEventListener("click", (event) => {
+        if (event.target === el.dialog) {
+          requestCloseConfig();
+        }
       });
       el.dialog.addEventListener("close", () => {
         if (el.configBtn) el.configBtn.focus();
@@ -1476,7 +2042,7 @@
     }
 
     document.addEventListener("visibilitychange", () => {
-      if (!document.hidden) {
+      if (!document.hidden && !state.pollingPaused) {
         lastTabFetch = 0;
         tick();
       }
@@ -1488,14 +2054,15 @@
     bind();
     initPager();
     renderStatus();
-    renderSpeed("--");
+    renderSpeed("—");
 
     const initial = (location.hash || "").replace("#", "");
     if (el.tables[initial]) state.tab = initial;
     paintTab();
+    syncToolbar();
     renderEmpty();
 
-    loadStatus().catch(notifyError);
+    loadStatus().then(clearPollError).catch(notifyError);
     loadFailed().catch(() => {});
     loadDownloaded().catch(() => {});
     if (state.tab !== "downloading") loadDownloading().catch(() => {});

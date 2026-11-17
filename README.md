@@ -3,7 +3,7 @@
 > 基于 [tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader) 的修复分支。
 > 保留原项目的全部功能（Telegram bot 指令、Web UI、rclone 上传、受保护内容下载），并持续修复实际使用中的问题。
 
-当前版本：**v2.11.3**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
+当前版本：**v2.12.0**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
 
 [![Docker](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml)
 [![Release](https://img.shields.io/github/v/release/QCEnjoyLL/tg-dl?label=release&color=blue)](https://github.com/QCEnjoyLL/tg-dl/releases/latest)
@@ -277,9 +277,9 @@ systemctl stop tg-dl         # 服务里配置 KillSignal=SIGINT
 - 推送到 `master` / `main`、打 `v*` tag、或在 Actions 页面手动触发时构建
 - 自动推送到 **GHCR**：`ghcr.io/qcenjoyll/tg-dl`
 - 版本号只有一处来源：`utils/__init__.py` 的 `__version__`。镜像标签、git tag、GitHub Release 全部由它生成，不会互相对不上
-- 标签规则：`2.11.3`（当前版本）、`2.11`（minor 系列）、`latest`（默认分支）、分支名、`sha-xxxxxxx`
+- 标签规则：`2.12.0`（当前版本）、`2.12`（minor 系列）、`latest`（默认分支）、分支名、`sha-xxxxxxx`
 - 镜像内注入 `org.opencontainers.image.version` / `.revision`，`docker inspect` 一眼能看到版本
-- 镜像推送成功后自动创建 **GitHub Release**：标题 `v2.11.3`，正文取自 `CHANGELOG.md` 同名章节 + 拉取命令
+- 镜像推送成功后自动创建 **GitHub Release**：标题 `v2.12.0`，正文取自 `CHANGELOG.md` 同名章节 + 拉取命令
 - Pull Request 只构建不推送，也不会创建 Release
 - 构建前先跑 `python -m compileall` 做语法检查
 
@@ -472,6 +472,22 @@ v2.8.1 起上传前会先 `rclone lsjson --stat` 检查目标：同名且大小�
 > Docker / compose 用户不受影响（配置本来就是挂载进容器的，从未进过镜像）。
 
 逐条历史记录见 [CHANGELOG.md](CHANGELOG.md)；当前版本见顶部的 Release 徽章。
+
+<details>
+<summary><b>v2.12.0</b> — Magpie 风格重绘 Web UI，新增搜索筛选与批量失败操作</summary>
+
+- 参照 `yetone/magpie` 重绘 Web UI：单色线性图标、顶栏分段视图切换器、圆角分组卡片与行内弹出式药丸按钮，浅色/深色对比度全部符合 WCAG AA
+- 新增实时搜索、已完成上传状态筛选、失败列表「全部重试 / 清空失败」、自动刷新开关与密码显隐
+- 修复移动端隐藏进度条、单条暂停按钮状态不同步、长错误信息不可展开等问题，同步更新预览截图
+
+</details>
+
+<details>
+<summary><b>v2.11.4</b> — bot 帮助示例改为逐条换行详解，点明群组与范围</summary>
+
+- 命令示例改成命令一行 + 下一行 `#` 说明（点明来源/目标群组与消息范围），随 bot 语言翻译
+
+</details>
 
 <details>
 <summary><b>v2.11.3</b> — 帮助卡片示例加说明，README 修复清单折叠到文末</summary>

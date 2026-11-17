@@ -322,8 +322,11 @@ MOCK_JS = """
       return Promise.resolve(respond(JSON.stringify({ code: '1' })));
     }
     if (u.indexOf('/retry_failed') !== -1) {
-      for (var i = 0; i < data.failed.length; i++) {
-        if (String(data.failed[i].id) === String(p.message_id)) {
+      var retried = 0;
+      for (var i = data.failed.length - 1; i >= 0; i--) {
+        var matchChat = !p.chat_id || String(data.failed[i].chat) === String(p.chat_id);
+        var matchMsg = !p.message_id || String(data.failed[i].id) === String(p.message_id);
+        if (matchChat && matchMsg) {
           var failedRow = data.failed.splice(i, 1)[0];
           data.downloading.push({
             chat: failedRow.chat,
@@ -334,10 +337,10 @@ MOCK_JS = """
             download_speed: '0 B/s',
             paused: false
           });
-          break;
+          retried += 1;
         }
       }
-      return Promise.resolve(respond(JSON.stringify({ code: '1' })));
+      return Promise.resolve(respond(JSON.stringify({ code: '1', retried: retried })));
     }
     if (u.indexOf('/clear_failed') !== -1) {
       data.failed.length = 0;

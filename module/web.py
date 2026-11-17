@@ -648,10 +648,7 @@ def clear_failed():
                 _forget_failed_ids(chat_id, None)
         return jsonify({"code": "1", "cleared": cleared})
 
-    try:
-        chat_id = int(chat_id_arg)
-    except ValueError:
-        chat_id = chat_id_arg
+    chat_id = normalize_chat_id(chat_id_arg)
 
     if message_id_arg:
         try:
