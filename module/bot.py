@@ -367,6 +367,37 @@ def build_help_text() -> str:
     The bot client keeps the Pyrogram default parse mode, which parses Markdown,
     so the backticks below are real formatting on Telegram.
     """
+    examples = (
+        ("/help", "Show help"),
+        ("/get_info https://t.me/example_channel/123", "Get group and user info"),
+        (
+            "/download https://t.me/example_channel 1 0",
+            "Download from oldest to newest",
+        ),
+        (
+            "/download https://t.me/c/1234567890/500 0 0 " f"[{_t('Filter')}]",
+            "Download only filtered messages",
+        ),
+        (
+            "/forward https://t.me/c/1111111111 https://t.me/c/2222222222 1 400",
+            "Forward messages 1-400",
+        ),
+        (
+            "/listen_forward https://t.me/c/1111111111 https://t.me/c/2222222222",
+            "Keep forwarding new messages",
+        ),
+        (
+            "/forward_to_comments https://t.me/c/1111111111 "
+            "https://t.me/c/2222222222 100 200",
+            "Forward 100-200 messages to comments",
+        ),
+        ("/set_language zh", "Switch language"),
+        ("/stop", "Stop current task"),
+    )
+    example_lines = "\n".join(
+        f"{command}  # {_t(description)}" for command, description in examples
+    )
+
     return (
         f"`\n🤖 {_t('Telegram Media Downloader')}\n"
         f"🌐 {_t('Version')}: {utils.__version__}`\n"
@@ -384,16 +415,7 @@ def build_help_text() -> str:
         f"`[` `]` {_t('means optional, not required')}\n\n"
         f"📌 {_t('Command examples:')}\n"
         "```\n"
-        "/help\n"
-        "/get_info https://t.me/example_channel/123\n"
-        "/download https://t.me/example_channel 1 0\n"
-        f"/download https://t.me/c/1234567890/500 0 0 [{_t('Filter')}]\n"
-        "/forward https://t.me/c/1111111111 https://t.me/c/2222222222 1 400\n"
-        "/listen_forward https://t.me/c/1111111111 https://t.me/c/2222222222\n"
-        "/forward_to_comments https://t.me/c/1111111111 "
-        "https://t.me/c/2222222222 100 200\n"
-        "/set_language zh\n"
-        "/stop\n"
+        f"{example_lines}\n"
         "```\n"
     )
 

@@ -3,15 +3,12 @@
 > 基于 [tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader) 的修复分支。
 > 保留原项目的全部功能（Telegram bot 指令、Web UI、rclone 上传、受保护内容下载），并持续修复实际使用中的问题。
 
-当前版本：**v2.9.6**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
+当前版本：**v2.11.3**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
 
 [![Docker](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml)
 [![Release](https://img.shields.io/github/v/release/QCEnjoyLL/tg-dl?label=release&color=blue)](https://github.com/QCEnjoyLL/tg-dl/releases/latest)
 [![Tests](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/unittest.yml/badge.svg)](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/unittest.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-
----
-
 
 ---
 
@@ -27,65 +24,6 @@
 | 停止容器后失败任务丢失 | 仅在 `KeyboardInterrupt` 分支写 `data.yaml`，Docker 默认的 `SIGTERM` 会直接杀掉进程 |
 
 这个分支把这四个问题都修了，并且把镜像构建改成了可用的 GitHub Actions 多架构流水线。
-
----
-
-## 修复清单
-
-### 1. rclone 上传后正确删除本地文件
-
-`module/cloud_drive.py`
-
-```diff
-- rclone copy "<file>" "<remote_dir>/" --create-empty-src-dirs --ignore-existing --progress
-- if "Transferred" in s and "100%" in s and "1 / 1" in s: os.remove(local)
-+ rclone copyto "<file>" "<remote_dir>/<name>" --no-traverse --progress
-+ if retcode == 0: os.remove(local)
-```
-
-- 改用 `copyto`，目标文件名明确，不再依赖目录语义
-- 去掉 `--ignore-existing`，同名不同大小的文件会被正确覆盖，而不是被当成"已存在"
-- 去掉 `--size-only`：同名同大小但内容不同的远端文件不会被误判为已上传后删掉本地
-- 成功判定改为 **rclone 返回码**，不再解析进度文本；小文件秒传也能正确删除本地
-- 子进程参数改为 argv 列表（不经过 shell），避免频道标题/文件名里的 `$()`、反引号造成命令注入
-- 失败时打印 rclone 退出码和输出尾部，便于排查
-
-### 2. bot 进度卡片不再假死
-
-`module/pyrogram_extension.py` + `module/app.py`
-
-- 下载、上传、云盘上传三个区块各自最多显示 5 条，其余折叠为 `… +N`
-- 整体长度硬限制在 4000 字符以内
-- **只有 Telegram 确认接收后才更新本地缓存**；编辑失败下一轮会重试，不会永久停更
-- 单独处理 `MessageNotModified`，避免无意义告警
-- 进度卡片刷新间隔由 1 秒放宽到 3 秒，显著减少 FloodWait
-
-### 3. 失败任务可见、可重试、可删除
-
-`module/download_stat.py` / `module/web.py` / `media_downloader.py` / `templates/index.html`
-
-- 下载失败时立刻从「下载中」列表移除，不再留下永远 0% 的僵尸行
-- 失败记录写入独立登记表，Web UI 新增 **Failed** 标签页，每 3 秒刷新
-- 每一行可以 **重试**（重新入队，无需重启）或 **删除**（仅清除记录）
-- 新增接口：`/get_failed_list`、`/retry_failed`、`/clear_failed`
-
-### 4. 停止容器不再丢任务状态
-
-- Dockerfile 增加 `STOPSIGNAL SIGINT`，`docker stop` 走 `KeyboardInterrupt` 分支，正常写回 `data.yaml`
-- `docker-compose.yaml` 增加 `stop_signal: SIGINT` 和 `stop_grace_period: 2m`
-- 失败任务同时保留在 `data.yaml` 的 `ids_to_retry` 中，下次启动仍会自动重排
-
-### 5. 断点续传，失败不白下
-
-`module/pyrogram_guard.py` / `module/fast_download.py` / `media_downloader.py`
-
-- fork 的 `handle_download` 失败时会删掉 `.temp`，重试从 0 开始；现在保留半成品，重试（Web UI
-  的「重试」、`data.yaml` 的 `ids_to_retry`、或进程重启后的自动重排）从最后一个**完整的 1 MiB
-  边界**继续，末尾不完整的分片先截掉，保证不会重复写字节
-- 启动时清理 7 天前的 `.temp`（没人再重试的残留），其余保留
-- 下载补丁链收敛为一条：`get_file` 只包一层，`handle_download` = 截断守卫 → 并行分片 → 断点续传
-  → fork 原实现，单文件并行分片与顺序下载共用同一套失败/清理语义
-- 跨文件系统的最终移动（`shutil.move` 会复制整个文件）放到线程池，2 GB 文件不再卡住进度卡片
 
 ---
 
@@ -215,7 +153,7 @@ allowed_user_ids:
   - "me"
 ```
 
-bot 进度卡片已限制长度，不会再因为任务多而停止更新。
+bot 进度卡片已限制长度，不会再因为任务多而停止更新；发 `/help` 能看到完整命令列表，以及每条命令带中文说明的示例（可直接复制）。
 
 ### Web
 
@@ -339,19 +277,19 @@ systemctl stop tg-dl         # 服务里配置 KillSignal=SIGINT
 - 推送到 `master` / `main`、打 `v*` tag、或在 Actions 页面手动触发时构建
 - 自动推送到 **GHCR**：`ghcr.io/qcenjoyll/tg-dl`
 - 版本号只有一处来源：`utils/__init__.py` 的 `__version__`。镜像标签、git tag、GitHub Release 全部由它生成，不会互相对不上
-- 标签规则：`2.9.4`（当前版本）、`2.9`（minor 系列）、`latest`（默认分支）、分支名、`sha-xxxxxxx`
+- 标签规则：`2.11.3`（当前版本）、`2.11`（minor 系列）、`latest`（默认分支）、分支名、`sha-xxxxxxx`
 - 镜像内注入 `org.opencontainers.image.version` / `.revision`，`docker inspect` 一眼能看到版本
-- 镜像推送成功后自动创建 **GitHub Release**：标题 `v2.9.4`，正文取自 `CHANGELOG.md` 同名章节 + 拉取命令
+- 镜像推送成功后自动创建 **GitHub Release**：标题 `v2.11.3`，正文取自 `CHANGELOG.md` 同名章节 + 拉取命令
 - Pull Request 只构建不推送，也不会创建 Release
 - 构建前先跑 `python -m compileall` 做语法检查
 
 ### 发布新版本
 
-1. 改 `utils/__init__.py` 里的 `__version__`（如 `2.9.5`）
-2. 在 `CHANGELOG.md` 顶部加 `## v2.9.5` 章节（Release 正文就是这段内容）
+1. 改 `utils/__init__.py` 里的 `__version__`（如 `2.12.0`）
+2. 在 `CHANGELOG.md` 顶部加 `## v2.12.0` 章节（Release 正文就是这段内容）
 3. 提交并推送到 `master` / `main`
 
-工作流会自动构建镜像、打 `v2.9.5` tag 并创建 Release。版本号已存在的 Release 会跳过，重复推送不会报错。
+工作流会自动构建镜像、打 `v2.12.0` tag 并创建 Release。版本号已存在的 Release 会跳过，重复推送不会报错。
 
 > 手动推 `v*` tag 也可以，但 tag 必须和 `__version__` 一致，否则工作流会直接失败——避免发布说明和实际运行的代码对不上。
 
@@ -504,7 +442,8 @@ v2.8.1 起上传前会先 `rclone lsjson --stat` 检查目标：同名且大小�
 
 ## 与上游的差异
 
-- 修复上述五个问题（见上文修复清单）
+- 修复上述五个问题（见文末[修复清单](#修复清单)）
+- bot 帮助卡片：按钮改指本仓库与 BotFather，底部附每条命令带说明的可复制示例
 - 修复 Web 写接口契约（真实 JSON）、认证绕过、rclone 命令注入、上传失败误删本地、任务卡死等 P0 问题
 - 重写 Web UI 与登录页：明暗主题、概览卡片、单任务暂停/恢复/删除、在线配置编辑、退出登录、失败重试/删除、移动端适配、深链；移除 layui 与前端假 AES 加密，静态资源从 ~880KB 降到 ~35KB（CSS/JS 合计）
 - 统一下载补丁链（`fast_download` + 断点续传 + 流截断守卫），失败/中断留下的 `.temp` 在重试时从断点继续；依赖升到 Flask 3.1 / Werkzeug 3.1
@@ -533,6 +472,14 @@ v2.8.1 起上传前会先 `rclone lsjson --stat` 检查目标：同名且大小�
 > Docker / compose 用户不受影响（配置本来就是挂载进容器的，从未进过镜像）。
 
 逐条历史记录见 [CHANGELOG.md](CHANGELOG.md)；当前版本见顶部的 Release 徽章。
+
+<details>
+<summary><b>v2.11.3</b> — 帮助卡片示例加说明，README 修复清单折叠到文末</summary>
+
+- bot 命令示例每条加上说明（`/get_info ...  # 获取群组和用户信息`），说明随语言翻译
+- README：「修复清单」折叠后移到文末；同步顶部版本号与镜像标签示例
+
+</details>
 
 <details>
 <summary><b>v2.11.2</b> — bot 帮助卡片加「命令示例」区块</summary>
@@ -777,6 +724,80 @@ v2.8.1 起上传前会先 `rclone lsjson --stat` 检查目标：同名且大小�
 
 </details>
 
+
+---
+
+## 修复清单
+
+<details>
+<summary><b>1. rclone 上传后正确删除本地文件</b></summary>
+
+`module/cloud_drive.py`
+
+```diff
+- rclone copy "<file>" "<remote_dir>/" --create-empty-src-dirs --ignore-existing --progress
+- if "Transferred" in s and "100%" in s and "1 / 1" in s: os.remove(local)
++ rclone copyto "<file>" "<remote_dir>/<name>" --no-traverse --progress
++ if retcode == 0: os.remove(local)
+```
+
+- 改用 `copyto`，目标文件名明确，不再依赖目录语义
+- 去掉 `--ignore-existing`，同名不同大小的文件会被正确覆盖，而不是被当成"已存在"
+- 去掉 `--size-only`：同名同大小但内容不同的远端文件不会被误判为已上传后删掉本地
+- 成功判定改为 **rclone 返回码**，不再解析进度文本；小文件秒传也能正确删除本地
+- 子进程参数改为 argv 列表（不经过 shell），避免频道标题/文件名里的 `$()`、反引号造成命令注入
+- 失败时打印 rclone 退出码和输出尾部，便于排查
+
+</details>
+
+<details>
+<summary><b>2. bot 进度卡片不再假死</b></summary>
+
+`module/pyrogram_extension.py` + `module/app.py`
+
+- 下载、上传、云盘上传三个区块各自最多显示 5 条，其余折叠为 `… +N`
+- 整体长度硬限制在 4000 字符以内
+- **只有 Telegram 确认接收后才更新本地缓存**；编辑失败下一轮会重试，不会永久停更
+- 单独处理 `MessageNotModified`，避免无意义告警
+- 进度卡片刷新间隔由 1 秒放宽到 3 秒，显著减少 FloodWait
+
+</details>
+
+<details>
+<summary><b>3. 失败任务可见、可重试、可删除</b></summary>
+
+`module/download_stat.py` / `module/web.py` / `media_downloader.py` / `templates/index.html`
+
+- 下载失败时立刻从「下载中」列表移除，不再留下永远 0% 的僵尸行
+- 失败记录写入独立登记表，Web UI 新增 **Failed** 标签页，每 3 秒刷新
+- 每一行可以 **重试**（重新入队，无需重启）或 **删除**（仅清除记录）
+- 新增接口：`/get_failed_list`、`/retry_failed`、`/clear_failed`
+
+</details>
+
+<details>
+<summary><b>4. 停止容器不再丢任务状态</b></summary>
+
+- Dockerfile 增加 `STOPSIGNAL SIGINT`，`docker stop` 走 `KeyboardInterrupt` 分支，正常写回 `data.yaml`
+- `docker-compose.yaml` 增加 `stop_signal: SIGINT` 和 `stop_grace_period: 2m`
+- 失败任务同时保留在 `data.yaml` 的 `ids_to_retry` 中，下次启动仍会自动重排
+
+</details>
+
+<details>
+<summary><b>5. 断点续传，失败不白下</b></summary>
+
+`module/pyrogram_guard.py` / `module/fast_download.py` / `media_downloader.py`
+
+- fork 的 `handle_download` 失败时会删掉 `.temp`，重试从 0 开始；现在保留半成品，重试（Web UI
+  的「重试」、`data.yaml` 的 `ids_to_retry`、或进程重启后的自动重排）从最后一个**完整的 1 MiB
+  边界**继续，末尾不完整的分片先截掉，保证不会重复写字节
+- 启动时清理 7 天前的 `.temp`（没人再重试的残留），其余保留
+- 下载补丁链收敛为一条：`get_file` 只包一层，`handle_download` = 截断守卫 → 并行分片 → 断点续传
+  → fork 原实现，单文件并行分片与顺序下载共用同一套失败/清理语义
+- 跨文件系统的最终移动（`shutil.move` 会复制整个文件）放到线程池，2 GB 文件不再卡住进度卡片
+
+</details>
 
 ---
 

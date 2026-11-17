@@ -44,14 +44,28 @@ class HelpTextTestCase(unittest.TestCase):
     def tearDown(self):
         language.set_language(self._saved_language)
 
-    def examples_block(self) -> str:
-        return bot.build_help_text().split("Command examples:")[1]
+    @staticmethod
+    def examples_block(header: str = "Command examples:") -> str:
+        return bot.build_help_text().split(header)[1]
+
+    def example_lines(self) -> list[str]:
+        return [line for line in self.examples_block().splitlines() if line.strip()]
 
     def test_every_command_has_an_example(self):
         examples = self.examples_block()
 
         for command in self.COMMANDS:
             self.assertIn("\n" + command, examples, command)
+
+    def test_every_example_carries_an_annotation(self):
+        lines = self.example_lines()
+
+        # ``` 围栏 + 每条命令一行，命令与说明之间用「  # 」分隔
+        self.assertEqual(len([line for line in lines if line != "```"]), 9)
+        for line in lines:
+            if line == "```":
+                continue
+            self.assertIn("  # ", line, line)
 
     def test_examples_block_is_fenced_code(self):
         examples = self.examples_block().strip()
@@ -67,7 +81,10 @@ class HelpTextTestCase(unittest.TestCase):
 
         self.assertIn("MessageEntityPre", kinds, kinds)
         # The command text itself survives the markdown pass untouched.
-        self.assertIn("/download https://t.me/example_channel 1 0", parsed["message"])
+        self.assertIn(
+            "/download https://t.me/example_channel 1 0  # Download from oldest to newest",
+            parsed["message"],
+        )
 
     def test_chinese_card_translates_the_example_header(self):
         language.set_language(Language.ZH)
@@ -76,6 +93,14 @@ class HelpTextTestCase(unittest.TestCase):
 
         self.assertIn("命令示例", text)
         self.assertNotIn("Command examples:", text)
+
+    def test_chinese_card_annotates_examples_in_chinese(self):
+        language.set_language(Language.ZH)
+        examples = self.examples_block("命令示例：")
+
+        self.assertIn("  # 查看帮助", examples)
+        self.assertIn("  # 从最早下载到最新", examples)
+        self.assertIn("  # 停止当前任务", examples)
 
 
 if __name__ == "__main__":
