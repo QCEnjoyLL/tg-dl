@@ -66,6 +66,11 @@ translations = {
         "означает необязательный параметр",
         "означає необов'язковий параметр",
     ],
+    "Command examples:": [
+        "命令示例：",
+        "Примеры команд:",
+        "Приклади команд:",
+    ],
     "To download the video, use the method to directly enter /download to view": [
         "下载视频，使用方法直接输入/download查看",
         "Чтобы скачать видео, введите /download для просмотра",

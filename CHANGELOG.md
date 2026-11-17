@@ -2,6 +2,20 @@
 
 版本号规则：MAJOR（破坏性改动或核心重写）/ MINOR（新增功能）/ PATCH（修复、依赖、文档、UI 打磨）。
 
+## v2.11.2
+
+### 新增
+
+- **bot 帮助卡片增加「命令示例」区块**：卡片底部新增一段代码块，`/help`、`/get_info`、
+  `/download`、`/forward`、`/listen_forward`、`/forward_to_comments`、`/set_language`、
+  `/stop` 每条命令一行可直接照抄的示例；代码块在手机上可长按复制，标题按 bot 语言
+  翻译（en/ru/zh/ua）
+
+### 其它
+
+- 帮助卡片正文抽成纯函数 `build_help_text()`，新增 4 个测试（每个命令都有示例、
+  代码围栏完整、Markdown 可解析、中文标题翻译）
+
 ## v2.11.1
 
 ### 修复

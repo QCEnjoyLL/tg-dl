@@ -535,6 +535,14 @@ v2.8.1 起上传前会先 `rclone lsjson --stat` 检查目标：同名且大小�
 逐条历史记录见 [CHANGELOG.md](CHANGELOG.md)；当前版本见顶部的 Release 徽章。
 
 <details>
+<summary><b>v2.11.2</b> — bot 帮助卡片加「命令示例」区块</summary>
+
+- 卡片底部新增代码块，`/help`、`/get_info`、`/download`、`/forward`、`/listen_forward`、
+  `/forward_to_comments`、`/set_language`、`/stop` 每条命令一行示例，手机上可长按复制
+
+</details>
+
+<details>
 <summary><b>v2.11.1</b> — bot 按钮改指向本项目，移动端补上速度显示</summary>
 
 - bot 帮助卡片的 `Github` 按钮改指向本仓库，`Join us` 换成 `BotFather`（https://t.me/BotFather）

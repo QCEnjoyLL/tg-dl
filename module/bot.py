@@ -361,6 +361,43 @@ async def stop_download_bot():
         _bot.monitor_task = None
 
 
+def build_help_text() -> str:
+    """Body of the help card (Markdown).
+
+    The bot client keeps the Pyrogram default parse mode, which parses Markdown,
+    so the backticks below are real formatting on Telegram.
+    """
+    return (
+        f"`\n🤖 {_t('Telegram Media Downloader')}\n"
+        f"🌐 {_t('Version')}: {utils.__version__}`\n"
+        f"{_t('Available commands:')}\n"
+        f"/help - {_t('Show available commands')}\n"
+        f"/get_info - {_t('Get group and user info from message link')}\n"
+        f"/download - {_t('Download messages')}\n"
+        f"/forward - {_t('Forward messages')}\n"
+        f"/listen_forward - {_t('Listen for forwarded messages')}\n"
+        f"/forward_to_comments - {_t('Forward a specific media to a comment section')}\n"
+        f"/set_language - {_t('Set language')}\n"
+        f"/stop - {_t('Stop bot download or forward')}\n\n"
+        f"{_t('**Note**: 1 means the start of the entire chat')},"
+        f"{_t('0 means the end of the entire chat')}\n"
+        f"`[` `]` {_t('means optional, not required')}\n\n"
+        f"📌 {_t('Command examples:')}\n"
+        "```\n"
+        "/help\n"
+        "/get_info https://t.me/example_channel/123\n"
+        "/download https://t.me/example_channel 1 0\n"
+        f"/download https://t.me/c/1234567890/500 0 0 [{_t('Filter')}]\n"
+        "/forward https://t.me/c/1111111111 https://t.me/c/2222222222 1 400\n"
+        "/listen_forward https://t.me/c/1111111111 https://t.me/c/2222222222\n"
+        "/forward_to_comments https://t.me/c/1111111111 "
+        "https://t.me/c/2222222222 100 200\n"
+        "/set_language zh\n"
+        "/stop\n"
+        "```\n"
+    )
+
+
 async def send_help_str(client: pyrogram.Client, chat_id):
     """
     Sends a help string to the specified chat ID using the provided client.
@@ -374,46 +411,12 @@ async def send_help_str(client: pyrogram.Client, chat_id):
 
     Note:
         The help string includes information about the Telegram Media Downloader bot,
-        its version, and the available commands.
+        its version, the available commands and one example per command.
     """
 
-    update_keyboard = help_keyboard()
-    latest_release_str = ""
-    # try:
-    #     latest_release = get_latest_release(_bot.app.proxy)
-
-    #     latest_release_str = (
-    #         f"{_t('New Version')}: [{latest_release['name']}]({latest_release['html_url']})\an"
-    #         if latest_release
-    #         else ""
-    #     )
-    # except Exception:
-    #     latest_release_str = ""
-
-    msg = (
-        f"`\n🤖 {_t('Telegram Media Downloader')}\n"
-        f"🌐 {_t('Version')}: {utils.__version__}`\n"
-        f"{latest_release_str}\n"
-        f"{_t('Available commands:')}\n"
-        f"/help - {_t('Show available commands')}\n"
-        f"/get_info - {_t('Get group and user info from message link')}\n"
-        f"/download - {_t('Download messages')}\n"
-        f"/forward - {_t('Forward messages')}\n"
-        f"/listen_forward - {_t('Listen for forwarded messages')}\n"
-        f"/forward_to_comments - {_t('Forward a specific media to a comment section')}\n"
-        f"/set_language - {_t('Set language')}\n"
-        f"/stop - {_t('Stop bot download or forward')}\n\n"
-        # f"/add_replace_ad - {_t('Add replace advertisement filter')}\n"
-        # f"/remove_replace_ad - {_t('Remove replace advertisement filter')}\n"
-        # f"/add_filter_ad - {_t('Add filter advertisement filter')}\n"
-        # f"/remove_filter_ad - {_t('Remove filter advertisement filter')}\n\n"
-        # f"/set_add_ad - {_t('Set add advertisement')}\n\n"
-        f"{_t('**Note**: 1 means the start of the entire chat')},"
-        f"{_t('0 means the end of the entire chat')}\n"
-        f"`[` `]` {_t('means optional, not required')}\n"
+    await client.send_message(
+        chat_id, build_help_text(), reply_markup=help_keyboard()
     )
-
-    await client.send_message(chat_id, msg, reply_markup=update_keyboard)
 
 
 async def help_command(client: pyrogram.Client, message: pyrogram.types.Message):
