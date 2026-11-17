@@ -42,6 +42,23 @@ from utils.meta_data import MetaData
 
 # pylint: disable = C0301, R0902
 
+#: Links shown on the help card. Kept in one place so a fork does not keep
+#: advertising the upstream project (or a dead group) after it is renamed.
+PROJECT_URL = "https://github.com/QCEnjoyLL/tg-dl"
+BOTFATHER_URL = "https://t.me/BotFather"
+
+
+def help_keyboard() -> InlineKeyboardMarkup:
+    """Buttons under the help card: the project page and the BotFather chat."""
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("Github", url=PROJECT_URL),
+                InlineKeyboardButton("BotFather", url=BOTFATHER_URL),
+            ]
+        ]
+    )
+
 
 class DownloadBot:
     """Download bot"""
@@ -360,19 +377,7 @@ async def send_help_str(client: pyrogram.Client, chat_id):
         its version, and the available commands.
     """
 
-    update_keyboard = InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton(
-                    "Github",
-                    url="https://github.com/tangyoha/telegram_media_downloader/releases",
-                ),
-                InlineKeyboardButton(
-                    "Join us", url="https://t.me/TeegramMediaDownload"
-                ),
-            ]
-        ]
-    )
+    update_keyboard = help_keyboard()
     latest_release_str = ""
     # try:
     #     latest_release = get_latest_release(_bot.app.proxy)

@@ -39,6 +39,7 @@
 
   const el = {
     speed: $("#speed"),
+    metaSpeed: $("#meta-speed"),
     statActive: $("#stat-active"),
     statDone: $("#stat-done"),
     statFailed: $("#stat-failed"),
@@ -294,6 +295,9 @@
       '">' +
       '<span class="row-chip state-chip is-paused" hidden>已暂停</span> ' +
       nameHtml(row.filename) +
+      // The speed column is hidden on narrow screens, so the same value is
+      // repeated under the name there (CSS decides which one is visible).
+      '<span class="speed-inline">↓ --</span>' +
       "</td>" +
       '<td class="cell-size">' +
       esc(row.total_size) +
@@ -330,6 +334,15 @@
       ? ""
       : String(row.download_speed);
     if (speed && speed.textContent !== value) speed.textContent = value;
+
+    const inlineSpeed = tr.querySelector(".speed-inline");
+    if (inlineSpeed) {
+      const inlineText = "↓ " + (value || "—");
+      if (inlineSpeed.textContent !== inlineText) {
+        inlineSpeed.textContent = inlineText;
+      }
+      inlineSpeed.classList.toggle("is-muted", !value || value === "—");
+    }
 
     const chip = tr.querySelector(".row-chip");
     if (chip) {
@@ -597,6 +610,9 @@
 
   function renderSpeed(speed) {
     setText(el.speed, speed || "--");
+    // Narrow screens hide the header pill; the same number is repeated next to
+    // the "更新于" clock so the mobile layout still shows the total speed.
+    setText(el.metaSpeed, speed ? "↓ " + speed : "↓ --");
   }
 
   /* --------------------------------------------------------------- loading */

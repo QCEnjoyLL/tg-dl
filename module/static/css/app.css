@@ -510,6 +510,14 @@ main {
   background: var(--warning);
 }
 
+/* Narrow screens hide the header speed pill, so the total speed is repeated in
+   the list header instead (see the 720px media query below). */
+.meta-speed {
+  display: none;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
 .paused-banner {
   display: flex;
   align-items: center;
@@ -659,6 +667,12 @@ main {
 
 /* Only used on narrow screens, where the reason column is hidden. */
 .reason-inline {
+  display: none;
+}
+
+/* Same idea for the per-task download speed: the speed column disappears below
+   900px, so the value is repeated under the file name. */
+.speed-inline {
   display: none;
 }
 
@@ -1341,6 +1355,22 @@ main {
     display: none;
   }
 
+  /* The speed column is gone from here, so show it under the file name. */
+  .speed-inline {
+    display: block;
+    margin-top: 2px;
+    color: var(--text-muted);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .speed-inline.is-muted {
+    color: var(--text-faint);
+  }
+
   /* From here the table is compact, so the action column shrinks to what two
      icon buttons need. They stay labelled for screen readers and get a tooltip
      for mouse users; labelled buttons would overflow the cell and be clipped. */
@@ -1379,6 +1409,12 @@ main {
 
   .speed-pill {
     display: none;
+  }
+
+  /* …but the total speed has to stay visible somewhere: the list header. */
+  .meta-speed {
+    display: inline-flex;
+    align-items: center;
   }
 
   .panel-head {

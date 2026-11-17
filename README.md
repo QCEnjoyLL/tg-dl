@@ -535,6 +535,15 @@ v2.8.1 起上传前会先 `rclone lsjson --stat` 检查目标：同名且大小�
 逐条历史记录见 [CHANGELOG.md](CHANGELOG.md)；当前版本见顶部的 Release 徽章。
 
 <details>
+<summary><b>v2.11.1</b> — bot 按钮改指向本项目，移动端补上速度显示</summary>
+
+- bot 帮助卡片的 `Github` 按钮改指向本仓库，`Join us` 换成 `BotFather`（https://t.me/BotFather）
+- 移动端：文件名下方显示每条任务的 `↓ 12.48MB/s`，列表头显示总速度 `↓ 4.28 MB/s`；
+  之前窄屏会把速度列和顶部速度胶囊都隐藏，手机上完全看不到速度
+
+</details>
+
+<details>
 <summary><b>v2.11.0</b> — 断点续传，下载补丁链收敛，依赖升级</summary>
 
 - **断点续传**：失败/中断都会保留 `.temp`，重试从最后一个完整的 1 MiB 边界继续，不再从 0

@@ -2,6 +2,22 @@
 
 版本号规则：MAJOR（破坏性改动或核心重写）/ MINOR（新增功能）/ PATCH（修复、依赖、文档、UI 打磨）。
 
+## v2.11.1
+
+### 修复
+
+- **bot 帮助卡片的按钮指向上游项目**：`Github` 按钮原本跳到
+  `github.com/tangyoha/telegram_media_downloader/releases`，现在指向本仓库
+  `https://github.com/QCEnjoyLL/tg-dl`；`Join us`（已失效的群组链接）换成 `BotFather` →
+  `https://t.me/BotFather`，方便按需自建 bot 拿 token
+- **移动端看不到下载速度**：窄屏下「速度」列和顶部总速度胶囊都会被隐藏，手机上完全没有速度可看。
+  现在：≤900px 时在文件名下方显示每条的 `↓ 12.48MB/s`；≤720px 时在列表头显示总速度
+  `● ↓ 4.28 MB/s`。暂停/冻结显示 `↓ —`，与桌面端同一份数据，不会再出现两头不一致
+
+### 文档
+
+- 重新生成 `docs/ui-*.png`：移动端截图包含新增的速度显示
+
 ## v2.11.0
 
 ### 新增
