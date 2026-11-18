@@ -2,6 +2,15 @@
 
 版本号规则：MAJOR（破坏性改动或核心重写）/ MINOR（新增功能）/ PATCH（修复、依赖、文档、UI 打磨）。
 
+## v2.13.2
+
+### 修复
+
+- **长列表里鼠标滚轮失灵**：列表容器 `.table-scroll` 设了 `overflow-x: auto`（另一轴因此被计算成
+  `auto`）又配了 `overscroll-behavior: contain`，指针停在表格上时滚轮被容器吞掉，必须把鼠标移到
+  列表外页面才会滚动；改成只 `overscroll-behavior-x: contain`，垂直滚动重新链到页面，
+  横向滑动依旧不会触发浏览器前进/后退
+
 ## v2.13.1
 
 ### 修复

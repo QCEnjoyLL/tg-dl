@@ -812,7 +812,11 @@ main:focus {
 
 .table-scroll {
   overflow-x: auto;
-  overscroll-behavior: contain;
+  /* Only contain horizontal overscroll: `overflow-x: auto` also computes
+     overflow-y to `auto`, and a plain `contain` there swallowed the wheel
+     while the pointer was over a long table (the page only scrolled from
+     outside the table). */
+  overscroll-behavior-x: contain;
 }
 
 .table {
