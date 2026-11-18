@@ -860,7 +860,10 @@
     if (tab === "downloaded") {
       params.push("upload_state=" + encodeURIComponent(state.uploadFilter));
     }
-    return tabEndpoint(tab) + "&" + params.join("&");
+    const base = tabEndpoint(tab);
+    // /get_failed_list has no query string yet, /get_download_list?already_down=…
+    // does, so pick the right separator instead of always appending "&".
+    return base + (base.indexOf("?") === -1 ? "?" : "&") + params.join("&");
   }
 
   function applyPageResponse(tab, payload) {

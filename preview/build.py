@@ -324,7 +324,7 @@ MOCK_JS = """
         return key === cq.upload_state;
       }))));
     }
-    if (u.indexOf('/get_failed_list') !== -1) {
+    if (u.indexOf('/get_failed_list?') !== -1) {
       return Promise.resolve(respond(JSON.stringify(page(data.failed, parseQuery(u)))));
     }
     if (u.indexOf('/set_download_state') !== -1) {

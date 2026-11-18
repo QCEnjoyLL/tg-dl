@@ -3,7 +3,7 @@
 > 基于 [tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader) 的修复分支。
 > 保留原项目的全部功能（Telegram bot 指令、Web UI、rclone 上传、受保护内容下载），并持续修复实际使用中的问题。
 
-当前版本：**v2.13.0**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
+当前版本：**v2.13.1**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
 
 [![Docker](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml)
 [![Release](https://img.shields.io/github/v/release/QCEnjoyLL/tg-dl?label=release&color=blue)](https://github.com/QCEnjoyLL/tg-dl/releases/latest)
@@ -284,19 +284,19 @@ systemctl stop tg-dl         # 服务里配置 KillSignal=SIGINT
 - 推送到 `master` / `main`、打 `v*` tag、或在 Actions 页面手动触发时构建
 - 自动推送到 **GHCR**：`ghcr.io/qcenjoyll/tg-dl`
 - 版本号只有一处来源：`utils/__init__.py` 的 `__version__`。镜像标签、git tag、GitHub Release 全部由它生成，不会互相对不上
-- 标签规则：`2.13.0`（当前版本）、`2.13`（minor 系列）、`latest`（默认分支）、分支名、`sha-xxxxxxx`
+- 标签规则：`2.13.1`（当前版本）、`2.13`（minor 系列）、`latest`（默认分支）、分支名、`sha-xxxxxxx`
 - 镜像内注入 `org.opencontainers.image.version` / `.revision`，`docker inspect` 一眼能看到版本
-- 镜像推送成功后自动创建 **GitHub Release**：标题 `v2.13.0`，正文取自 `CHANGELOG.md` 同名章节 + 拉取命令
+- 镜像推送成功后自动创建 **GitHub Release**：标题 `v2.13.1`，正文取自 `CHANGELOG.md` 同名章节 + 拉取命令
 - Pull Request 只构建不推送，也不会创建 Release
 - 构建前先跑 `python -m compileall` 做语法检查
 
 ### 发布新版本
 
-1. 改 `utils/__init__.py` 里的 `__version__`（如 `2.13.1`）
-2. 在 `CHANGELOG.md` 顶部加 `## v2.13.1` 章节（Release 正文就是这段内容）
+1. 改 `utils/__init__.py` 里的 `__version__`（如 `2.13.2`）
+2. 在 `CHANGELOG.md` 顶部加 `## v2.13.2` 章节（Release 正文就是这段内容）
 3. 提交并推送到 `master` / `main`
 
-工作流会自动构建镜像、打 `v2.13.1` tag 并创建 Release。版本号已存在的 Release 会跳过，重复推送不会报错。
+工作流会自动构建镜像、打 `v2.13.2` tag 并创建 Release。版本号已存在的 Release 会跳过，重复推送不会报错。
 
 > 手动推 `v*` tag 也可以，但 tag 必须和 `__version__` 一致，否则工作流会直接失败——避免发布说明和实际运行的代码对不上。
 
@@ -488,6 +488,14 @@ v2.13.0 起存在 `sessions/history.db`（SQLite，可用环境变量 `TDL_HISTO
 > Docker / compose 用户不受影响（配置本来就是挂载进容器的，从未进过镜像）。
 
 逐条历史记录见 [CHANGELOG.md](CHANGELOG.md)；当前版本见顶部的 Release 徽章。
+
+<details>
+<summary><b>v2.13.1</b> — 修复「失败」页签轮询 404</summary>
+
+- 「失败」列表的分页参数拼成了 `/get_failed_list&page=…`（缺少 `?`），切到失败页签或删除任务后
+  刷新列表会报「连接异常：HTTP 404」；改为根据地址里是否已有 `?` 选择分隔符
+
+</details>
 
 <details>
 <summary><b>v2.13.0</b> — 下载历史持久化（SQLite），服务端分页与一键清空</summary>
