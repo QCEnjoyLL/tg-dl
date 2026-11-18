@@ -257,22 +257,75 @@ MOCK_JS = """
   function respond(body, type) {
     return new Response(body, { status: 200, headers: { 'content-type': type || 'application/json' } });
   }
+  function parseQuery(url) {
+    var out = {};
+    var query = url.split('?')[1] || '';
+    query.split('&').forEach(function (part) {
+      if (!part) return;
+      var kv = part.split('=');
+      out[decodeURIComponent(kv[0])] = decodeURIComponent(kv[1] || '');
+    });
+    return out;
+  }
+  // Mirrors the Flask endpoints: filter, then slice the requested page.
+  function page(list, p, filterFn) {
+    var rows = filterFn ? list.filter(filterFn) : list.slice();
+    var q = String(p.q || '').toLowerCase();
+    if (q) {
+      rows = rows.filter(function (row) {
+        return [row.id, row.chat, row.filename, row.save_path, row.reason]
+          .map(function (v) { return String(v === null || v === undefined ? '' : v).toLowerCase(); })
+          .join(' ')
+          .indexOf(q) !== -1;
+      });
+    }
+    var size = Number(p.page_size) || 25;
+    if (size <= 0) size = 500;
+    var total = rows.length;
+    var pages = Math.max(1, Math.ceil(total / size));
+    var current = Math.min(Math.max(1, Number(p.page) || 1), pages);
+    var start = (current - 1) * size;
+    return {
+      rows: rows.slice(start, start + size),
+      total: total,
+      all_total: list.length,
+      page: current,
+      page_size: size,
+      pages: pages
+    };
+  }
   window.fetch = function (url, options) {
     var u = String(url);
     if (u.indexOf('/get_app_version') !== -1) {
       return Promise.resolve(respond(pageVersion, 'text/plain'));
     }
     if (u.indexOf('/get_download_status') !== -1) {
-      return Promise.resolve(respond(JSON.stringify({ download_speed: '4.28 MB/s', upload_speed: '0.00 B/s', state: paused ? 'paused' : 'running', completed: data.downloaded.length })));
+      return Promise.resolve(respond(JSON.stringify({
+        download_speed: '4.28 MB/s',
+        upload_speed: '0.00 B/s',
+        state: paused ? 'paused' : 'running',
+        downloading: data.downloading.length,
+        completed: data.downloaded.length,
+        failed: data.failed.length
+      })));
     }
     if (u.indexOf('already_down=false') !== -1) {
-      return Promise.resolve(respond(JSON.stringify(data.downloading)));
+      return Promise.resolve(respond(JSON.stringify(page(data.downloading, parseQuery(u)))));
     }
     if (u.indexOf('already_down=true') !== -1) {
-      return Promise.resolve(respond(JSON.stringify(data.downloaded)));
+      var cq = parseQuery(u);
+      return Promise.resolve(respond(JSON.stringify(page(data.downloaded, cq, function (row) {
+        if (!cq.upload_state || cq.upload_state === 'all') return true;
+        var key = row.upload_state === 'exists'
+          ? 'exists'
+          : (row.upload_state === 'uploaded' || (!row.upload_state && row.upload_success))
+            ? 'uploaded'
+            : 'local';
+        return key === cq.upload_state;
+      }))));
     }
     if (u.indexOf('/get_failed_list') !== -1) {
-      return Promise.resolve(respond(JSON.stringify(data.failed)));
+      return Promise.resolve(respond(JSON.stringify(page(data.failed, parseQuery(u)))));
     }
     if (u.indexOf('/set_download_state') !== -1) {
       paused = !paused;
@@ -287,16 +340,6 @@ MOCK_JS = """
     if (u.indexOf('/set_config') !== -1) {
       return Promise.resolve(respond(JSON.stringify({ code: '1', applied: ['media_types'], restart_required: ['chat'], values: formPayload.values, text: configText })));
     }
-    function params(url) {
-      var out = {};
-      var query = url.split('?')[1] || '';
-      query.split('&').forEach(function (part) {
-        if (!part) return;
-        var kv = part.split('=');
-        out[decodeURIComponent(kv[0])] = decodeURIComponent(kv[1] || '');
-      });
-      return out;
-    }
     function drop(list, p) {
       for (var i = list.length - 1; i >= 0; i--) {
         if (String(list[i].id) === String(p.message_id) &&
@@ -307,7 +350,7 @@ MOCK_JS = """
       }
       return false;
     }
-    var p = params(u);
+    var p = parseQuery(u);
     if (u.indexOf('/pause_task') !== -1 || u.indexOf('/resume_task') !== -1) {
       var on = u.indexOf('/pause_task') !== -1;
       data.downloading.forEach(function (row) {
@@ -345,6 +388,13 @@ MOCK_JS = """
     if (u.indexOf('/clear_failed') !== -1) {
       data.failed.length = 0;
       return Promise.resolve(respond(JSON.stringify({ code: '1', cleared: 3 })));
+    }
+    if (u.indexOf('/clear_completed') !== -1) {
+      var clearedCompleted = data.downloaded.length;
+      data.downloaded.length = 0;
+      return Promise.resolve(
+        respond(JSON.stringify({ code: '1', cleared: clearedCompleted }))
+      );
     }
     return Promise.resolve(respond('[]'));
   };

@@ -173,6 +173,11 @@
       </div>
 
       <div class="sec-right">
+        <div class="bulk-actions" id="completed-bulk-actions" hidden>
+          <button class="btn btn-pill btn-sm" id="clear-completed-btn" type="button" data-tone="danger"
+            aria-label="清空全部已完成记录（不删除本地文件）" title="清空全部已完成记录（不删除本地文件）">清空已完成</button>
+        </div>
+
         <div class="bulk-actions" id="failed-bulk-actions" hidden>
           <button class="btn btn-pill btn-sm" id="retry-all-btn" type="button">全部重试</button>
           <button class="btn btn-pill btn-sm" id="clear-failed-btn" type="button" data-tone="danger">清空失败</button>
@@ -267,7 +272,7 @@
             <option value="25">25 条</option>
             <option value="50">50 条</option>
             <option value="100">100 条</option>
-            <option value="0">全部</option>
+            <option value="200">200 条</option>
           </select>
           <button class="btn btn-pill btn-page" id="page-prev" type="button">上一页</button>
           <button class="btn btn-pill btn-page" id="page-next" type="button">下一页</button>

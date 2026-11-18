@@ -7,8 +7,6 @@
 
   const TAB_REFRESH = { downloading: 1000, downloaded: 4000, failed: 3000 };
   const STATUS_REFRESH = 1000;
-  const FAILED_BADGE_REFRESH = 10000;
-  const COUNTER_REFRESH = 10000;
   const CONFIRM_TIMEOUT = 3500;
 
   const ICON_PAUSE =
@@ -40,10 +38,16 @@
     downloading: [],
     downloaded: [],
     failed: [],
-    // Client-side pagination: the polling endpoints keep returning the full
-    // list (it is capped server-side), the table only renders one page.
+    // The list endpoints filter and paginate on the server (the history lives
+    // in SQLite), so each tab keeps only the current page plus this pager state.
     pageSize: 25,
-    pages: { downloading: 1, downloaded: 1, failed: 1 },
+    pager: {
+      downloading: { page: 1, pages: 1, total: 0, allTotal: 0 },
+      downloaded: { page: 1, pages: 1, total: 0, allTotal: 0 },
+      failed: { page: 1, pages: 1, total: 0, allTotal: 0 },
+    },
+    // Tab totals from /get_download_status, independent of the visible page.
+    counts: { downloading: 0, completed: 0, failed: 0 },
   };
 
   const el = {
@@ -62,6 +66,8 @@
     taskSearch: $("#task-search"),
     taskSearchClear: $("#task-search-clear"),
     uploadFilters: $("#upload-filters"),
+    completedBulkActions: $("#completed-bulk-actions"),
+    clearCompletedBtn: $("#clear-completed-btn"),
     failedBulkActions: $("#failed-bulk-actions"),
     retryAllBtn: $("#retry-all-btn"),
     clearFailedBtn: $("#clear-failed-btn"),
@@ -598,53 +604,57 @@
     return state.failed;
   }
 
+  function countKey(tab) {
+    if (tab === "downloading") return "downloading";
+    if (tab === "downloaded") return "completed";
+    return "failed";
+  }
+
+  function pagerState(tab) {
+    if (!state.pager[tab]) {
+      state.pager[tab] = { page: 1, pages: 1, total: 0, allTotal: 0 };
+    }
+    return state.pager[tab];
+  }
+
+  /**
+   * Total rows for a tab. The visible page only holds a slice, so the number
+   * comes from /get_download_status (or from the last page response).
+   */
+  function tabCount(tab) {
+    return Math.max(
+      state.counts[countKey(tab)] || 0,
+      pagerState(tab).total || 0,
+      tabRows(tab).length
+    );
+  }
+
   function hasActiveFilters(tab) {
     if (state.query.trim()) return true;
     if (tab === "downloaded" && state.uploadFilter !== "all") return true;
     return false;
   }
 
+  /** The server already filtered and sliced the list, so this is the page. */
   function filteredRows(tab) {
-    let rows = tabRows(tab);
-    if (tab === "downloaded" && state.uploadFilter !== "all") {
-      rows = rows.filter((row) => uploadStateKey(row) === state.uploadFilter);
-    }
-    const q = state.query.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter((row) => {
-      const hay = [
-        row.id,
-        row.chat,
-        row.filename,
-        row.save_path,
-        row.reason,
-      ]
-        .map((v) => (v === null || v === undefined ? "" : String(v).toLowerCase()))
-        .join(" ");
-      return hay.indexOf(q) !== -1;
-    });
+    return tabRows(tab);
   }
 
-  /** Slice the filtered list into the current page for ``tab``. */
+  /** Pager metadata for ``tab``, built from the last list response. */
   function pageInfo(tab) {
     const rows = filteredRows(tab);
-    const total = rows.length;
-    const size = state.pageSize;
-    if (!size) {
-      state.pages[tab] = 1;
-      return { rows, total, page: 1, pages: 1, start: 0, end: total };
-    }
-    const pages = Math.max(1, Math.ceil(total / size));
-    const page = Math.min(Math.max(1, state.pages[tab] || 1), pages);
-    state.pages[tab] = page;
-    const start = (page - 1) * size;
+    const info = pagerState(tab);
+    const page = info.page || 1;
+    const pages = info.pages || 1;
+    const size = state.pageSize || rows.length || 1;
+    const start = rows.length ? (page - 1) * size : 0;
     return {
-      rows: rows.slice(start, start + size),
-      total,
+      rows,
+      total: info.total || rows.length,
       page,
       pages,
       start,
-      end: Math.min(start + size, total),
+      end: start + rows.length,
     };
   }
 
@@ -658,24 +668,20 @@
     el.pager.hidden = false;
     setText(
       el.pagerInfo,
-      state.pageSize
-        ? "第 " +
-            (info.start + 1) +
-            "–" +
-            info.end +
-            " 条 / 共 " +
-            info.total +
-            " 条 · 第 " +
-            info.page +
-            "/" +
-            info.pages +
-            " 页"
-        : "共 " + info.total + " 条"
+      "第 " +
+        (info.start + 1) +
+        "–" +
+        info.end +
+        " 条 / 共 " +
+        info.total +
+        " 条 · 第 " +
+        info.page +
+        "/" +
+        info.pages +
+        " 页"
     );
-    if (el.pagePrev) el.pagePrev.disabled = !state.pageSize || info.page <= 1;
-    if (el.pageNext) {
-      el.pageNext.disabled = !state.pageSize || info.page >= info.pages;
-    }
+    if (el.pagePrev) el.pagePrev.disabled = info.page <= 1;
+    if (el.pageNext) el.pageNext.disabled = info.page >= info.pages;
   }
 
   function syncToolbar() {
@@ -690,9 +696,13 @@
         btn.setAttribute("aria-pressed", on ? "true" : "false");
       });
     }
+    if (el.completedBulkActions) {
+      el.completedBulkActions.hidden =
+        state.tab !== "downloaded" || tabCount("downloaded") === 0;
+    }
     if (el.failedBulkActions) {
       el.failedBulkActions.hidden =
-        state.tab !== "failed" || state.failed.length === 0;
+        state.tab !== "failed" || tabCount("failed") === 0;
     }
   }
 
@@ -722,6 +732,26 @@
     }
   }
 
+  /** Tab totals (stat cards + tab badges) from the server-side counts. */
+  function renderCounts() {
+    const active = tabCount("downloading");
+    const done = tabCount("downloaded");
+    const failed = tabCount("failed");
+
+    setText(el.statActive, String(active));
+    setText(el.badgeDownloading, String(active));
+    if (el.badgeDownloading) el.badgeDownloading.hidden = active === 0;
+
+    setText(el.statDone, String(done));
+    setText(el.badgeDone, String(done));
+    if (el.badgeDone) el.badgeDone.hidden = done === 0;
+
+    setText(el.statFailed, String(failed));
+    if (el.statFailed) el.statFailed.classList.toggle("is-danger", failed > 0);
+    setText(el.badgeFailed, String(failed));
+    if (el.badgeFailed) el.badgeFailed.hidden = failed === 0;
+  }
+
   function renderDownloading() {
     const info = pageInfo("downloading");
     syncRows(
@@ -731,11 +761,7 @@
       buildDownloadingRow,
       updateDownloadingRow
     );
-    setText(el.statActive, String(state.downloading.length));
-    setText(el.badgeDownloading, String(state.downloading.length));
-    if (el.badgeDownloading) {
-      el.badgeDownloading.hidden = state.downloading.length === 0;
-    }
+    renderCounts();
     syncToolbar();
     renderPager("downloading", info);
     renderEmpty();
@@ -750,9 +776,7 @@
       buildDownloadedRow,
       updateDownloadedRow
     );
-    setText(el.statDone, String(state.downloaded.length));
-    setText(el.badgeDone, String(state.downloaded.length));
-    if (el.badgeDone) el.badgeDone.hidden = state.downloaded.length === 0;
+    renderCounts();
     syncToolbar();
     renderPager("downloaded", info);
     renderEmpty();
@@ -767,6 +791,7 @@
       buildFailedRow,
       updateFailedRow
     );
+    renderCounts();
     syncToolbar();
     renderPager("failed", info);
     renderEmpty();
@@ -815,47 +840,83 @@
     failed: false,
   };
 
-  async function loadDownloading() {
-    if (inFlight.downloading) return;
-    inFlight.downloading = true;
-    try {
-      const rows = await api("/get_download_list?already_down=false");
-      state.downloading = Array.isArray(rows) ? rows : [];
-      renderDownloading();
-    } finally {
-      inFlight.downloading = false;
-    }
+  function tabEndpoint(tab) {
+    if (tab === "downloading") return "/get_download_list?already_down=false";
+    if (tab === "downloaded") return "/get_download_list?already_down=true";
+    return "/get_failed_list";
   }
 
-  async function loadDownloaded() {
-    if (inFlight.downloaded) return;
-    inFlight.downloaded = true;
-    try {
-      const rows = await api("/get_download_list?already_down=true");
-      state.downloaded = Array.isArray(rows) ? rows : [];
-      renderDownloaded();
-    } finally {
-      inFlight.downloaded = false;
+  /**
+   * The list endpoints page on the server: send the current page, page size,
+   * the search query and (for the completed tab) the upload-state filter.
+   */
+  function tabUrl(tab) {
+    const params = [
+      "page=" + (pagerState(tab).page || 1),
+      "page_size=" + state.pageSize,
+    ];
+    const q = state.query.trim();
+    if (q) params.push("q=" + encodeURIComponent(q));
+    if (tab === "downloaded") {
+      params.push("upload_state=" + encodeURIComponent(state.uploadFilter));
     }
+    return tabEndpoint(tab) + "&" + params.join("&");
   }
 
-  async function loadFailed() {
-    if (inFlight.failed) return;
-    inFlight.failed = true;
+  function applyPageResponse(tab, payload) {
+    let rows = [];
+    let info = { page: 1, pages: 1, total: 0, allTotal: 0 };
+    if (Array.isArray(payload)) {
+      // Legacy shape (no paging parameters): the list is already complete.
+      rows = payload;
+      info = { page: 1, pages: 1, total: payload.length, allTotal: payload.length };
+    } else if (payload && Array.isArray(payload.rows)) {
+      rows = payload.rows;
+      info = {
+        page: Number(payload.page) || 1,
+        pages: Number(payload.pages) || 1,
+        total: Number(payload.total) || 0,
+        allTotal: Number(payload.all_total || payload.total) || 0,
+      };
+    }
+    state[tab] = rows;
+    state.pager[tab] = info;
+    // The tab badges show the unfiltered total, so a filtered page must not
+    // overwrite the server count (loadStatus refreshes it every second).
+    const filtered =
+      Boolean(state.query.trim()) ||
+      (tab === "downloaded" && state.uploadFilter !== "all");
+    if (!filtered) state.counts[countKey(tab)] = info.total;
+  }
+
+  async function loadTab(tab) {
+    if (inFlight[tab]) return;
+    inFlight[tab] = true;
     try {
-      const rows = await api("/get_failed_list");
-      state.failed = Array.isArray(rows) ? rows : [];
-      setText(el.statFailed, String(state.failed.length));
-      if (el.statFailed) {
-        el.statFailed.classList.toggle("is-danger", state.failed.length > 0);
+      const payload = await api(tabUrl(tab));
+      applyPageResponse(tab, payload);
+      if (tab === "downloading") renderDownloading();
+      else if (tab === "downloaded") renderDownloaded();
+      else if (state.tab === "failed") renderFailed();
+      else {
+        renderCounts();
+        syncToolbar();
       }
-      setText(el.badgeFailed, String(state.failed.length));
-      if (el.badgeFailed) el.badgeFailed.hidden = state.failed.length === 0;
-      if (state.tab === "failed") renderFailed();
-      else syncToolbar();
     } finally {
-      inFlight.failed = false;
+      inFlight[tab] = false;
     }
+  }
+
+  function loadDownloading() {
+    return loadTab("downloading");
+  }
+
+  function loadDownloaded() {
+    return loadTab("downloaded");
+  }
+
+  function loadFailed() {
+    return loadTab("failed");
   }
 
   async function loadStatus() {
@@ -864,10 +925,18 @@
     try {
       const res = await api("/get_download_status");
       renderSpeed(res && res.download_speed ? res.download_speed : "");
-      if (res && typeof res.completed === "number") {
-        setText(el.statDone, String(res.completed));
-        setText(el.badgeDone, String(res.completed));
-        if (el.badgeDone) el.badgeDone.hidden = res.completed === 0;
+      if (res) {
+        if (typeof res.downloading === "number") {
+          state.counts.downloading = res.downloading;
+        }
+        if (typeof res.completed === "number") {
+          state.counts.completed = res.completed;
+        }
+        if (typeof res.failed === "number") {
+          state.counts.failed = res.failed;
+        }
+        renderCounts();
+        syncToolbar();
       }
       const running = !(res && res.state === "paused");
       const nextAction = running ? "pause" : "continue";
@@ -885,22 +954,22 @@
   }
 
   function stepPage(delta) {
-    if (!state.pageSize) return;
     const tab = state.tab;
-    const total = filteredRows(tab).length;
-    const pages = Math.max(1, Math.ceil(total / state.pageSize));
-    const next = Math.min(Math.max(1, (state.pages[tab] || 1) + delta), pages);
-    if (next === state.pages[tab]) return;
-    state.pages[tab] = next;
-    renderCachedTab();
+    const info = pagerState(tab);
+    const next = Math.min(Math.max(1, (info.page || 1) + delta), info.pages || 1);
+    if (next === info.page) return;
+    info.page = next;
+    refreshActive().catch(notifyError);
   }
+
+  const PAGE_SIZES = [25, 50, 100, 200];
 
   function initPager() {
     let size = 25;
     try {
       const raw = localStorage.getItem("tgdl-page-size");
       const saved = raw === null ? NaN : Number(raw);
-      if ([0, 25, 50, 100].indexOf(saved) !== -1) size = saved;
+      if (PAGE_SIZES.indexOf(saved) !== -1) size = saved;
     } catch (e) {
       /* private mode: keep the default */
     }
@@ -911,14 +980,14 @@
     if (el.pageSize) {
       el.pageSize.addEventListener("change", () => {
         const next = Number(el.pageSize.value);
-        state.pageSize = [0, 25, 50, 100].indexOf(next) !== -1 ? next : 25;
+        state.pageSize = PAGE_SIZES.indexOf(next) !== -1 ? next : 25;
         try {
           localStorage.setItem("tgdl-page-size", String(state.pageSize));
         } catch (e) {
           /* private mode */
         }
-        state.pages[state.tab] = 1;
-        renderCachedTab();
+        pagerState(state.tab).page = 1;
+        refreshActive().catch(notifyError);
       });
     }
   }
@@ -1181,48 +1250,31 @@
   }
 
   async function retryAllFailed() {
-    if (isBusy(el.retryAllBtn) || !state.failed.length) return;
-    const chats = [];
-    state.failed.forEach((row) => {
-      const key = String(row.chat);
-      if (chats.indexOf(key) === -1) chats.push(key);
-    });
+    if (isBusy(el.retryAllBtn) || tabCount("failed") === 0) return;
 
     setBusy(el.retryAllBtn, true);
     const originalText = el.retryAllBtn.textContent;
     setText(el.retryAllBtn, "提交中…");
     try {
-      let totalRetried = 0;
-      let anyPending = false;
-      const errors = [];
-      for (const chatId of chats) {
-        try {
-          const res = await api(
-            "/retry_failed?chat_id=" + encodeURIComponent(chatId),
-            { method: "POST" }
-          );
-          if (res && res.code === "1") {
-            if (res.pending) anyPending = true;
-            totalRetried += Number(res.retried || 0);
-          } else {
-            errors.push((res && res.msg) || chatId + " 重试失败");
-          }
-        } catch (err) {
-          errors.push(chatId + ": " + err.message);
-        }
-      }
-
-      if (totalRetried > 0 || anyPending) {
-        const msg = anyPending
+      // No chat_id: the backend re-queues every recorded failure at once, so
+      // the bulk action no longer only covers the visible page.
+      const res = await api("/retry_failed", { method: "POST" });
+      if (res && res.code === "1") {
+        const msg = res.pending
           ? "已提交批量重试，稍后刷新查看结果"
-          : "已重新加入 " + totalRetried + " 个失败任务";
+          : "已重新加入 " + Number(res.retried || 0) + " 个失败任务";
         toast(msg, "success");
-      }
-      if (errors.length) {
-        toast("部分重试失败：" + errors[0], "error");
+      } else {
+        toast("批量重试失败：" + ((res && res.msg) || "未知错误"), "error");
       }
       lastTabFetch = 0;
-      await Promise.all([loadFailed(), loadDownloading().catch(() => {})]);
+      await Promise.all([
+        loadFailed().catch(() => {}),
+        loadDownloading().catch(() => {}),
+        loadStatus().catch(() => {}),
+      ]);
+    } catch (err) {
+      toast("批量重试失败：" + err.message, "error");
     } finally {
       setBusy(el.retryAllBtn, false);
       setText(el.retryAllBtn, originalText);
@@ -1230,7 +1282,7 @@
   }
 
   async function clearAllFailed() {
-    if (isBusy(el.clearFailedBtn) || !state.failed.length) return;
+    if (isBusy(el.clearFailedBtn) || tabCount("failed") === 0) return;
     if (el.clearFailedBtn.dataset.confirm !== "1") {
       confirmOrRun(el.clearFailedBtn, "确认清空", "确认清空全部失败记录？再点一次执行");
       return;
@@ -1246,12 +1298,47 @@
       if (!res || res.code !== "1") throw new Error((res && res.msg) || "清空失败");
       const count = Number(res.cleared || 0);
       toast(count ? "已清空 " + count + " 条失败记录" : "已清空失败记录", "success");
+      pagerState("failed").page = 1;
       lastTabFetch = 0;
-      await loadFailed();
+      await Promise.all([loadFailed(), loadStatus().catch(() => {})]);
     } catch (err) {
       toast("清空失败：" + err.message, "error");
     } finally {
       setBusy(el.clearFailedBtn, false);
+    }
+  }
+
+  async function clearAllCompleted() {
+    if (isBusy(el.clearCompletedBtn) || tabCount("downloaded") === 0) return;
+    if (el.clearCompletedBtn.dataset.confirm !== "1") {
+      confirmOrRun(
+        el.clearCompletedBtn,
+        "确认清空",
+        "确认清空全部已完成记录？只删记录，不删本地文件。再点一次执行"
+      );
+      return;
+    }
+
+    clearTimeout(Number(el.clearCompletedBtn.dataset.timer || 0));
+    el.clearCompletedBtn.dataset.confirm = "0";
+    restoreLabel(el.clearCompletedBtn);
+
+    setBusy(el.clearCompletedBtn, true);
+    try {
+      const res = await api("/clear_completed", { method: "POST" });
+      if (!res || res.code !== "1") throw new Error((res && res.msg) || "清空失败");
+      const count = Number(res.cleared || 0);
+      toast(
+        count ? "已清空 " + count + " 条已完成记录（本地文件保留）" : "已完成记录已清空",
+        "success"
+      );
+      pagerState("downloaded").page = 1;
+      lastTabFetch = 0;
+      await Promise.all([loadDownloaded(), loadStatus().catch(() => {})]);
+    } catch (err) {
+      toast("清空失败：" + err.message, "error");
+    } finally {
+      setBusy(el.clearCompletedBtn, false);
     }
   }
 
@@ -1821,8 +1908,6 @@
   /* ------------------------------------------------------------------ loop */
 
   let lastTabFetch = 0;
-  let lastFailedFetch = 0;
-  let lastCounterFetch = 0;
   let errorCount = 0;
 
   function notifyError(err) {
@@ -1842,6 +1927,8 @@
     if (document.hidden || state.pollingPaused) return;
     const now = Date.now();
 
+    // Status also carries the per-tab counts, so the badges stay right without
+    // pulling the whole lists down.
     loadStatus()
       .then(clearPollError)
       .catch(notifyError);
@@ -1850,19 +1937,6 @@
     if (now - lastTabFetch >= interval) {
       lastTabFetch = now;
       refreshActive().catch(notifyError);
-    }
-
-    if (now - lastFailedFetch >= FAILED_BADGE_REFRESH) {
-      lastFailedFetch = now;
-      loadFailed().catch(() => {});
-    }
-
-    if (
-      state.tab !== "downloading" &&
-      now - lastCounterFetch >= COUNTER_REFRESH
-    ) {
-      lastCounterFetch = now;
-      loadDownloading().catch(() => {});
     }
   }
 
@@ -1888,9 +1962,10 @@
   function clearFilters() {
     state.query = "";
     state.uploadFilter = "all";
-    state.pages[state.tab] = 1;
+    pagerState(state.tab).page = 1;
     if (el.taskSearch) el.taskSearch.value = "";
-    renderCachedTab();
+    refreshActive().catch(notifyError);
+    syncToolbar();
   }
 
   function bind() {
@@ -1925,22 +2000,29 @@
     });
 
     if (el.taskSearch) {
+      // Debounce: every keystroke triggers a server-side search query.
+      let searchTimer = 0;
       el.taskSearch.addEventListener("input", () => {
         state.query = el.taskSearch.value || "";
-        state.pages[state.tab] = 1;
-        renderCachedTab();
+        pagerState(state.tab).page = 1;
+        syncToolbar();
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => {
+          refreshActive().catch(notifyError);
+        }, 250);
       });
     }
 
     if (el.taskSearchClear) {
       el.taskSearchClear.addEventListener("click", () => {
         state.query = "";
-        state.pages[state.tab] = 1;
+        pagerState(state.tab).page = 1;
         if (el.taskSearch) {
           el.taskSearch.value = "";
           el.taskSearch.focus();
         }
-        renderCachedTab();
+        syncToolbar();
+        refreshActive().catch(notifyError);
       });
     }
 
@@ -1949,8 +2031,9 @@
         const btn = event.target.closest("[data-upload-filter]");
         if (!btn) return;
         state.uploadFilter = btn.dataset.uploadFilter || "all";
-        state.pages.downloaded = 1;
-        renderDownloaded();
+        pagerState("downloaded").page = 1;
+        syncToolbar();
+        loadDownloaded().catch(notifyError);
       });
     }
 
@@ -1960,6 +2043,9 @@
 
     if (el.retryAllBtn) el.retryAllBtn.addEventListener("click", retryAllFailed);
     if (el.clearFailedBtn) el.clearFailedBtn.addEventListener("click", clearAllFailed);
+    if (el.clearCompletedBtn) {
+      el.clearCompletedBtn.addEventListener("click", clearAllCompleted);
+    }
     if (el.pollToggle) el.pollToggle.addEventListener("click", togglePolling);
 
     el.pauseBtn.addEventListener("click", togglePause);

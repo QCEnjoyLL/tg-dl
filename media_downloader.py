@@ -18,7 +18,9 @@ from module.config_form import parse_format_list
 from module.download_stat import (
     TaskCancelled,
     clear_task_cancelled,
+    close_history_db,
     get_failed_downloads,
+    init_history_db,
     is_task_cancelled,
     mark_download_completed,
     mark_download_failed,
@@ -832,12 +834,15 @@ async def download_chat_task(
     try:
         if chat_download_config.ids_to_retry:
             logger.info(f"{_t('Downloading files failed during last run')}...")
-            skipped_messages: list = await client.get_messages(  # type: ignore
-                chat_id=node.chat_id, message_ids=chat_download_config.ids_to_retry
-            )
+            retry_ids = list(chat_download_config.ids_to_retry)
+            for start in range(0, len(retry_ids), 200):
+                batch_ids = retry_ids[start : start + 200]
+                skipped_messages: list = await client.get_messages(  # type: ignore
+                    chat_id=node.chat_id, message_ids=batch_ids
+                )
 
-            for message in skipped_messages:
-                await add_download_task(message, node)
+                for message in skipped_messages:
+                    await add_download_task(message, node)
 
         async for message in messages_iter:  # type: ignore
             meta_data = MetaData()
@@ -937,28 +942,38 @@ async def retry_failed_messages(
             )
             node = TaskNode(chat_id=cid)
 
-        try:
-            messages = await _retry_client.get_messages(  # type: ignore
-                chat_id=cid, message_ids=ids
-            )
-        except Exception as e:  # pylint: disable = W0703
-            logger.warning(f"retry fetch {cid} failed: {e}")
-            reasons.append(f"拉取消息失败：{e}")
-            continue
-
-        for message in messages:
-            if not message or getattr(message, "empty", False):
-                logger.warning(f"retry: message {ids} in {cid} is not accessible")
-                reasons.append(
-                    f"消息 {', '.join(str(one) for one in ids)} 已不可访问"
-                    "（可能被删除或当前账号没有权限）"
+        # Telegram caps GetMessages at 200 ids per RPC call.
+        for start in range(0, len(ids), 200):
+            batch_ids = ids[start : start + 200]
+            try:
+                messages = await _retry_client.get_messages(  # type: ignore
+                    chat_id=cid, message_ids=batch_ids
                 )
+            except Exception as e:  # pylint: disable = W0703
+                logger.warning(f"retry fetch {cid} failed: {e}")
+                reasons.append(f"拉取消息失败：{e}")
                 continue
-            if await add_download_task(message, node):
-                retried += 1
-                mark_download_retried(cid, message.id)
-            else:
-                reasons.append(f"消息 {message.id} 无法重新加入队列")
+
+            for message in messages:
+                if not message or getattr(message, "empty", False):
+                    label = (
+                        ", ".join(str(one) for one in batch_ids)
+                        if len(batch_ids) <= 5
+                        else f"{len(batch_ids)} 条消息"
+                    )
+                    logger.warning(
+                        f"retry: message {label} in {cid} is not accessible"
+                    )
+                    reasons.append(
+                        f"消息 {label} 已不可访问"
+                        "（可能被删除或当前账号没有权限）"
+                    )
+                    continue
+                if await add_download_task(message, node):
+                    retried += 1
+                    mark_download_retried(cid, message.id)
+                else:
+                    reasons.append(f"消息 {message.id} 无法重新加入队列")
 
     logger.info(f"requeued {retried} failed message(s)")
     return retried, reasons
@@ -1051,6 +1066,10 @@ def main():
     )
     try:
         app.pre_run()
+        history_db = os.environ.get("TDL_HISTORY_DB") or os.path.join(
+            app.session_file_path, "history.db"
+        )
+        init_history_db(history_db)
         # Partial files are kept for resume; drop the ones nobody came back for.
         stale_temp_files = _cleanup_stale_temp_files(app.temp_save_path)
         if stale_temp_files:
@@ -1130,6 +1149,7 @@ def main():
             # e.g. data.yaml exists as a directory because docker created the
             # bind-mount source; report it instead of crashing on the way out.
             logger.error(f"save config failed: {save_err}")
+        close_history_db()
         logger.success(
             f"{_t('Updated last read message_id to config file')},"
             f"{_t('total download')} {app.total_download_task}, "

@@ -20,18 +20,27 @@ import utils
 from module import config_form
 from module.app import Application
 from module.download_stat import (
+    DEFAULT_PAGE_SIZE,
+    MAX_PAGE_SIZE,
     DownloadState,
+    clear_completed_downloads,
     clear_failed_downloads,
+    count_completed_downloads,
+    count_downloading_downloads,
+    count_failed_downloads,
     delete_task,
     get_completed_downloads,
     get_download_result,
     get_download_state,
     get_failed_downloads,
     get_total_download_speed,
+    is_task_cancelled,
     is_task_paused,
     mark_download_retried,
-    set_download_state,
     normalize_chat_id,
+    query_completed_downloads,
+    query_failed_downloads,
+    set_download_state,
     set_task_paused,
 )
 from utils.atomic_write import write_text_atomic
@@ -366,7 +375,7 @@ def index():
 @_flask_app.route("/get_download_status")
 @login_required
 def get_download_speed():
-    """Get download speed"""
+    """Get download speed and per-tab counts."""
     return jsonify(
         {
             "download_speed": format_byte(get_total_download_speed()) + "/s",
@@ -376,8 +385,11 @@ def get_download_speed():
                 if get_download_state() is DownloadState.Downloading
                 else "paused"
             ),
-            # Keeps the "已完成" tab badge fresh without polling the full list.
-            "completed": len(get_completed_downloads()),
+            # Counts come from SQL so the tab badges stay right even though the
+            # list itself is now paginated.
+            "downloading": count_downloading_downloads(),
+            "completed": count_completed_downloads(),
+            "failed": count_failed_downloads(),
         }
     )
 
@@ -440,40 +452,27 @@ def _progress_rows() -> list:
     return rows
 
 
+def _format_completed_row(value: dict) -> dict:
+    file_name = value.get("file_name") or ""
+    norm_path = file_name.replace("\\", "/")
+    return {
+        "chat": value.get("chat"),
+        "id": value.get("id"),
+        "filename": norm_path.rsplit("/", 1)[-1] if norm_path else "",
+        "total_size": format_byte(value.get("total_size") or 0),
+        "save_path": norm_path,
+        "completed_time": value.get("completed_time") or 0,
+        "upload_success": bool(value.get("upload_success")),
+        # "uploaded" (new) / "exists" (already on the remote) / None
+        "upload_state": value.get("upload_state"),
+    }
+
+
 def _completed_rows() -> list:
-    rows = []
-    for value in get_completed_downloads():
-        file_name = value.get("file_name") or ""
-        rows.append(
-            {
-                "chat": value.get("chat"),
-                "id": value.get("id"),
-                "filename": os.path.basename(file_name),
-                "total_size": format_byte(value.get("total_size") or 0),
-                "save_path": file_name.replace("\\", "/"),
-                "completed_time": value.get("completed_time") or 0,
-                "upload_success": bool(value.get("upload_success")),
-                # "uploaded" (new) / "exists" (already on the remote) / None
-                "upload_state": value.get("upload_state"),
-            }
-        )
-    return rows
+    return [_format_completed_row(value) for value in get_completed_downloads()]
 
 
-@_flask_app.route("/get_download_list")
-@login_required
-def get_download_list():
-    """Return in-progress downloads (``already_down=false``) or finished ones."""
-    already_down = request.args.get("already_down") == "true"
-    if already_down:
-        return jsonify(_completed_rows())
-    return jsonify(_progress_rows())
-
-
-@_flask_app.route("/get_failed_list")
-@login_required
-def get_failed_list():
-    """List failed downloads so they can be retried from the Web UI."""
+def _failed_rows() -> list:
     result = []
     for chat_id, messages in get_failed_downloads().items():
         for message_id, value in messages.items():
@@ -487,7 +486,99 @@ def get_failed_list():
                 }
             )
     result.sort(key=lambda row: row.get("time", 0), reverse=True)
-    return jsonify(result)
+    return result
+
+
+def _is_paginated_request() -> bool:
+    return any(
+        key in request.args
+        for key in ("page", "page_size", "q", "upload_state", "paginated")
+    )
+
+
+def _parse_int_arg(name: str, default: int) -> int:
+    raw = request.args.get(name)
+    if raw is None or not str(raw).strip():
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+def _paginate_rows(rows: list, q: str, page: int, page_size: int) -> dict:
+    """Filter and slice the in-memory progress list (the only non-SQL list)."""
+    all_total = len(rows)
+    query_text = (q or "").strip().lower()
+    filtered = rows
+    if query_text:
+        filtered = [
+            row
+            for row in rows
+            if query_text
+            in " ".join(
+                str(row.get(field) or "")
+                for field in ("id", "chat", "filename", "save_path", "reason")
+            ).lower()
+        ]
+
+    total = len(filtered)
+    size = MAX_PAGE_SIZE if page_size <= 0 else min(max(1, page_size), MAX_PAGE_SIZE)
+    pages = max(1, (total + size - 1) // size)
+    cur_page = min(max(1, page), pages)
+    start = (cur_page - 1) * size
+    return {
+        "rows": filtered[start : start + size],
+        "total": total,
+        "all_total": all_total,
+        "page": cur_page,
+        "page_size": size,
+        "pages": pages,
+    }
+
+
+@_flask_app.route("/get_download_list")
+@login_required
+def get_download_list():
+    """Return in-progress downloads (``already_down=false``) or finished ones.
+
+    Without paging parameters the legacy full-list JSON is returned. With
+    ``page``/``page_size``/``q``/``upload_state`` the finished list is filtered
+    and paginated by SQLite, so a long history never travels in full.
+    """
+    already_down = request.args.get("already_down") == "true"
+    paginated = _is_paginated_request()
+    q = request.args.get("q", "")
+    upload_state = request.args.get("upload_state", "all")
+    page = _parse_int_arg("page", 1)
+    page_size = _parse_int_arg("page_size", DEFAULT_PAGE_SIZE)
+
+    if already_down:
+        if not paginated:
+            return jsonify(_completed_rows())
+        result = query_completed_downloads(
+            q=q, upload_state=upload_state, page=page, page_size=page_size
+        )
+        result["rows"] = [_format_completed_row(row) for row in result["rows"]]
+        return jsonify(result)
+
+    rows = _progress_rows()
+    if not paginated:
+        return jsonify(rows)
+    return jsonify(_paginate_rows(rows, q=q, page=page, page_size=page_size))
+
+
+@_flask_app.route("/get_failed_list")
+@login_required
+def get_failed_list():
+    """List failed downloads so they can be retried from the Web UI."""
+    if not _is_paginated_request():
+        return jsonify(_failed_rows())
+
+    q = request.args.get("q", "")
+    page = _parse_int_arg("page", 1)
+    page_size = _parse_int_arg("page_size", DEFAULT_PAGE_SIZE)
+    return jsonify(query_failed_downloads(q=q, page=page, page_size=page_size))
 
 
 def _task_args() -> Optional[Tuple[Union[int, str], int]]:
@@ -537,20 +628,22 @@ def delete_download_task():
     if not args:
         return jsonify({"code": "0", "msg": "chat_id and message_id are required"})
     delete_task(args[0], args[1])
+    if not is_task_cancelled(args[0], args[1]):
+        _forget_failed_ids(args[0], args[1])
     return jsonify({"code": "1"})
 
 
 @_flask_app.route("/retry_failed", methods=["POST"])
 @login_required
 def retry_failed():
-    """Queue one failed message again, or the whole chat when id is omitted."""
+    """Queue one failed message, one chat, or all failed messages again."""
     chat_id_arg = request.args.get("chat_id")
     message_id_arg = request.args.get("message_id")
 
-    if chat_id_arg is None:
+    if not chat_id_arg and message_id_arg:
         return jsonify({"code": "0", "msg": "chat_id is required"})
 
-    chat_id = normalize_chat_id(chat_id_arg)
+    chat_id = normalize_chat_id(chat_id_arg) if chat_id_arg else None
 
     message_id = None
     if message_id_arg:
@@ -661,6 +754,19 @@ def clear_failed():
 
     cleared = clear_failed_downloads(chat_id)
     _forget_failed_ids(chat_id, None)
+    return jsonify({"code": "1", "cleared": cleared})
+
+
+@_flask_app.route("/clear_completed", methods=["POST"])
+@login_required
+def clear_completed():
+    """Clear recorded completed downloads without touching local files."""
+    chat_id_arg = request.args.get("chat_id")
+    if not chat_id_arg:
+        cleared = clear_completed_downloads()
+        return jsonify({"code": "1", "cleared": cleared})
+
+    cleared = clear_completed_downloads(normalize_chat_id(chat_id_arg))
     return jsonify({"code": "1", "cleared": cleared})
 
 

@@ -7,7 +7,7 @@ import unittest
 from unittest import mock
 
 import utils
-from module import web
+from module import download_stat, web
 from module.download_stat import DownloadState, set_download_state
 from utils import atomic_write
 
@@ -80,6 +80,14 @@ class WebApiTestCase(unittest.TestCase):
         flask_app.config.update(TESTING=True, LOGIN_DISABLED=True)
         self.client = flask_app.test_client()
         set_download_state(DownloadState.Downloading)
+        # Each test gets a clean in-memory history database.
+        download_stat.close_history_db()
+        download_stat.init_history_db(None)
+        with download_stat._PROGRESS_LOCK:  # pylint: disable = W0212
+            download_stat._download_result.clear()
+
+    def tearDown(self):
+        download_stat.close_history_db()
 
     def test_progress_list_is_json(self):
         with mock.patch.object(
@@ -108,10 +116,10 @@ class WebApiTestCase(unittest.TestCase):
         self.assertEqual(zero_row["download_progress"], 0.0)
 
     def test_completed_list_is_json(self):
-        with mock.patch.object(
-            web, "get_completed_downloads", return_value=SAMPLE_COMPLETED
-        ):
-            response = self.client.get("/get_download_list?already_down=true")
+        download_stat.mark_download_completed(
+            -100123, 3, "/tmp/done.mp4", 4096, "uploaded"
+        )
+        response = self.client.get("/get_download_list?already_down=true")
 
         self.assertEqual(response.status_code, 200)
         rows = response.get_json()
@@ -131,17 +139,13 @@ class WebApiTestCase(unittest.TestCase):
         self.assertEqual(len(response.get_json()), 2)
 
     def test_failed_list_exposes_the_reason(self):
-        failed = {
-            -100123: {
-                132: {
-                    "file_name": "sample.mp4",
-                    "time": 1763000000,
-                    "reason": "only received 0 of 1024 bytes (Timeout: ...)",
-                }
-            }
-        }
-        with mock.patch.object(web, "get_failed_downloads", return_value=failed):
-            response = self.client.get("/get_failed_list")
+        download_stat.mark_download_failed(
+            -100123,
+            132,
+            "sample.mp4",
+            "only received 0 of 1024 bytes (Timeout: ...)",
+        )
+        response = self.client.get("/get_failed_list")
 
         rows = response.get_json()
         self.assertEqual(len(rows), 1)
@@ -149,12 +153,84 @@ class WebApiTestCase(unittest.TestCase):
         # The Web UI shows this column, so the key must be part of the contract.
         self.assertIn("only received 0 of 1024 bytes", rows[0]["reason"])
 
+    def test_paginated_completed_list(self):
+        for index in range(5):
+            download_stat.mark_download_completed(
+                -100123, index, f"/tmp/{index}.mp4", 10 * index, "uploaded"
+            )
+
+        response = self.client.get(
+            "/get_download_list?already_down=true&page=2&page_size=2"
+        )
+        payload = response.get_json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(payload["total"], 5)
+        self.assertEqual(payload["all_total"], 5)
+        self.assertEqual(payload["pages"], 3)
+        self.assertEqual(payload["page"], 2)
+        self.assertEqual(len(payload["rows"]), 2)
+        # Newest first: page 2 of 2-per-page holds ids 2 and 1.
+        self.assertEqual([row["id"] for row in payload["rows"]], [2, 1])
+
+    def test_paginated_completed_search_and_upload_filter(self):
+        download_stat.mark_download_completed(
+            -100123, 10, "/tmp/holiday.mp4", 10, "uploaded"
+        )
+        download_stat.mark_download_completed(-200456, 11, "/tmp/work.mov", 20, None)
+
+        by_name = self.client.get(
+            "/get_download_list?already_down=true&page=1&page_size=25&q=holiday"
+        ).get_json()
+        self.assertEqual(by_name["total"], 1)
+        self.assertEqual(by_name["rows"][0]["id"], 10)
+        self.assertEqual(by_name["all_total"], 2)
+
+        by_chat = self.client.get(
+            "/get_download_list?already_down=true&page=1&page_size=25&q=-200456"
+        ).get_json()
+        self.assertEqual(by_chat["total"], 1)
+        self.assertEqual(by_chat["rows"][0]["id"], 11)
+
+        local_only = self.client.get(
+            "/get_download_list?already_down=true&page=1&page_size=25"
+            "&upload_state=local"
+        ).get_json()
+        self.assertEqual(local_only["total"], 1)
+        self.assertEqual(local_only["rows"][0]["id"], 11)
+
+    def test_paginated_failed_list(self):
+        download_stat.mark_download_failed(-100123, 20, "/tmp/a.mp4", "boom")
+        download_stat.mark_download_failed(-100123, 21, "/tmp/b.mp4", "FloodWait")
+
+        response = self.client.get("/get_failed_list?page=1&page_size=1")
+        payload = response.get_json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(payload["total"], 2)
+        self.assertEqual(payload["pages"], 2)
+        self.assertEqual(len(payload["rows"]), 1)
+
+        searched = self.client.get("/get_failed_list?page=1&page_size=25&q=flood").get_json()
+        self.assertEqual(searched["total"], 1)
+        self.assertEqual(searched["rows"][0]["id"], 21)
+
+    def test_clear_completed_endpoint(self):
+        download_stat.mark_download_completed(-100123, 30, "/tmp/a.mp4", 10)
+
+        response = self.client.post("/clear_completed")
+        payload = response.get_json()
+
+        self.assertEqual(payload["code"], "1")
+        self.assertEqual(payload["cleared"], 1)
+        self.assertEqual(download_stat.count_completed_downloads(), 0)
+
     def test_download_status_is_json(self):
-        with mock.patch.object(
-            web, "get_total_download_speed", return_value=1024
-        ), mock.patch.object(
-            web, "get_completed_downloads", return_value=SAMPLE_COMPLETED
-        ):
+        download_stat.mark_download_completed(
+            -100123, 3, "/tmp/done.mp4", 4096, "uploaded"
+        )
+        download_stat.mark_download_failed(-100123, 4, "/tmp/bad.mp4", "boom")
+        with mock.patch.object(web, "get_total_download_speed", return_value=1024):
             response = self.client.get("/get_download_status")
 
         self.assertEqual(response.status_code, 200)
@@ -162,8 +238,10 @@ class WebApiTestCase(unittest.TestCase):
         payload = response.get_json()
         self.assertEqual(payload["download_speed"], "1.0KB/s")
         self.assertEqual(payload["state"], "running")
-        # The tab badge reads this without fetching the whole list.
+        # The tab badges read these counts without fetching the whole list.
         self.assertEqual(payload["completed"], 1)
+        self.assertEqual(payload["failed"], 1)
+        self.assertEqual(payload["downloading"], 0)
 
     def test_set_download_state_rejects_unknown_values(self):
         response = self.client.post(

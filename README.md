@@ -3,7 +3,7 @@
 > 基于 [tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader) 的修复分支。
 > 保留原项目的全部功能（Telegram bot 指令、Web UI、rclone 上传、受保护内容下载），并持续修复实际使用中的问题。
 
-当前版本：**v2.12.0**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
+当前版本：**v2.13.0**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
 
 [![Docker](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml)
 [![Release](https://img.shields.io/github/v/release/QCEnjoyLL/tg-dl?label=release&color=blue)](https://github.com/QCEnjoyLL/tg-dl/releases/latest)
@@ -202,9 +202,14 @@ web_login_secret: "改成你的密码"
 功能：
 
 - **明暗主题**：默认跟随系统，右上角可手动切换，选择记在 `localStorage`，刷新不丢
-- **顶部概览**：下载中、已完成、失败数量，以及运行/暂停状态
+- **顶部概览**：下载中、已完成、失败数量，以及运行/暂停状态（数量来自服务端计数，与分页无关）
 - **三个标签**：下载中、已完成、失败；支持深链，`http://host:5000/#failed` 直接打开失败页
-- **分页**：每页默认 25 条，可选 25 / 50 / 100 / 全部；切换标签各自记住页码，每页条数记在 `localStorage`
+- **搜索与筛选**：顶部搜索框按文件名 / 频道 / ID / 路径 / 失败原因过滤；「已完成」页签可按
+  `全部 / 仅本地 / 已上传 / 云端已有` 筛选。搜索和筛选都在**服务端**执行（SQLite），历史再长也只返回当前页
+- **分页**：每页默认 25 条，可选 25 / 50 / 100 / 200；切换标签各自记住页码，每页条数记在 `localStorage`
+- **历史持久化**：完成 / 失败记录存在 `sessions/history.db`（SQLite，可用环境变量
+  `TDL_HISTORY_DB` 指定路径），**没有条数上限**，容器重启、重新部署后历史仍在
+- **一键清空**：「已完成」页签有「清空已完成」（只删记录，不删本地文件，两步确认），「失败」页签有「全部重试 / 清空失败」
 - **全局暂停提示**：点右上角「暂停」后顶部出现暂停横幅，下载中每一行标注 `已暂停` / `单条暂停`，速度冻结显示 `—`
 - **单任务控制**：每个下载中的任务可以「暂停 / 继续 / 删除」，暂停只影响该条消息，不影响其他任务
 - **失败可操作**：每行「重试」直接重新入队（无需重启）、「删除」清除记录（并同步从 `ids_to_retry` 移除，重启后不会再排队）
@@ -220,14 +225,16 @@ web_login_secret: "改成你的密码"
 
 | 接口 | 方法 | 说明 |
 | --- | --- | --- |
-| `/get_download_list?already_down=false` | GET | 下载中的任务 JSON（含 `paused` 状态） |
-| `/get_download_list?already_down=true` | GET | 已完成任务 JSON |
-| `/get_failed_list` | GET | 失败任务 JSON |
+| `/get_download_list?already_down=false` | GET | 下载中的任务 JSON（含 `paused` 状态）；可加 `page/page_size/q` 分页搜索 |
+| `/get_download_list?already_down=true` | GET | 已完成任务；加 `page/page_size/q/upload_state` 时服务端分页过滤，返回 `{rows,total,all_total,page,pages}` |
+| `/get_failed_list` | GET | 失败任务；同样支持 `page/page_size/q` 服务端分页 |
+| `/get_download_status` | GET | 速度、运行状态，以及 `downloading/completed/failed` 三个总数 |
 | `/pause_task?chat_id=&message_id=` | POST | 暂停单条任务 |
 | `/resume_task?chat_id=&message_id=` | POST | 恢复单条任务 |
 | `/delete_task?chat_id=&message_id=` | POST | 删除任务（下载中会中止该文件） |
-| `/retry_failed?chat_id=&message_id=` | POST | 重试单条，省略 `message_id` 则重试该 chat 全部 |
-| `/clear_failed?chat_id=&message_id=` | POST | 删除失败记录 |
+| `/retry_failed?chat_id=&message_id=` | POST | 重试单条，省略 `message_id` 重试该 chat；两者都省略则重试全部失败记录 |
+| `/clear_failed?chat_id=&message_id=` | POST | 删除失败记录（省略 `message_id` 清空该 chat，两者都省略清空全部） |
+| `/clear_completed?chat_id=` | POST | 清空已完成记录（不删除本地文件） |
 | `/get_config` | GET | 读取 `config.yaml` 原文（密钥掩码） |
 | `/set_config` | POST | 校验并保存 YAML 原文，返回已生效 / 需重启的配置项 |
 | `/get_config_form` | GET | 配置表单的字段定义、当前值和 YAML 原文 |
@@ -277,19 +284,19 @@ systemctl stop tg-dl         # 服务里配置 KillSignal=SIGINT
 - 推送到 `master` / `main`、打 `v*` tag、或在 Actions 页面手动触发时构建
 - 自动推送到 **GHCR**：`ghcr.io/qcenjoyll/tg-dl`
 - 版本号只有一处来源：`utils/__init__.py` 的 `__version__`。镜像标签、git tag、GitHub Release 全部由它生成，不会互相对不上
-- 标签规则：`2.12.0`（当前版本）、`2.12`（minor 系列）、`latest`（默认分支）、分支名、`sha-xxxxxxx`
+- 标签规则：`2.13.0`（当前版本）、`2.13`（minor 系列）、`latest`（默认分支）、分支名、`sha-xxxxxxx`
 - 镜像内注入 `org.opencontainers.image.version` / `.revision`，`docker inspect` 一眼能看到版本
-- 镜像推送成功后自动创建 **GitHub Release**：标题 `v2.12.0`，正文取自 `CHANGELOG.md` 同名章节 + 拉取命令
+- 镜像推送成功后自动创建 **GitHub Release**：标题 `v2.13.0`，正文取自 `CHANGELOG.md` 同名章节 + 拉取命令
 - Pull Request 只构建不推送，也不会创建 Release
 - 构建前先跑 `python -m compileall` 做语法检查
 
 ### 发布新版本
 
-1. 改 `utils/__init__.py` 里的 `__version__`（如 `2.12.0`）
-2. 在 `CHANGELOG.md` 顶部加 `## v2.12.0` 章节（Release 正文就是这段内容）
+1. 改 `utils/__init__.py` 里的 `__version__`（如 `2.13.1`）
+2. 在 `CHANGELOG.md` 顶部加 `## v2.13.1` 章节（Release 正文就是这段内容）
 3. 提交并推送到 `master` / `main`
 
-工作流会自动构建镜像、打 `v2.12.0` tag 并创建 Release。版本号已存在的 Release 会跳过，重复推送不会报错。
+工作流会自动构建镜像、打 `v2.13.1` tag 并创建 Release。版本号已存在的 Release 会跳过，重复推送不会报错。
 
 > 手动推 `v*` tag 也可以，但 tag 必须和 `__version__` 一致，否则工作流会直接失败——避免发布说明和实际运行的代码对不上。
 
@@ -435,6 +442,13 @@ v2.8.1 起上传前会先 `rclone lsjson --stat` 检查目标：同名且大小�
 **Q：重启后会不会重复下载？**
 不会。`last_read_message_id` 和 `ids_to_retry` 存在 `data.yaml`，已完成的跳过，失败的重新排队。
 
+**Q：下载历史存在哪？有上限吗？怎么清空？**
+v2.13.0 起存在 `sessions/history.db`（SQLite，可用环境变量 `TDL_HISTORY_DB` 换成别的路径），
+**没有条数上限**，重启后仍在。`docker-compose.yaml` 已经挂载 `./sessions`，所以容器重建也不会丢；
+数据库文件不可写时会自动退回内存模式（只丢重启前的历史）并打印告警。
+清空：Web UI「已完成」页签的「清空已完成」（只删记录，不删本地文件）、「失败」页签的
+「清空失败」；也可以直接停掉容器后删除 `sessions/history.db`。
+
 **Q：支持 115 / OpenList / WebDAV 吗？**
 支持。任何 rclone 能写的后端都可以，包括 WebDAV 挂载的 OpenList、115、阿里云盘等。
 
@@ -447,6 +461,8 @@ v2.8.1 起上传前会先 `rclone lsjson --stat` 检查目标：同名且大小�
 - 修复 Web 写接口契约（真实 JSON）、认证绕过、rclone 命令注入、上传失败误删本地、任务卡死等 P0 问题
 - 重写 Web UI 与登录页：明暗主题、概览卡片、单任务暂停/恢复/删除、在线配置编辑、退出登录、失败重试/删除、移动端适配、深链；移除 layui 与前端假 AES 加密，静态资源从 ~880KB 降到 ~35KB（CSS/JS 合计）
 - 统一下载补丁链（`fast_download` + 断点续传 + 流截断守卫），失败/中断留下的 `.temp` 在重试时从断点继续；依赖升到 Flask 3.1 / Werkzeug 3.1
+- 下载历史改为 SQLite 持久化（`sessions/history.db`，无条数上限），列表由服务端分页 / 搜索 / 筛选，
+  Web UI 支持一键清空已完成与失败记录
 - 重写 Dockerfile：加 `tzdata`、`PYTHONUNBUFFERED`、OCI 标签、`STOPSIGNAL SIGINT`
 - 重写镜像工作流：GHCR + buildx 缓存 + 语法检查，移除上游依赖 Docker Hub secrets 的旧流水线
 - 测试 job 改为必过（`Tests`），修复上游遗留的测试腐化，并覆盖 Web 接口、rclone 参数、上传失败删除和任务终态
@@ -472,6 +488,19 @@ v2.8.1 起上传前会先 `rclone lsjson --stat` 检查目标：同名且大小�
 > Docker / compose 用户不受影响（配置本来就是挂载进容器的，从未进过镜像）。
 
 逐条历史记录见 [CHANGELOG.md](CHANGELOG.md)；当前版本见顶部的 Release 徽章。
+
+<details>
+<summary><b>v2.13.0</b> — 下载历史持久化（SQLite），服务端分页与一键清空</summary>
+
+- 完成 / 失败记录从内存（原来各 500 条上限）改为 `sessions/history.db`（SQLite，`TDL_HISTORY_DB` 可改路径），
+  **不再有条数上限**，重启、重建容器后历史仍在；数据库不可写时自动退回内存模式
+- 列表接口支持 `page / page_size / q / upload_state`，由 SQLite 直接过滤和分页；
+  Web UI 的搜索、上传状态筛选、翻页全部走服务端，历史很长也只传当前页
+- 「已完成」页签新增「清空已完成」（只删记录、不删本地文件），「失败」页签保留「全部重试 / 清空失败」；
+  「全部重试」现在一次重试全部历史失败记录，不再只覆盖当前页
+- 徽章与概览数字改由 `/get_download_status` 的服务端计数驱动；单次 `GetMessages` 按 Telegram 上限 200 条分批
+
+</details>
 
 <details>
 <summary><b>v2.12.0</b> — Magpie 风格重绘 Web UI，新增搜索筛选与批量失败操作</summary>

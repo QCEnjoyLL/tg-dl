@@ -2037,6 +2037,18 @@ tr.is-expanded .trunc-text {
     overflow: visible;
   }
 
+  /* The card layout already renders size/time/path/reason inside .cell-name,
+     so the desktop cells must not be laid out a second time. The .table td
+     rule above wins on specificity, hence the explicit .table td.<cell>. */
+  .table td.cell-size,
+  .table td.cell-progress,
+  .table td.cell-speed,
+  .table td.cell-time,
+  .table td.cell-path,
+  .table td.cell-reason {
+    display: none;
+  }
+
   .col-progress,
   .cell-progress {
     display: none;

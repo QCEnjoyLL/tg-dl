@@ -1284,6 +1284,29 @@ class RetryFailedMessagesTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(retried, 0)
         self.assertTrue(reasons)
 
+    async def test_retry_fetches_messages_in_batches_of_200(self):
+        # Telegram caps GetMessages at 200 ids per RPC call.
+        import media_downloader as md
+
+        batches = []
+
+        async def get_messages(chat_id, message_ids):
+            batches.append(len(message_ids))
+            return [mock.Mock(empty=False, id=one_id) for one_id in message_ids]
+
+        client = mock.Mock()
+        client.get_messages = mock.AsyncMock(side_effect=get_messages)
+        failed = {-100: {one_id: {"file_name": "", "time": 1, "reason": ""} for one_id in range(450)}}
+
+        with mock.patch.object(md, "_retry_client", client),                 mock.patch.object(md, "get_failed_downloads", return_value=failed),                 mock.patch.object(md.app, "chat_download_config", {}),                 mock.patch.object(
+                    md, "add_download_task", new=mock.AsyncMock(return_value=True)
+                ),                 mock.patch.object(md, "mark_download_retried"):
+            retried, reasons = await md.retry_failed_messages(-100)
+
+        self.assertEqual(batches, [200, 200, 50])
+        self.assertEqual(retried, 450)
+        self.assertEqual(reasons, [])
+
 
 class FloodErrorDescriptionTestCase(unittest.TestCase):
     """FLOOD_PREMIUM_WAIT must explain itself in the failed-task list."""
