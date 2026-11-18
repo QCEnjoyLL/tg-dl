@@ -39,6 +39,7 @@ from module.pyrogram_extension import (
 )
 from utils.format import replace_date_time, validate_title
 from utils.meta_data import MetaData
+from utils.version_check import update_info
 
 # pylint: disable = C0301, R0902
 
@@ -425,7 +426,21 @@ def build_help_text() -> str:
         "```\n"
         f"{example_lines}\n"
         "```\n"
+        f"{_update_hint()}"
     )
+
+
+def _update_hint() -> str:
+    """One extra line when a newer release exists (offline-safe, cached)."""
+    update = update_info()
+    if not update.get("newer"):
+        return ""
+    message = _t("New version {version} is available (current {current})")
+    line = message.format(
+        version=f"v{update['latest']}",
+        current=f"v{update['current']}",
+    )
+    return f"\n🆕 {line}\n{update['url']}\n"
 
 
 async def send_help_str(client: pyrogram.Client, chat_id):

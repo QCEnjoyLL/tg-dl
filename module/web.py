@@ -45,6 +45,7 @@ from module.download_stat import (
 )
 from utils.atomic_write import write_text_atomic
 from utils.format import format_byte
+from utils import version_check
 
 log = logging.getLogger("werkzeug")
 log.setLevel(logging.ERROR)
@@ -423,6 +424,17 @@ def web_set_download_state():
 def get_app_version():
     """Get telegram_media_downloader version"""
     return utils.__version__
+
+
+@_flask_app.route("/get_latest_version")
+@login_required
+def get_latest_version():
+    """Latest GitHub release compared with this build.
+
+    Served from the cached background check, so the endpoint never waits on
+    the network and returns ``newer: false`` when GitHub is unreachable.
+    """
+    return jsonify(version_check.update_info())
 
 
 def _progress_rows() -> list:

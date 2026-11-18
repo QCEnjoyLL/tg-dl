@@ -243,6 +243,26 @@ class WebApiTestCase(unittest.TestCase):
         self.assertEqual(payload["failed"], 1)
         self.assertEqual(payload["downloading"], 0)
 
+    def test_latest_version_endpoint(self):
+        # Backed by the cached background check, so it answers instantly and
+        # simply reports newer=false when GitHub is unreachable.
+        info = {
+            "current": "2.13.2",
+            "latest": "2.14.0",
+            "newer": True,
+            "url": "https://github.com/QCEnjoyLL/tg-dl/releases",
+            "checked_at": 1,
+        }
+        with mock.patch.object(web.version_check, "update_info", return_value=info):
+            response = self.client.get("/get_latest_version")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.mimetype, "application/json")
+        payload = response.get_json()
+        self.assertTrue(payload["newer"])
+        self.assertEqual(payload["latest"], "2.14.0")
+        self.assertEqual(payload["current"], "2.13.2")
+
     def test_set_download_state_rejects_unknown_values(self):
         response = self.client.post(
             "/set_download_state?state=<script>alert(1)</script>"

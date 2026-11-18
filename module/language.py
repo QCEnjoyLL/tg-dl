@@ -71,6 +71,11 @@ translations = {
         "Примеры команд:",
         "Приклади команд:",
     ],
+    "New version {version} is available (current {current})": [
+        "新版本 {version} 可用（当前 {current}）",
+        "Доступна новая версия {version} (текущая {current})",
+        "Доступна нова версія {version} (поточна {current})",
+    ],
     "Show this help card": [
         "显示这份帮助卡片",
         "Показать эту справку",

@@ -3,7 +3,7 @@
 > 基于 [tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader) 的修复分支。
 > 保留原项目的全部功能（Telegram bot 指令、Web UI、rclone 上传、受保护内容下载），并持续修复实际使用中的问题。
 
-当前版本：**v2.13.2**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
+当前版本：**v2.14.0**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
 
 [![Docker](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml)
 [![Release](https://img.shields.io/github/v/release/QCEnjoyLL/tg-dl?label=release&color=blue)](https://github.com/QCEnjoyLL/tg-dl/releases/latest)
@@ -154,6 +154,7 @@ allowed_user_ids:
 ```
 
 bot 进度卡片已限制长度，不会再因为任务多而停止更新；发 `/help` 能看到完整命令列表，以及每条命令带中文说明的示例（可直接复制）。
+有新版本时，帮助卡片底部会多出一行「🆕 发现新版本：vX.Y.Z（当前版本 vA.B.C）」加 Release 地址。
 
 ### Web
 
@@ -209,6 +210,9 @@ web_login_secret: "改成你的密码"
 - **分页**：每页默认 25 条，可选 25 / 50 / 100 / 200；切换标签各自记住页码，每页条数记在 `localStorage`
 - **历史持久化**：完成 / 失败记录存在 `sessions/history.db`（SQLite，可用环境变量
   `TDL_HISTORY_DB` 指定路径），**没有条数上限**，容器重启、重新部署后历史仍在
+- **新版本提示**：左上角版本号后出现 `↑ vX.Y.Z` 就说明有新版本，点一下打开 Release 页；
+  服务端每 6 小时查一次 GitHub Release 并缓存，离线 / 限流 / 访问不了 GitHub 时静默跳过，
+  不影响使用；不想联网检查可设环境变量 `TDL_VERSION_CHECK=0`
 - **一键清空**：「已完成」页签有「清空已完成」（只删记录，不删本地文件，两步确认），「失败」页签有「全部重试 / 清空失败」
 - **全局暂停提示**：点右上角「暂停」后顶部出现暂停横幅，下载中每一行标注 `已暂停` / `单条暂停`，速度冻结显示 `—`
 - **单任务控制**：每个下载中的任务可以「暂停 / 继续 / 删除」，暂停只影响该条消息，不影响其他任务
@@ -229,6 +233,7 @@ web_login_secret: "改成你的密码"
 | `/get_download_list?already_down=true` | GET | 已完成任务；加 `page/page_size/q/upload_state` 时服务端分页过滤，返回 `{rows,total,all_total,page,pages}` |
 | `/get_failed_list` | GET | 失败任务；同样支持 `page/page_size/q` 服务端分页 |
 | `/get_download_status` | GET | 速度、运行状态，以及 `downloading/completed/failed` 三个总数 |
+| `/get_latest_version` | GET | 最新 Release 与本机版本对比（`current/latest/newer/url`，读缓存，不阻塞） |
 | `/pause_task?chat_id=&message_id=` | POST | 暂停单条任务 |
 | `/resume_task?chat_id=&message_id=` | POST | 恢复单条任务 |
 | `/delete_task?chat_id=&message_id=` | POST | 删除任务（下载中会中止该文件） |
@@ -284,19 +289,19 @@ systemctl stop tg-dl         # 服务里配置 KillSignal=SIGINT
 - 推送到 `master` / `main`、打 `v*` tag、或在 Actions 页面手动触发时构建
 - 自动推送到 **GHCR**：`ghcr.io/qcenjoyll/tg-dl`
 - 版本号只有一处来源：`utils/__init__.py` 的 `__version__`。镜像标签、git tag、GitHub Release 全部由它生成，不会互相对不上
-- 标签规则：`2.13.2`（当前版本）、`2.13`（minor 系列）、`latest`（默认分支）、分支名、`sha-xxxxxxx`
+- 标签规则：`2.14.0`（当前版本）、`2.14`（minor 系列）、`latest`（默认分支）、分支名、`sha-xxxxxxx`
 - 镜像内注入 `org.opencontainers.image.version` / `.revision`，`docker inspect` 一眼能看到版本
-- 镜像推送成功后自动创建 **GitHub Release**：标题 `v2.13.2`，正文取自 `CHANGELOG.md` 同名章节 + 拉取命令
+- 镜像推送成功后自动创建 **GitHub Release**：标题 `v2.14.0`，正文取自 `CHANGELOG.md` 同名章节 + 拉取命令
 - Pull Request 只构建不推送，也不会创建 Release
 - 构建前先跑 `python -m compileall` 做语法检查
 
 ### 发布新版本
 
-1. 改 `utils/__init__.py` 里的 `__version__`（如 `2.13.3`）
-2. 在 `CHANGELOG.md` 顶部加 `## v2.13.3` 章节（Release 正文就是这段内容）
+1. 改 `utils/__init__.py` 里的 `__version__`（如 `2.14.1`）
+2. 在 `CHANGELOG.md` 顶部加 `## v2.14.1` 章节（Release 正文就是这段内容）
 3. 提交并推送到 `master` / `main`
 
-工作流会自动构建镜像、打 `v2.13.3` tag 并创建 Release。版本号已存在的 Release 会跳过，重复推送不会报错。
+工作流会自动构建镜像、打 `v2.14.1` tag 并创建 Release。版本号已存在的 Release 会跳过，重复推送不会报错。
 
 > 手动推 `v*` tag 也可以，但 tag 必须和 `__version__` 一致，否则工作流会直接失败——避免发布说明和实际运行的代码对不上。
 
@@ -463,6 +468,7 @@ v2.13.0 起存在 `sessions/history.db`（SQLite，可用环境变量 `TDL_HISTO
 - 统一下载补丁链（`fast_download` + 断点续传 + 流截断守卫），失败/中断留下的 `.temp` 在重试时从断点继续；依赖升到 Flask 3.1 / Werkzeug 3.1
 - 下载历史改为 SQLite 持久化（`sessions/history.db`，无条数上限），列表由服务端分页 / 搜索 / 筛选，
   Web UI 支持一键清空已完成与失败记录
+- bot 帮助卡片与 Web UI 都带新版本提示（后台每 6 小时查一次 GitHub Release，可 `TDL_VERSION_CHECK=0` 关闭）
 - 重写 Dockerfile：加 `tzdata`、`PYTHONUNBUFFERED`、OCI 标签、`STOPSIGNAL SIGINT`
 - 重写镜像工作流：GHCR + buildx 缓存 + 语法检查，移除上游依赖 Docker Hub secrets 的旧流水线
 - 测试 job 改为必过（`Tests`），修复上游遗留的测试腐化，并覆盖 Web 接口、rclone 参数、上传失败删除和任务终态
@@ -488,6 +494,16 @@ v2.13.0 起存在 `sessions/history.db`（SQLite，可用环境变量 `TDL_HISTO
 > Docker / compose 用户不受影响（配置本来就是挂载进容器的，从未进过镜像）。
 
 逐条历史记录见 [CHANGELOG.md](CHANGELOG.md)；当前版本见顶部的 Release 徽章。
+
+<details>
+<summary><b>v2.14.0</b> — 新版本提示（bot 帮助卡片 + Web UI）</summary>
+
+- 后台每 6 小时查一次 GitHub Release 并缓存：bot `/help` 卡片底部提示新版本与 Release 地址，
+  Web UI 左上角出现 `↑ vX.Y.Z` 胶囊，点击直达 Release 页
+- 新增 `GET /get_latest_version`；断网 / 限流 / 访问不了 GitHub 时静默跳过，
+  可用 `TDL_VERSION_CHECK=0` 关闭检测
+
+</details>
 
 <details>
 <summary><b>v2.13.2</b> — 修复长列表里鼠标滚轮滚不动</summary>

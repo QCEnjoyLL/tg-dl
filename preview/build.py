@@ -40,7 +40,18 @@ def project_version() -> str:
     return match.group(1) if match else "0.0.0"
 
 
+def next_minor_version(version: str) -> str:
+    """v2.14.0 -> v2.15.0, so the preview can show the update hint."""
+    parts = [int(part) for part in re.findall(r"\d+", version)[:3]]
+    while len(parts) < 3:
+        parts.append(0)
+    parts[1] += 1
+    parts[2] = 0
+    return ".".join(str(part) for part in parts)
+
+
 VERSION = project_version()
+NEXT_VERSION = next_minor_version(VERSION)
 
 DOWNLOADING = [
     {
@@ -254,6 +265,7 @@ MOCK_JS = """
   var configText = %s;
   var formPayload = %s;
   var pageVersion = %s;
+  var nextVersion = %s;
   function respond(body, type) {
     return new Response(body, { status: 200, headers: { 'content-type': type || 'application/json' } });
   }
@@ -298,6 +310,16 @@ MOCK_JS = """
     var u = String(url);
     if (u.indexOf('/get_app_version') !== -1) {
       return Promise.resolve(respond(pageVersion, 'text/plain'));
+    }
+    if (u.indexOf('/get_latest_version') !== -1) {
+      // Illustrates the "new release available" hint in the header.
+      return Promise.resolve(respond(JSON.stringify({
+        current: pageVersion,
+        latest: nextVersion,
+        newer: true,
+        url: 'https://github.com/QCEnjoyLL/tg-dl/releases',
+        checked_at: 1
+      })));
     }
     if (u.indexOf('/get_download_status') !== -1) {
       return Promise.resolve(respond(JSON.stringify({
@@ -408,6 +430,7 @@ MOCK_JS = """
     json.dumps(MOCK_CONFIG, ensure_ascii=False),
     json.dumps(FORM_PAYLOAD, ensure_ascii=False, default=str),
     json.dumps(VERSION),
+    json.dumps(NEXT_VERSION),
 )
 
 

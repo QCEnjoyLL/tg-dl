@@ -63,6 +63,8 @@
     updated: $("#updated"),
     liveDot: $("#live-dot"),
     pollToggle: $("#poll-toggle"),
+    updatePill: $("#update-pill"),
+    updateVersion: $("#update-version"),
     taskSearch: $("#task-search"),
     taskSearchClear: $("#task-search-clear"),
     uploadFilters: $("#upload-filters"),
@@ -179,6 +181,26 @@
       }
     } catch (e) {
       /* older backends do not expose the version endpoint */
+    }
+  }
+
+  /** Show a link to the release page when the server knows a newer build. */
+  async function checkUpdate() {
+    try {
+      const info = await api("/get_latest_version");
+      if (!info || !info.newer || !info.latest) return;
+      if (!el.updatePill) return;
+      el.updatePill.hidden = false;
+      el.updatePill.href = info.url || "https://github.com/QCEnjoyLL/tg-dl/releases";
+      el.updatePill.title =
+        "新版本 v" +
+        info.latest +
+        " 可用（当前 v" +
+        (info.current || "") +
+        "），点击查看更新日志";
+      setText(el.updateVersion, "v" + info.latest);
+    } catch (e) {
+      /* offline or rate limited: no hint, no noise */
     }
   }
 
@@ -2157,6 +2179,9 @@
     if (state.tab !== "downloading") loadDownloading().catch(() => {});
     refreshActive().catch(notifyError);
     checkVersion();
+    checkUpdate();
+    // The server caches the answer for hours; this only refreshes the hint.
+    setInterval(checkUpdate, 30 * 60 * 1000);
 
     setInterval(tick, STATUS_REFRESH);
   }

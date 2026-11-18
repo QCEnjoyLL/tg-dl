@@ -2,6 +2,7 @@
 
 import asyncio
 import unittest
+from unittest import mock
 
 from pyrogram.parser.parser import Parser
 
@@ -105,6 +106,55 @@ class HelpTextTestCase(unittest.TestCase):
         self.assertIn("从群组 1234567890 只下载符合 [过滤器] 的消息", examples)
         self.assertIn("把群组 1111111111 的第 100~200 条消息转发到群组 2222222222", examples)
         self.assertIn("停止当前下载或转发任务", examples)
+
+
+class HelpUpdateHintTestCase(unittest.TestCase):
+    """A newer release is advertised under the help card (and only then)."""
+
+    NEWER = {
+        "current": "2.13.2",
+        "latest": "2.14.0",
+        "newer": True,
+        "url": "https://github.com/QCEnjoyLL/tg-dl/releases",
+        "checked_at": 1,
+    }
+    UP_TO_DATE = {
+        "current": "2.13.2",
+        "latest": "2.13.2",
+        "newer": False,
+        "url": "https://github.com/QCEnjoyLL/tg-dl/releases",
+        "checked_at": 1,
+    }
+
+    def setUp(self):
+        self._saved_language = language._language  # pylint: disable = W0212
+        language.set_language(Language.EN)
+
+    def tearDown(self):
+        language.set_language(self._saved_language)
+
+    def test_no_hint_when_already_up_to_date(self):
+        with mock.patch.object(bot, "update_info", return_value=self.UP_TO_DATE):
+            text = bot.build_help_text()
+
+        self.assertNotIn("is available", text)
+        self.assertNotIn("releases", text)
+
+    def test_hint_names_the_new_version(self):
+        with mock.patch.object(bot, "update_info", return_value=self.NEWER):
+            text = bot.build_help_text()
+
+        self.assertIn(
+            "New version v2.14.0 is available (current v2.13.2)", text
+        )
+        self.assertIn(self.NEWER["url"], text)
+
+    def test_hint_is_translated(self):
+        language.set_language(Language.ZH)
+        with mock.patch.object(bot, "update_info", return_value=self.NEWER):
+            text = bot.build_help_text()
+
+        self.assertIn("新版本 v2.14.0 可用（当前 v2.13.2）", text)
 
 
 if __name__ == "__main__":

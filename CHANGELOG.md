@@ -2,6 +2,29 @@
 
 版本号规则：MAJOR（破坏性改动或核心重写）/ MINOR（新增功能）/ PATCH（修复、依赖、文档、UI 打磨）。
 
+## v2.14.0
+
+### 新增
+
+- **新版本提示**：启动后在后台线程查一次 GitHub Release（之后每 6 小时一次，结果缓存在内存里），
+  - bot 的 `/help` 帮助卡片底部会多一行「🆕 发现新版本：vX.Y.Z（当前版本 vA.B.C）」+ Release 地址，
+    随 bot 语言翻译（en/zh/ru/ua）
+  - Web UI 左上角版本号后出现可点击的 `↑ vX.Y.Z` 胶囊，直接打开 Release 页
+- **`GET /get_latest_version`**：返回 `current / latest / newer / url / checked_at`，读的是缓存，
+  不阻塞请求
+
+### 说明
+
+- 检测完全尽力而为：容器访问不了 github.com、GitHub 限流、DNS 失败都只在 debug 日志里留一行，
+  界面和 bot 不会报错，也不会拖慢任何操作
+- 不想要任何联网检查可设置环境变量 `TDL_VERSION_CHECK=0`（后台线程不会启动，接口返回 `newer: false`）
+
+### 测试与文档
+
+- 新增 `tests/utils/test_version_check.py`（版本比较、TTL、断网静默、开关），
+  bot 帮助卡片与 `/get_latest_version` 的回归测试；预览页 mock 也返回一个「有更新」的响应用于截图
+- README：Web UI 功能、bot 说明、接口表补上新版本提示与开关
+
 ## v2.13.2
 
 ### 修复

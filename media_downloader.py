@@ -49,6 +49,7 @@ from utils.format import truncate_filename, validate_title
 from utils.log import LogFilter
 from utils.meta import print_meta
 from utils.meta_data import MetaData
+from utils.version_check import start_background_check
 
 logging.basicConfig(
     level=logging.INFO,
@@ -1070,6 +1071,9 @@ def main():
             app.session_file_path, "history.db"
         )
         init_history_db(history_db)
+        # Background release check: the bot help card and the Web UI read the
+        # cached result, so nothing here ever blocks on the network.
+        start_background_check()
         # Partial files are kept for resume; drop the ones nobody came back for.
         stale_temp_files = _cleanup_stale_temp_files(app.temp_save_path)
         if stale_temp_files:
