@@ -11,6 +11,7 @@ from utils.format import (
     extract_info_from_link,
     format_byte,
     get_byte_from_str,
+    parse_byte_size,
     replace_date_time,
     truncate_filename,
     validate_title,
@@ -254,3 +255,24 @@ class TestValidateTitle(unittest.TestCase):
         result = validate_title(title)
         self.assertEqual(result, "Mocked_Title")
         mock_re_sub.assert_called_once_with(r"[/\\:*?\"<>|\n]", "_", title)
+
+
+class ParseByteSizeTestCase(unittest.TestCase):
+    """rclone prints speeds as text; the Web UI needs the numeric value."""
+
+    def test_parse_byte_size(self):
+        cases = [
+            ("0 B/s", 0),
+            ("1.5 MB/s", int(1.5 * 1024 * 1024)),
+            ("12.3MB/s", int(12.3 * 1024 * 1024)),
+            ("860.2 MB", int(860.2 * 1024 * 1024)),
+            ("1.7GB", int(1.7 * 1024**3)),
+            ("12kB", 12 * 1024),
+            ("512", 512),
+            ("", 0),
+            (None, 0),
+            ("-", 0),
+        ]
+        for text, expected in cases:
+            with self.subTest(text=text):
+                self.assertEqual(parse_byte_size(text), expected)

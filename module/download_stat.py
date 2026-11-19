@@ -262,6 +262,39 @@ def count_completed_downloads() -> int:
         return int(row[0]) if row else 0
 
 
+def get_completed_download(chat_id, message_id: int) -> Optional[dict]:
+    """Return one completed record (used by the "re-upload" action)."""
+    chat_text = str(normalize_chat_id(chat_id))
+    with _PROGRESS_LOCK:
+        conn = _get_db()
+        row = conn.execute(
+            "SELECT chat_key, message_id, file_name, total_size, completed_time, "
+            "upload_state, upload_success "
+            "FROM completed_downloads WHERE chat_key = ? AND message_id = ?",
+            (chat_text, int(message_id)),
+        ).fetchone()
+        return _completed_dict(row) if row else None
+
+
+def update_completed_upload_state(
+    chat_id, message_id: int, upload_state: Optional[str]
+) -> bool:
+    """Record the outcome of a re-upload (``uploaded`` / ``exists`` / ``None``).
+
+    ``None`` keeps the row in "仅本地" so the button stays available.
+    """
+    chat_text = str(normalize_chat_id(chat_id))
+    with _PROGRESS_LOCK:
+        conn = _get_db()
+        cursor = conn.execute(
+            "UPDATE completed_downloads SET upload_state = ?, upload_success = ? "
+            "WHERE chat_key = ? AND message_id = ?",
+            (upload_state, 1 if upload_state else 0, chat_text, int(message_id)),
+        )
+        conn.commit()
+        return bool(cursor.rowcount)
+
+
 def query_completed_downloads(
     q: str = "",
     upload_state: str = "all",

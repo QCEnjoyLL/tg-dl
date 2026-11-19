@@ -2,6 +2,31 @@
 
 版本号规则：MAJOR（破坏性改动或核心重写）/ MINOR（新增功能）/ PATCH（修复、依赖、文档、UI 打磨）。
 
+## v2.15.0
+
+### 新增
+
+- **「上传中」页签与上传速度**：任务列表细分为 下载中 / 上传中 / 已完成 / 失败。rclone 上传进度
+  原来只喂给 bot 进度卡片，现在同步到 Web UI：新页签显示文件名、总大小、上传进度、上传速度、
+  剩余时间；顶部速度条同时显示 `↓ 下载速度 · ↑ 上传速度`（没有上传任务时不显示上传部分）
+- **「仅本地」一键重新上传**：已完成页签里 `upload_state` 为空（上传失败或只保留本地文件）的行
+  新增「上传」按钮，直接把这一个本地文件重新传到云盘，成功后标记变为「已上传 / 云端已有」；
+  文件已被删除或未启用 `upload_drive.enable_upload_file` 时按钮不显示或提示原因
+- **接口**：新增 `GET /get_uploading_list`（支持 `page/page_size/q`）；`/get_download_status`
+  增加 `uploading`、`upload_speed`、`upload_enabled`
+
+### 说明
+
+- 上传进度只存在内存里（上传本身是消息任务生命周期的一部分），重启即清空；完成/失败历史仍以
+  SQLite 为准
+- 上传速度从 rclone 的 `Transferred: …, x MB/s, ETA …` 行解析，新增
+  `utils.format.parse_byte_size()`（支持 `1.5 MB/s`、`12kB`、`0 B/s` 等写法）
+
+### 测试
+
+- 新增 `tests/module/test_upload_stat.py`、`reupload_file` 流程测试、上传列表 / 状态 / 接口测试；
+  预览 mock 同步支持上传列表与重新上传，截图更新
+
 ## v2.14.0
 
 ### 新增

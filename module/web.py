@@ -17,7 +17,7 @@ from ruamel import yaml
 from werkzeug.security import check_password_hash
 
 import utils
-from module import config_form
+from module import config_form, upload_stat
 from module.app import Application
 from module.download_stat import (
     DEFAULT_PAGE_SIZE,
@@ -81,6 +81,7 @@ _login_manager.login_view = "login"
 _login_manager.init_app(_flask_app)
 web_login_users: dict = {}
 _retry_handler = None
+_upload_handler = None
 _application: Optional[Application] = None
 
 
@@ -88,6 +89,12 @@ def set_retry_handler(handler):
     """Register the callback used by /retry_failed to re-queue a message."""
     global _retry_handler
     _retry_handler = handler
+
+
+def set_upload_handler(handler):
+    """Register the callback used by /retry_upload to upload one kept file."""
+    global _upload_handler
+    _upload_handler = handler
 
 
 class User(UserMixin):
@@ -380,7 +387,7 @@ def get_download_speed():
     return jsonify(
         {
             "download_speed": format_byte(get_total_download_speed()) + "/s",
-            "upload_speed": "0.00 B/s",
+            "upload_speed": format_byte(upload_stat.total_speed()) + "/s",
             "state": (
                 "running"
                 if get_download_state() is DownloadState.Downloading
@@ -389,8 +396,14 @@ def get_download_speed():
             # Counts come from SQL so the tab badges stay right even though the
             # list itself is now paginated.
             "downloading": count_downloading_downloads(),
+            "uploading": upload_stat.count(),
             "completed": count_completed_downloads(),
             "failed": count_failed_downloads(),
+            # The "re-upload" button is pointless without an upload target.
+            "upload_enabled": bool(
+                _application is not None
+                and _application.cloud_drive_config.enable_upload_file
+            ),
         }
     )
 
@@ -501,6 +514,27 @@ def _failed_rows() -> list:
     return result
 
 
+def _uploading_rows() -> list:
+    """Shape the rclone progress rows for the Web UI "Uploading" tab."""
+    rows = []
+    for value in upload_stat.rows():
+        file_name = str(value.get("file_name") or "").replace("\\", "/")
+        rows.append(
+            {
+                "chat": value.get("chat"),
+                "id": value.get("id"),
+                "filename": file_name.rsplit("/", 1)[-1] if file_name else "",
+                "save_path": file_name,
+                "total_size": value.get("total") or "",
+                "transferred": value.get("transferred") or "",
+                "upload_progress": float(value.get("progress") or 0),
+                "upload_speed": value.get("speed") or "",
+                "eta": value.get("eta") or "",
+            }
+        )
+    return rows
+
+
 def _is_paginated_request() -> bool:
     return any(
         key in request.args
@@ -591,6 +625,24 @@ def get_failed_list():
     page = _parse_int_arg("page", 1)
     page_size = _parse_int_arg("page_size", DEFAULT_PAGE_SIZE)
     return jsonify(query_failed_downloads(q=q, page=page, page_size=page_size))
+
+
+@_flask_app.route("/get_uploading_list")
+@login_required
+def get_uploading_list():
+    """In-flight cloud-drive uploads (rclone progress lines).
+
+    The list lives in memory only: an upload lasts as long as the message task,
+    so there is nothing worth persisting.
+    """
+    rows = _uploading_rows()
+    if not _is_paginated_request():
+        return jsonify(rows)
+
+    q = request.args.get("q", "")
+    page = _parse_int_arg("page", 1)
+    page_size = _parse_int_arg("page_size", DEFAULT_PAGE_SIZE)
+    return jsonify(_paginate_rows(rows, q=q, page=page, page_size=page_size))
 
 
 def _task_args() -> Optional[Tuple[Union[int, str], int]]:
@@ -708,6 +760,43 @@ def retry_failed():
             }
         )
     return jsonify({"code": "1", "retried": retried})
+
+
+@_flask_app.route("/retry_upload", methods=["POST"])
+@login_required
+def retry_upload():
+    """Upload one locally kept file again (completed tab, "仅本地" rows)."""
+    args = _task_args()
+    if not args:
+        return jsonify({"code": "0", "msg": "chat_id and message_id are required"})
+
+    if _upload_handler is None:
+        return jsonify({"code": "0", "msg": "downloader is not ready"})
+
+    try:
+        future = _upload_handler(args[0], args[1])
+        if future is None:
+            return jsonify({"code": "0", "msg": "上传任务未启动"})
+        try:
+            result = future.result(timeout=10)
+        except futures.TimeoutError:
+            # The upload itself keeps running; polling refreshes the row.
+            return jsonify(
+                {
+                    "code": "1",
+                    "pending": True,
+                    "msg": "已提交重新上传，稍后刷新查看结果",
+                }
+            )
+        except Exception as wait_err:  # noqa: BLE001 - becomes the API answer
+            return jsonify({"code": "0", "msg": str(wait_err)})
+    except Exception as e:  # pylint: disable = W0703
+        return jsonify({"code": "0", "msg": str(e)})
+
+    ok, payload = result if isinstance(result, tuple) else (bool(result), "")
+    if not ok:
+        return jsonify({"code": "0", "msg": payload or "上传失败"})
+    return jsonify({"code": "1", "upload_state": payload})
 
 
 def _apply_forget(chat_config, message_id: Optional[int]) -> None:

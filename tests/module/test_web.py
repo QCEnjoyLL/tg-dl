@@ -7,7 +7,7 @@ import unittest
 from unittest import mock
 
 import utils
-from module import download_stat, web
+from module import download_stat, upload_stat, web
 from module.download_stat import DownloadState, set_download_state
 from utils import atomic_write
 
@@ -85,9 +85,11 @@ class WebApiTestCase(unittest.TestCase):
         download_stat.init_history_db(None)
         with download_stat._PROGRESS_LOCK:  # pylint: disable = W0212
             download_stat._download_result.clear()
+        upload_stat.clear()
 
     def tearDown(self):
         download_stat.close_history_db()
+        upload_stat.clear()
 
     def test_progress_list_is_json(self):
         with mock.patch.object(
@@ -262,6 +264,78 @@ class WebApiTestCase(unittest.TestCase):
         self.assertTrue(payload["newer"])
         self.assertEqual(payload["latest"], "2.14.0")
         self.assertEqual(payload["current"], "2.13.2")
+
+    def test_uploading_list_endpoint(self):
+        upload_stat.update(
+            -100123,
+            9,
+            file_name="/tmp/a.mp4",
+            transferred="1 MB",
+            total="10 MB",
+            percentage="10%",
+            speed="2 MB/s",
+            eta="5s",
+        )
+
+        payload = self.client.get("/get_uploading_list?page=1&page_size=25").get_json()
+
+        self.assertEqual(payload["total"], 1)
+        row = payload["rows"][0]
+        self.assertEqual(row["id"], 9)
+        self.assertEqual(row["upload_progress"], 10.0)
+        self.assertEqual(row["upload_speed"], "2 MB/s")
+        self.assertEqual(row["eta"], "5s")
+
+    def test_download_status_reports_upload_speed_and_count(self):
+        upload_stat.update(-100123, 9, percentage="10%", speed="2 MB/s")
+        with mock.patch.object(web, "get_total_download_speed", return_value=1024):
+            payload = self.client.get("/get_download_status").get_json()
+
+        self.assertEqual(payload["uploading"], 1)
+        self.assertEqual(payload["upload_speed"], "2.0MB/s")
+        # Without an Application the button stays hidden rather than erroring.
+        self.assertFalse(payload["upload_enabled"])
+
+    def test_retry_upload_reports_success(self):
+        future = mock.Mock()
+        future.result.return_value = (True, "uploaded")
+        with mock.patch.object(web, "_upload_handler", return_value=future):
+            payload = self.client.post(
+                "/retry_upload?chat_id=-100123&message_id=9"
+            ).get_json()
+
+        self.assertEqual(payload["code"], "1")
+        self.assertEqual(payload["upload_state"], "uploaded")
+
+    def test_retry_upload_reports_the_reason(self):
+        future = mock.Mock()
+        future.result.return_value = (False, "本地文件不存在，可能已被删除或移动")
+        with mock.patch.object(web, "_upload_handler", return_value=future):
+            payload = self.client.post(
+                "/retry_upload?chat_id=-100123&message_id=9"
+            ).get_json()
+
+        self.assertEqual(payload["code"], "0")
+        self.assertIn("本地文件不存在", payload["msg"])
+
+    def test_retry_upload_timeout_is_reported_as_submitted(self):
+        future = mock.Mock()
+        future.result.side_effect = web.futures.TimeoutError()
+        with mock.patch.object(web, "_upload_handler", return_value=future):
+            payload = self.client.post(
+                "/retry_upload?chat_id=-100123&message_id=9"
+            ).get_json()
+
+        self.assertEqual(payload["code"], "1")
+        self.assertTrue(payload["pending"])
+
+    def test_retry_upload_requires_a_ready_downloader(self):
+        with mock.patch.object(web, "_upload_handler", None):
+            payload = self.client.post(
+                "/retry_upload?chat_id=-100123&message_id=9"
+            ).get_json()
+
+        self.assertEqual(payload["code"], "0")
 
     def test_set_download_state_rejects_unknown_values(self):
         response = self.client.post(

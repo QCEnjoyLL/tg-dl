@@ -38,6 +38,7 @@ from module.app import (
 from module.download_stat import get_download_result
 from module.language import Language, _t
 from module.send_media_group_v2 import cache_media, send_media_group_v2
+from module import upload_stat
 from utils.format import (
     create_progress_bar,
     extract_info_from_link,
@@ -1498,6 +1499,17 @@ async def update_cloud_upload_stat(
         None
     """
     node.cloud_drive_upload_stat_dict[message_id] = CloudDriveUploadStat(
+        file_name=file_name,
+        transferred=transferred,
+        total=total,
+        percentage=percentage,
+        speed=speed,
+        eta=eta,
+    )
+    # Mirror the numbers for the Web UI ("Uploading" tab + header speed).
+    upload_stat.update(
+        node.chat_id,
+        message_id,
         file_name=file_name,
         transferred=transferred,
         total=total,

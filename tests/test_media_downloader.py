@@ -1308,6 +1308,69 @@ class RetryFailedMessagesTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(reasons, [])
 
 
+class ReuploadFileTestCase(unittest.IsolatedAsyncioTestCase):
+    """Web UI "仅本地" rows can be uploaded again without touching Telegram."""
+
+    async def test_reupload_requires_the_upload_target(self):
+        import media_downloader as md
+
+        with mock.patch.object(
+            md.app.cloud_drive_config, "enable_upload_file", False
+        ):
+            ok, reason = await md.reupload_file(-100, 9)
+
+        self.assertFalse(ok)
+        self.assertIn("未启用云盘上传", reason)
+
+    async def test_reupload_reports_a_missing_record(self):
+        import media_downloader as md
+
+        with mock.patch.object(
+            md.app.cloud_drive_config, "enable_upload_file", True
+        ), mock.patch.object(md, "get_completed_download", return_value=None):
+            ok, reason = await md.reupload_file(-100, 9)
+
+        self.assertFalse(ok)
+        self.assertIn("找不到这条完成记录", reason)
+
+    async def test_reupload_reports_a_missing_local_file(self):
+        import media_downloader as md
+
+        record = {"file_name": "/nonexistent/definitely-missing.mp4"}
+        with mock.patch.object(
+            md.app.cloud_drive_config, "enable_upload_file", True
+        ), mock.patch.object(md, "get_completed_download", return_value=record):
+            ok, reason = await md.reupload_file(-100, 9)
+
+        self.assertFalse(ok)
+        self.assertIn("本地文件不存在", reason)
+
+    async def test_reupload_updates_the_history_on_success(self):
+        import media_downloader as md
+
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as handle:
+            file_path = handle.name
+        try:
+            with mock.patch.object(
+                md.app.cloud_drive_config, "enable_upload_file", True
+            ), mock.patch.object(
+                md,
+                "get_completed_download",
+                return_value={"file_name": file_path, "upload_state": None},
+            ), mock.patch.object(
+                md.app, "upload_file", new=mock.AsyncMock(return_value="uploaded")
+            ), mock.patch.object(
+                md, "update_completed_upload_state"
+            ) as updated:
+                ok, state = await md.reupload_file(-100, 9)
+
+            self.assertTrue(ok)
+            self.assertEqual(state, "uploaded")
+            updated.assert_called_once_with(-100, 9, "uploaded")
+        finally:
+            os.remove(file_path)
+
+
 class FloodErrorDescriptionTestCase(unittest.TestCase):
     """FLOOD_PREMIUM_WAIT must explain itself in the failed-task list."""
 

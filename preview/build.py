@@ -92,6 +92,33 @@ DOWNLOADING = [
     },
 ]
 
+# In-flight cloud uploads, so the "Uploading" tab and the header speed have
+# something to show.
+UPLOADING = [
+    {
+        "chat": "@example_channel",
+        "id": "392",
+        "filename": "392 - 示例视频_01.mov",
+        "save_path": "/app/downloads/示例频道/2026_11/392 - 示例视频_01.mov",
+        "total_size": "2.09GB",
+        "transferred": "860.2MB",
+        "upload_progress": 40.2,
+        "upload_speed": "2.46MB/s",
+        "eta": "3m12s",
+    },
+    {
+        "chat": "@example_channel",
+        "id": "405",
+        "filename": "405 - 示例视频_03.mov",
+        "save_path": "/app/downloads/示例频道/2026_11/405 - 示例视频_03.mov",
+        "total_size": "2.01GB",
+        "transferred": "1.7GB",
+        "upload_progress": 84.6,
+        "upload_speed": "6.12MB/s",
+        "eta": "48s",
+    },
+]
+
 DOWNLOADED = [
     {
         "chat": "@example_channel",
@@ -324,15 +351,20 @@ MOCK_JS = """
     if (u.indexOf('/get_download_status') !== -1) {
       return Promise.resolve(respond(JSON.stringify({
         download_speed: '4.28 MB/s',
-        upload_speed: '0.00 B/s',
+        upload_speed: data.uploading.length ? '8.58 MB/s' : '0.00 B/s',
         state: paused ? 'paused' : 'running',
         downloading: data.downloading.length,
+        uploading: data.uploading.length,
         completed: data.downloaded.length,
-        failed: data.failed.length
+        failed: data.failed.length,
+        upload_enabled: true
       })));
     }
     if (u.indexOf('already_down=false') !== -1) {
       return Promise.resolve(respond(JSON.stringify(page(data.downloading, parseQuery(u)))));
+    }
+    if (u.indexOf('/get_uploading_list') !== -1) {
+      return Promise.resolve(respond(JSON.stringify(page(data.uploading, parseQuery(u)))));
     }
     if (u.indexOf('already_down=true') !== -1) {
       var cq = parseQuery(u);
@@ -407,6 +439,22 @@ MOCK_JS = """
       }
       return Promise.resolve(respond(JSON.stringify({ code: '1', retried: retried })));
     }
+    if (u.indexOf('/retry_upload') !== -1) {
+      var uploaded = false;
+      for (var k = 0; k < data.downloaded.length; k++) {
+        if (String(data.downloaded[k].id) === String(p.message_id) &&
+            (!p.chat_id || String(data.downloaded[k].chat) === String(p.chat_id))) {
+          data.downloaded[k].upload_state = 'uploaded';
+          data.downloaded[k].upload_success = true;
+          uploaded = true;
+        }
+      }
+      return Promise.resolve(respond(JSON.stringify(
+        uploaded
+          ? { code: '1', upload_state: 'uploaded' }
+          : { code: '0', msg: '本地文件不存在，可能已被删除或移动' }
+      )));
+    }
     if (u.indexOf('/clear_failed') !== -1) {
       data.failed.length = 0;
       return Promise.resolve(respond(JSON.stringify({ code: '1', cleared: 3 })));
@@ -424,7 +472,12 @@ MOCK_JS = """
 </script>
 """ % (
     json.dumps(
-        {"downloading": DOWNLOADING, "downloaded": DOWNLOADED, "failed": FAILED},
+        {
+            "downloading": DOWNLOADING,
+            "uploading": UPLOADING,
+            "downloaded": DOWNLOADED,
+            "failed": FAILED,
+        },
         ensure_ascii=False,
     ),
     json.dumps(MOCK_CONFIG, ensure_ascii=False),

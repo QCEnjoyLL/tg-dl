@@ -375,6 +375,20 @@ svg {
   color: var(--green);
 }
 
+.speed-sep {
+  color: var(--ctl-fg);
+}
+
+.up-speed {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.speed-sep[hidden],
+.up-speed[hidden] {
+  display: none;
+}
+
 /* Quiet borderless header icons that reveal pill background on hover */
 .icon-btn {
   display: inline-grid;
@@ -547,7 +561,7 @@ main:focus {
 
 .stats {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
   margin-bottom: 14px;
 }
@@ -904,6 +918,11 @@ main:focus {
 
 .col-reason {
   width: 32%;
+}
+
+.col-eta {
+  width: 96px;
+  white-space: nowrap;
 }
 
 .col-progress {
@@ -1965,7 +1984,9 @@ tr.is-expanded .trunc-text {
   .col-size,
   .cell-size,
   .col-reason,
-  .cell-reason {
+  .cell-reason,
+  .col-eta,
+  .cell-eta {
     display: none;
   }
 
@@ -2073,7 +2094,8 @@ tr.is-expanded .trunc-text {
   .table td.cell-speed,
   .table td.cell-time,
   .table td.cell-path,
-  .table td.cell-reason {
+  .table td.cell-reason,
+  .table td.cell-eta {
     display: none;
   }
 

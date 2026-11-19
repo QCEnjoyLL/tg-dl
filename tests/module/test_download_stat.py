@@ -193,6 +193,26 @@ class DownloadStatTestCase(unittest.TestCase):
         self.assertEqual(clear_failed_downloads(-100), 1)
         self.assertEqual(count_failed_downloads(), 0)
 
+    def test_get_completed_download_and_update_upload_state(self):
+        mark_download_completed(-100, 7, "/tmp/x.mp4", 20)
+
+        record = download_stat.get_completed_download(-100, 7)
+        self.assertEqual(record["file_name"], "/tmp/x.mp4")
+        self.assertIsNone(record["upload_state"])
+
+        self.assertTrue(
+            download_stat.update_completed_upload_state(-100, 7, "uploaded")
+        )
+        record = download_stat.get_completed_download("-100", 7)
+        self.assertEqual(record["upload_state"], "uploaded")
+        self.assertTrue(record["upload_success"])
+
+        # Unknown rows and ids report failure instead of raising.
+        self.assertFalse(
+            download_stat.update_completed_upload_state(-100, 999, "uploaded")
+        )
+        self.assertIsNone(download_stat.get_completed_download(-100, 999))
+
     def test_history_survives_reopening_the_database(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             db_path = os.path.join(tmp_dir, "history.db")

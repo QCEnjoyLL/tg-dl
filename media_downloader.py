@@ -15,10 +15,12 @@ from module.app import Application, ChatDownloadConfig, DownloadStatus, TaskNode
 from module.bot import start_download_bot, stop_download_bot
 from module.cloud_drive import UPLOAD_EXISTS
 from module.config_form import parse_format_list
+from module import upload_stat
 from module.download_stat import (
     TaskCancelled,
     clear_task_cancelled,
     close_history_db,
+    get_completed_download,
     get_failed_downloads,
     init_history_db,
     is_task_cancelled,
@@ -27,6 +29,7 @@ from module.download_stat import (
     mark_download_retried,
     normalize_chat_id,
     remove_download_result,
+    update_completed_upload_state,
     update_download_status,
 )
 from module.fast_download import describe_chunk_settings, set_chunk_concurrency
@@ -44,7 +47,7 @@ from module.pyrogram_extension import (
     upload_telegram_chat,
 )
 from module.pyrogram_guard import DownloadIncomplete, install_get_file_guard
-from module.web import init_web, set_retry_handler
+from module.web import init_web, set_retry_handler, set_upload_handler
 from utils.format import truncate_filename, validate_title
 from utils.log import LogFilter
 from utils.meta import print_meta
@@ -533,6 +536,9 @@ async def download_task(
         if not node.bot:
             app.set_download_id(node, message.id, download_status)
 
+        # The upload row lives only while rclone reports progress.
+        upload_stat.remove(node.chat_id, message.id)
+
         try:
             await report_bot_download_status(
                 node.bot,
@@ -980,6 +986,65 @@ async def retry_failed_messages(
     return retried, reasons
 
 
+async def reupload_file(chat_id, message_id: int) -> Tuple[bool, str]:
+    """Upload one already-downloaded local file again.
+
+    Backs the Web UI "仅本地" re-upload button: the bytes are on disk, only the
+    cloud copy is missing, so no Telegram traffic is needed. Returns
+    ``(ok, upload_state_or_reason)``.
+    """
+    if not app.cloud_drive_config.enable_upload_file:
+        return False, "未启用云盘上传（upload_drive.enable_upload_file）"
+
+    record = get_completed_download(chat_id, message_id)
+    if not record:
+        return False, "找不到这条完成记录"
+
+    file_path = str(record.get("file_name") or "")
+    if not file_path or not os.path.exists(file_path):
+        return False, "本地文件不存在，可能已被删除或移动"
+
+    ui_file_name = file_path
+    if app.hide_file_name:
+        ui_file_name = f"****{os.path.splitext(file_path)[-1]}"
+
+    upload_stat.update(
+        chat_id,
+        message_id,
+        file_name=ui_file_name,
+        transferred="",
+        total="",
+        percentage="0%",
+        speed="",
+        eta="",
+    )
+
+    async def on_progress(transferred, total, percentage, speed, eta):
+        upload_stat.update(
+            chat_id,
+            message_id,
+            file_name=ui_file_name,
+            transferred=transferred,
+            total=total,
+            percentage=percentage,
+            speed=speed,
+            eta=eta,
+        )
+
+    try:
+        state = await app.upload_file(file_path, on_progress)
+    except Exception as error:  # pylint: disable = W0703
+        logger.exception(f"re-upload of {file_path} failed: {error}")
+        return False, f"上传失败：{error}"
+    finally:
+        upload_stat.remove(chat_id, message_id)
+
+    if not state:
+        return False, "上传失败，请查看日志"
+    update_completed_upload_state(chat_id, message_id, state)
+    return True, str(state)
+
+
 async def run_until_all_task_finish():
     """Normal download"""
     while True:
@@ -1105,6 +1170,11 @@ def main():
         set_retry_handler(
             lambda chat_id, message_id: asyncio.run_coroutine_threadsafe(
                 retry_failed_messages(chat_id, message_id), app.loop
+            )
+        )
+        set_upload_handler(
+            lambda chat_id, message_id: asyncio.run_coroutine_threadsafe(
+                reupload_file(chat_id, message_id), app.loop
             )
         )
 

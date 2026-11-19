@@ -192,6 +192,30 @@ def get_byte_from_str(byte_str: str) -> Optional[int]:
     return None
 
 
+#: Binary multipliers used by ``rclone`` when it prints "12.3 MB/s".
+_SIZE_POWERS = {"": 0, "b": 0, "k": 1, "m": 2, "g": 3, "t": 4, "p": 5, "e": 6}
+
+
+def parse_byte_size(text) -> int:
+    """Parse human sizes/rates ("1.23 MB/s", "12kB", "0 B/s") into bytes.
+
+    Used for the upload speed shown in the Web UI: rclone prints the speed as
+    text inside its progress line, so the numeric value has to be recovered.
+    Unknown or empty input yields ``0`` instead of raising.
+    """
+    if text is None:
+        return 0
+    match = re.match(r"\s*([\d.]+)\s*([KMGTPE])?i?B?", str(text), re.IGNORECASE)
+    if not match:
+        return 0
+    try:
+        number = float(match.group(1))
+    except (TypeError, ValueError):
+        return 0
+    unit = (match.group(2) or "").lower()
+    return int(number * (1024 ** _SIZE_POWERS.get(unit, 0)))
+
+
 def truncate_filename(path: str, limit: int = 230) -> str:
     """Truncate filename to the max len.
 

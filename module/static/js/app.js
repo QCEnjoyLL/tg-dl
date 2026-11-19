@@ -5,7 +5,12 @@
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
-  const TAB_REFRESH = { downloading: 1000, downloaded: 4000, failed: 3000 };
+  const TAB_REFRESH = {
+    downloading: 1000,
+    uploading: 1000,
+    downloaded: 4000,
+    failed: 3000,
+  };
   const STATUS_REFRESH = 1000;
   const CONFIRM_TIMEOUT = 3500;
 
@@ -19,6 +24,8 @@
     '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.3-5.6"/><path d="M20 4v5h-5"/></svg>';
   const ICON_COPY =
     '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/></svg>';
+  const ICON_UPLOAD =
+    '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4"/><path d="m6 10 6-6 6 6"/><path d="M4 20h16"/></svg>';
   const ICON_CHECK =
     '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 13 4 4L19 7"/></svg>';
   const ICON_CLOSE =
@@ -36,6 +43,7 @@
     uploadFilter: "all",
     pollingPaused: false,
     downloading: [],
+    uploading: [],
     downloaded: [],
     failed: [],
     // The list endpoints filter and paginate on the server (the history lives
@@ -43,21 +51,28 @@
     pageSize: 25,
     pager: {
       downloading: { page: 1, pages: 1, total: 0, allTotal: 0 },
+      uploading: { page: 1, pages: 1, total: 0, allTotal: 0 },
       downloaded: { page: 1, pages: 1, total: 0, allTotal: 0 },
       failed: { page: 1, pages: 1, total: 0, allTotal: 0 },
     },
     // Tab totals from /get_download_status, independent of the visible page.
-    counts: { downloading: 0, completed: 0, failed: 0 },
+    counts: { downloading: 0, uploading: 0, completed: 0, failed: 0 },
+    // Only meaningful with upload_drive.enable_upload_file.
+    uploadEnabled: false,
   };
 
   const el = {
     speed: $("#speed"),
+    speedSep: $("#speed-sep"),
+    uploadSpeed: $("#upload-speed"),
     metaSpeed: $("#meta-speed"),
     statActive: $("#stat-active"),
+    statUploading: $("#stat-uploading"),
     statDone: $("#stat-done"),
     statFailed: $("#stat-failed"),
     statState: $("#stat-state"),
     badgeDownloading: $("#badge-downloading"),
+    badgeUploading: $("#badge-uploading"),
     badgeDone: $("#badge-done"),
     badgeFailed: $("#badge-failed"),
     updated: $("#updated"),
@@ -106,6 +121,7 @@
     yamlPane: $("#config-yaml-pane"),
     tables: {
       downloading: $("#table-downloading"),
+      uploading: $("#table-uploading"),
       downloaded: $("#table-downloaded"),
       failed: $("#table-failed"),
     },
@@ -469,8 +485,63 @@
     }
   }
 
-  function uploadStateKey(row) {
-    if (row.upload_state === "exists") return "exists";
+  function buildUploadingRow(row) {
+    const tr = document.createElement("tr");
+    tr.innerHTML =
+      idCell(row) +
+      '<td class="cell-name">' +
+      '<div class="name-line"><span class="file-title"></span></div>' +
+      '<div class="progress-inline">' +
+      '<div class="bar" aria-hidden="true"><i style="width:0%"></i></div>' +
+      '<span class="pct">0%</span>' +
+      "</div>" +
+      '<span class="speed-inline">↑ —</span>' +
+      "</td>" +
+      '<td class="cell-size"></td>' +
+      '<td class="cell-progress"><div class="progress">' +
+      '<div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="上传进度"><i style="width:0%"></i></div>' +
+      '<span class="pct">0%</span></div></td>' +
+      '<td class="cell-speed"></td>' +
+      '<td class="cell-eta"></td>';
+    return tr;
+  }
+
+  function updateUploadingRow(tr, row) {
+    const name = String(row.filename || "");
+    if (tr.dataset.filename !== name) {
+      tr.dataset.filename = name;
+      const nameCell = tr.querySelector(".cell-name");
+      if (nameCell) nameCell.title = name;
+      const titleSpan = tr.querySelector(".file-title");
+      if (titleSpan) titleSpan.innerHTML = nameHtml(name);
+    }
+
+    const sizeStr = String(row.total_size || "");
+    const speedStr = String(row.upload_speed || "");
+    const etaStr = String(row.eta || "");
+    const pct = pctValue(row.upload_progress);
+    const pctStr = pctText(pct);
+
+    setText(tr.querySelector(".cell-size"), sizeStr);
+    setText(tr.querySelector(".cell-speed"), speedStr || "—");
+    setText(tr.querySelector(".cell-eta"), etaStr || "—");
+
+    const desktopBar = tr.querySelector(".cell-progress .bar");
+    if (desktopBar) desktopBar.setAttribute("aria-valuenow", String(pct));
+    tr.querySelectorAll(".bar > i").forEach((fill) => {
+      if (fill.style.width !== pct + "%") fill.style.width = pct + "%";
+    });
+    tr.querySelectorAll(".pct").forEach((label) => setText(label, pctStr));
+
+    const inlineSpeed = tr.querySelector(".speed-inline");
+    if (inlineSpeed) {
+      const parts = ["↑ " + (speedStr || "—"), sizeStr, etaStr ? "ETA " + etaStr : ""];
+      setText(inlineSpeed, parts.filter(Boolean).join(" · "));
+      inlineSpeed.classList.toggle("is-muted", !speedStr);
+    }
+  }
+
+  function uploadStateKey(row) {    if (row.upload_state === "exists") return "exists";
     if (row.upload_state === "uploaded" || (!row.upload_state && row.upload_success)) {
       return "uploaded";
     }
@@ -507,6 +578,7 @@
       "</div>" +
       "</td>" +
       '<td class="col-actions"><div class="row-actions">' +
+      actionButton("upload", "上传", ICON_UPLOAD) +
       actionButton("copy", "复制", ICON_COPY) +
       actionButton("delete", "删除", ICON_TRASH, "danger") +
       "</div></td>";
@@ -557,6 +629,13 @@
 
     const copyBtn = tr.querySelector('[data-action="copy"]');
     if (copyBtn) setActionLabel(copyBtn, "复制保存路径 " + name);
+    // "仅本地" rows get a re-upload button, but only when an upload target is
+    // configured; rows already on the remote have nothing to re-send.
+    const uploadBtn = tr.querySelector('[data-action="upload"]');
+    if (uploadBtn) {
+      uploadBtn.hidden = !state.uploadEnabled || Boolean(row.upload_success);
+      setActionLabel(uploadBtn, "重新上传 " + name);
+    }
     const deleteBtn = tr.querySelector('[data-action="delete"]');
     if (deleteBtn && deleteBtn.dataset.confirm !== "1") {
       setActionLabel(deleteBtn, "删除记录 " + name);
@@ -622,12 +701,14 @@
 
   function tabRows(tab) {
     if (tab === "downloading") return state.downloading;
+    if (tab === "uploading") return state.uploading;
     if (tab === "downloaded") return state.downloaded;
     return state.failed;
   }
 
   function countKey(tab) {
     if (tab === "downloading") return "downloading";
+    if (tab === "uploading") return "uploading";
     if (tab === "downloaded") return "completed";
     return "failed";
   }
@@ -731,6 +812,7 @@
   function renderEmpty() {
     const messages = {
       downloading: "队列空闲，暂无正在下载的任务",
+      uploading: "当前没有正在上传的文件",
       downloaded: "本次运行还没有完成的下载",
       failed: "没有失败任务",
     };
@@ -757,12 +839,17 @@
   /** Tab totals (stat cards + tab badges) from the server-side counts. */
   function renderCounts() {
     const active = tabCount("downloading");
+    const uploading = tabCount("uploading");
     const done = tabCount("downloaded");
     const failed = tabCount("failed");
 
     setText(el.statActive, String(active));
     setText(el.badgeDownloading, String(active));
     if (el.badgeDownloading) el.badgeDownloading.hidden = active === 0;
+
+    setText(el.statUploading, String(uploading));
+    setText(el.badgeUploading, String(uploading));
+    if (el.badgeUploading) el.badgeUploading.hidden = uploading === 0;
 
     setText(el.statDone, String(done));
     setText(el.badgeDone, String(done));
@@ -786,6 +873,21 @@
     renderCounts();
     syncToolbar();
     renderPager("downloading", info);
+    renderEmpty();
+  }
+
+  function renderUploading() {
+    const info = pageInfo("uploading");
+    syncRows(
+      el.tables.uploading.querySelector("tbody"),
+      info.rows,
+      rowKey,
+      buildUploadingRow,
+      updateUploadingRow
+    );
+    renderCounts();
+    syncToolbar();
+    renderPager("uploading", info);
     renderEmpty();
   }
 
@@ -847,10 +949,17 @@
     }
   }
 
-  function renderSpeed(speed) {
+  function renderSpeed(speed, uploadSpeed) {
     const clean = speed && speed !== "--" ? speed : "—";
     setText(el.speed, clean);
-    setText(el.metaSpeed, "↓ " + clean);
+    const upClean = uploadSpeed && uploadSpeed !== "--" ? uploadSpeed : "";
+    // Only advertise an upload rate while something is uploading.
+    if (el.uploadSpeed) {
+      el.uploadSpeed.hidden = !upClean;
+      setText(el.uploadSpeed, upClean ? "↑ " + upClean : "");
+    }
+    if (el.speedSep) el.speedSep.hidden = !upClean;
+    setText(el.metaSpeed, upClean ? "↓ " + clean + " · ↑ " + upClean : "↓ " + clean);
   }
 
   /* --------------------------------------------------------------- loading */
@@ -858,12 +967,14 @@
   const inFlight = {
     status: false,
     downloading: false,
+    uploading: false,
     downloaded: false,
     failed: false,
   };
 
   function tabEndpoint(tab) {
     if (tab === "downloading") return "/get_download_list?already_down=false";
+    if (tab === "uploading") return "/get_uploading_list";
     if (tab === "downloaded") return "/get_download_list?already_down=true";
     return "/get_failed_list";
   }
@@ -921,6 +1032,7 @@
       const payload = await api(tabUrl(tab));
       applyPageResponse(tab, payload);
       if (tab === "downloading") renderDownloading();
+      else if (tab === "uploading") renderUploading();
       else if (tab === "downloaded") renderDownloaded();
       else if (state.tab === "failed") renderFailed();
       else {
@@ -936,6 +1048,10 @@
     return loadTab("downloading");
   }
 
+  function loadUploading() {
+    return loadTab("uploading");
+  }
+
   function loadDownloaded() {
     return loadTab("downloaded");
   }
@@ -949,16 +1065,25 @@
     inFlight.status = true;
     try {
       const res = await api("/get_download_status");
-      renderSpeed(res && res.download_speed ? res.download_speed : "");
+      renderSpeed(
+        res && res.download_speed ? res.download_speed : "",
+        res && res.upload_speed ? res.upload_speed : ""
+      );
       if (res) {
         if (typeof res.downloading === "number") {
           state.counts.downloading = res.downloading;
+        }
+        if (typeof res.uploading === "number") {
+          state.counts.uploading = res.uploading;
         }
         if (typeof res.completed === "number") {
           state.counts.completed = res.completed;
         }
         if (typeof res.failed === "number") {
           state.counts.failed = res.failed;
+        }
+        if (typeof res.upload_enabled === "boolean") {
+          state.uploadEnabled = res.upload_enabled;
         }
         renderCounts();
         syncToolbar();
@@ -1019,6 +1144,7 @@
 
   function refreshActive() {
     if (state.tab === "downloading") return loadDownloading();
+    if (state.tab === "uploading") return loadUploading();
     if (state.tab === "downloaded") return loadDownloaded();
     return loadFailed();
   }
@@ -1040,6 +1166,7 @@
 
   function renderCachedTab() {
     if (state.tab === "downloading") renderDownloading();
+    if (state.tab === "uploading") renderUploading();
     if (state.tab === "downloaded") renderDownloaded();
     if (state.tab === "failed") renderFailed();
   }
@@ -1187,6 +1314,24 @@
     await Promise.all([loadFailed(), loadDownloading().catch(() => {})]);
   }
 
+  async function retryUpload(row) {
+    const res = await api("/retry_upload?" + taskParams(row), { method: "POST" });
+    if (!res || res.code !== "1") throw new Error((res && res.msg) || "未知错误");
+    const labels = { uploaded: "已上传", exists: "云端已有" };
+    toast(
+      res.pending
+        ? res.msg || "已提交重新上传，稍后刷新查看结果"
+        : "重新上传完成：" + (labels[res.upload_state] || "已上传"),
+      "success"
+    );
+    lastTabFetch = 0;
+    await Promise.all([
+      loadDownloaded().catch(() => {}),
+      loadUploading().catch(() => {}),
+      loadStatus().catch(() => {}),
+    ]);
+  }
+
   async function copyPath(text) {
     if (!text) return;
     try {
@@ -1261,6 +1406,7 @@
       else if (action === "pause") await setTaskPaused(row, true);
       else if (action === "resume") await setTaskPaused(row, false);
       else if (action === "retry") await retryRow(row);
+      else if (action === "upload") await retryUpload(row);
       else if (action === "copy") await copyPath(row.save_path);
     } catch (err) {
       toast("操作失败：" + err.message, "error");
@@ -2176,6 +2322,7 @@
     loadStatus().then(clearPollError).catch(notifyError);
     loadFailed().catch(() => {});
     loadDownloaded().catch(() => {});
+    loadUploading().catch(() => {});
     if (state.tab !== "downloading") loadDownloading().catch(() => {});
     refreshActive().catch(notifyError);
     checkVersion();
