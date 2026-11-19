@@ -930,7 +930,8 @@ main:focus {
 }
 
 .col-actions {
-  width: 186px;
+  /* Room for three labelled row buttons: 上传 / 复制 / 删除. */
+  width: 216px;
   text-align: end;
 }
 
@@ -949,7 +950,7 @@ main:focus {
     width: 156px;
   }
   .col-actions {
-    width: 176px;
+    width: 200px;
   }
 }
 
@@ -1932,7 +1933,8 @@ tr.is-expanded .trunc-text {
   }
 
   .col-actions {
-    width: 94px;
+    /* Three icon-only buttons: 3 × 34px + gaps. */
+    width: 118px;
   }
 
   .btn-mini {

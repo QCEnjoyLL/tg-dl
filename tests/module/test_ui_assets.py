@@ -26,6 +26,16 @@ class TableScrollWheelTestCase(unittest.TestCase):
         self.assertNotIn("overscroll-behavior: contain", body)
 
 
+class ActionColumnTestCase(unittest.TestCase):
+    def test_action_column_fits_three_labelled_buttons(self):
+        # 上传 / 复制 / 删除 need ~186px; a narrower column cut the last button
+        # in half on medium screens.
+        body = _rule(".col-actions")
+        match = re.search(r"width:\s*(\d+)px", body)
+        self.assertIsNotNone(match, body)
+        self.assertGreaterEqual(int(match.group(1)), 200)
+
+
 class PaginationUrlTestCase(unittest.TestCase):
     def test_query_separator_depends_on_the_base_url(self):
         # v2.13.0 appended "&" to every list endpoint, so
