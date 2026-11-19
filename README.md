@@ -3,7 +3,7 @@
 > 基于 [tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader) 的修复分支。
 > 保留原项目的全部功能（Telegram bot 指令、Web UI、rclone 上传、受保护内容下载），并持续修复实际使用中的问题。
 
-当前版本：**v2.15.1**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
+当前版本：**v2.15.2**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
 
 [![Docker](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml)
 [![Release](https://img.shields.io/github/v/release/QCEnjoyLL/tg-dl?label=release&color=blue)](https://github.com/QCEnjoyLL/tg-dl/releases/latest)
@@ -213,8 +213,9 @@ web_login_secret: "改成你的密码"
 - **历史持久化**：完成 / 失败记录存在 `sessions/history.db`（SQLite，可用环境变量
   `TDL_HISTORY_DB` 指定路径），**没有条数上限**，容器重启、重新部署后历史仍在
 - **新版本提示**：左上角版本号后出现 `↑ vX.Y.Z` 就说明有新版本，点一下打开 Release 页；
-  服务端每 6 小时查一次 GitHub Release 并缓存，离线 / 限流 / 访问不了 GitHub 时静默跳过，
-  不影响使用；不想联网检查可设环境变量 `TDL_VERSION_CHECK=0`
+  服务端每 15 分钟查一次 GitHub Release 并缓存，离线 / 限流 / 访问不了 GitHub 时不显示提示，
+  不影响使用；**点版本号本身可立即检查更新**（会弹出结果或失败原因），不想联网检查可设
+  环境变量 `TDL_VERSION_CHECK=0`
 - **一键清空**：「已完成」页签有「清空已完成」（只删记录，不删本地文件，两步确认），「失败」页签有「全部重试 / 清空失败」
 - **全局暂停提示**：点右上角「暂停」后顶部出现暂停横幅，下载中每一行标注 `已暂停` / `单条暂停`，速度冻结显示 `—`
 - **单任务控制**：每个下载中的任务可以「暂停 / 继续 / 删除」，暂停只影响该条消息，不影响其他任务
@@ -293,19 +294,19 @@ systemctl stop tg-dl         # 服务里配置 KillSignal=SIGINT
 - 推送到 `master` / `main`、打 `v*` tag、或在 Actions 页面手动触发时构建
 - 自动推送到 **GHCR**：`ghcr.io/qcenjoyll/tg-dl`
 - 版本号只有一处来源：`utils/__init__.py` 的 `__version__`。镜像标签、git tag、GitHub Release 全部由它生成，不会互相对不上
-- 标签规则：`2.15.1`（当前版本）、`2.15`（minor 系列）、`latest`（默认分支）、分支名、`sha-xxxxxxx`
+- 标签规则：`2.15.2`（当前版本）、`2.15`（minor 系列）、`latest`（默认分支）、分支名、`sha-xxxxxxx`
 - 镜像内注入 `org.opencontainers.image.version` / `.revision`，`docker inspect` 一眼能看到版本
-- 镜像推送成功后自动创建 **GitHub Release**：标题 `v2.15.1`，正文取自 `CHANGELOG.md` 同名章节 + 拉取命令
+- 镜像推送成功后自动创建 **GitHub Release**：标题 `v2.15.2`，正文取自 `CHANGELOG.md` 同名章节 + 拉取命令
 - Pull Request 只构建不推送，也不会创建 Release
 - 构建前先跑 `python -m compileall` 做语法检查
 
 ### 发布新版本
 
-1. 改 `utils/__init__.py` 里的 `__version__`（如 `2.15.2`）
-2. 在 `CHANGELOG.md` 顶部加 `## v2.15.2` 章节（Release 正文就是这段内容）
+1. 改 `utils/__init__.py` 里的 `__version__`（如 `2.15.3`）
+2. 在 `CHANGELOG.md` 顶部加 `## v2.15.3` 章节（Release 正文就是这段内容）
 3. 提交并推送到 `master` / `main`
 
-工作流会自动构建镜像、打 `v2.15.2` tag 并创建 Release。版本号已存在的 Release 会跳过，重复推送不会报错。
+工作流会自动构建镜像、打 `v2.15.3` tag 并创建 Release。版本号已存在的 Release 会跳过，重复推送不会报错。
 
 > 手动推 `v*` tag 也可以，但 tag 必须和 `__version__` 一致，否则工作流会直接失败——避免发布说明和实际运行的代码对不上。
 
@@ -477,7 +478,7 @@ v2.13.0 起存在 `sessions/history.db`（SQLite，可用环境变量 `TDL_HISTO
 - 统一下载补丁链（`fast_download` + 断点续传 + 流截断守卫），失败/中断留下的 `.temp` 在重试时从断点继续；依赖升到 Flask 3.1 / Werkzeug 3.1
 - 下载历史改为 SQLite 持久化（`sessions/history.db`，无条数上限），列表由服务端分页 / 搜索 / 筛选，
   Web UI 支持一键清空已完成与失败记录
-- bot 帮助卡片与 Web UI 都带新版本提示（后台每 6 小时查一次 GitHub Release，可 `TDL_VERSION_CHECK=0` 关闭）
+- bot 帮助卡片与 Web UI 都带新版本提示（后台每 15 分钟查一次 GitHub Release，可 `TDL_VERSION_CHECK=0` 关闭）
 - Web UI 四页签（下载中 / 上传中 / 已完成 / 失败）：上传进度与上传速度可视，「仅本地」记录可一键重新上传
 - 重写 Dockerfile：加 `tzdata`、`PYTHONUNBUFFERED`、OCI 标签、`STOPSIGNAL SIGINT`
 - 重写镜像工作流：GHCR + buildx 缓存 + 语法检查，移除上游依赖 Docker Hub secrets 的旧流水线
@@ -504,6 +505,15 @@ v2.13.0 起存在 `sessions/history.db`（SQLite，可用环境变量 `TDL_HISTO
 > Docker / compose 用户不受影响（配置本来就是挂载进容器的，从未进过镜像）。
 
 逐条历史记录见 [CHANGELOG.md](CHANGELOG.md)；当前版本见顶部的 Release 徽章。
+
+<details>
+<summary><b>v2.15.2</b> — 版本检测更快、可手动检查</summary>
+
+- 检测缓存从 6 小时缩短到 15 分钟，Web UI 每 10 分钟刷新提示，新版本发布后很快就能看到
+- 检查失败会写 warning 日志并通过 `/get_latest_version` 返回 `error`，方便定位网络问题
+- 点击左上角版本号可**立即检查更新**（已是最新 / 发现新版本 / 失败原因）
+
+</details>
 
 <details>
 <summary><b>v2.15.1</b> — 修复「已完成」操作列按钮显示不全</summary>

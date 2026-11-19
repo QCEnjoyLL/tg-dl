@@ -80,6 +80,7 @@
     pollToggle: $("#poll-toggle"),
     updatePill: $("#update-pill"),
     updateVersion: $("#update-version"),
+    versionChip: $("#version-chip"),
     taskSearch: $("#task-search"),
     taskSearchClear: $("#task-search-clear"),
     uploadFilters: $("#upload-filters"),
@@ -201,22 +202,37 @@
   }
 
   /** Show a link to the release page when the server knows a newer build. */
-  async function checkUpdate() {
+  async function checkUpdate(force) {
     try {
-      const info = await api("/get_latest_version");
-      if (!info || !info.newer || !info.latest) return;
-      if (!el.updatePill) return;
-      el.updatePill.hidden = false;
-      el.updatePill.href = info.url || "https://github.com/QCEnjoyLL/tg-dl/releases";
-      el.updatePill.title =
-        "新版本 v" +
-        info.latest +
-        " 可用（当前 v" +
-        (info.current || "") +
-        "），点击查看更新日志";
-      setText(el.updateVersion, "v" + info.latest);
+      const info = await api(
+        "/get_latest_version" + (force ? "?force=1" : "")
+      );
+      if (info && info.newer && info.latest && el.updatePill) {
+        el.updatePill.hidden = false;
+        el.updatePill.href =
+          info.url || "https://github.com/QCEnjoyLL/tg-dl/releases";
+        el.updatePill.title =
+          "新版本 v" +
+          info.latest +
+          " 可用（当前 v" +
+          (info.current || "") +
+          "），点击查看更新日志";
+        setText(el.updateVersion, "v" + info.latest);
+      }
+      if (!force) return;
+      // A manual check always answers: up to date, newer, or why it failed.
+      if (info && info.newer && info.latest) {
+        toast("发现新版本 v" + info.latest + "，点右侧 ↑ 打开 Release", "success");
+      } else if (info && info.error) {
+        toast("检查更新失败：" + info.error, "error");
+      } else {
+        toast(
+          "已是最新版本 v" + ((info && (info.latest || info.current)) || ""),
+          "success"
+        );
+      }
     } catch (e) {
-      /* offline or rate limited: no hint, no noise */
+      if (force) toast("检查更新失败：" + e.message, "error");
     }
   }
 
@@ -2217,6 +2233,9 @@
     if (el.clearCompletedBtn) {
       el.clearCompletedBtn.addEventListener("click", clearAllCompleted);
     }
+    if (el.versionChip) {
+      el.versionChip.addEventListener("click", () => checkUpdate(true));
+    }
     if (el.pollToggle) el.pollToggle.addEventListener("click", togglePolling);
 
     el.pauseBtn.addEventListener("click", togglePause);
@@ -2327,8 +2346,9 @@
     refreshActive().catch(notifyError);
     checkVersion();
     checkUpdate();
-    // The server caches the answer for hours; this only refreshes the hint.
-    setInterval(checkUpdate, 30 * 60 * 1000);
+    // The server caches the answer for ~15 minutes; refresh the hint a bit
+    // less often, and the version chip allows an on-demand check.
+    setInterval(checkUpdate, 10 * 60 * 1000);
 
     setInterval(tick, STATUS_REFRESH);
   }

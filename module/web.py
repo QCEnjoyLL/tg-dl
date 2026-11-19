@@ -445,8 +445,11 @@ def get_latest_version():
     """Latest GitHub release compared with this build.
 
     Served from the cached background check, so the endpoint never waits on
-    the network and returns ``newer: false`` when GitHub is unreachable.
+    the network; ``?force=1`` performs an on-demand check (used by the version
+    chip in the header) and may take up to the request timeout.
     """
+    if request.args.get("force") == "1":
+        version_check.refresh(force=True)
     return jsonify(version_check.update_info())
 
 

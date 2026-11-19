@@ -253,6 +253,19 @@ svg {
   white-space: nowrap;
 }
 
+.chip-button {
+  border: 0;
+  padding: 0;
+  background: none;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.chip-button:hover {
+  color: var(--fg);
+  text-decoration: underline;
+}
+
 /* "new release available" hint next to the version chip */
 .update-pill {
   display: inline-flex;

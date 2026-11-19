@@ -26,6 +26,11 @@ RELEASES_URL = "https://github.com/QCEnjoyLL/tg-dl/releases"
 #: Minimum seconds between two GitHub requests.
 TTL = 6 * 60 * 60
 
+#: Minimum seconds between two GitHub requests. 15 minutes keeps a fresh
+#: release visible shortly after it is published while staying far below the
+#: unauthenticated API limit (60 requests/hour per IP).
+TTL = 15 * 60
+
 #: Never block a bot reply or a web request for long on a dead network.
 TIMEOUT = 6.0
 
@@ -34,6 +39,7 @@ _WAKE = threading.Event()
 _checked_at = 0.0
 _latest: Optional[str] = None
 _url = RELEASES_URL
+_last_error: Optional[str] = None
 _thread_started = False
 
 
@@ -56,7 +62,7 @@ def is_newer(latest, current) -> bool:
 
 def _fetch() -> None:
     """One GitHub request; store the answer, log only real updates."""
-    global _checked_at, _latest, _url  # pylint: disable = W0603
+    global _checked_at, _latest, _url, _last_error  # pylint: disable = W0603
 
     request = urllib.request.Request(
         RELEASES_API,
@@ -69,18 +75,21 @@ def _fetch() -> None:
         payload = json.loads(response.read().decode("utf-8"))
     tag = str(payload.get("tag_name") or "").strip().lstrip("vV")
     if not tag:
-        return
+        raise ValueError("release payload has no tag_name")
 
     with _LOCK:
         _checked_at = time.time()
         _latest = tag
         _url = str(payload.get("html_url") or RELEASES_URL)
+        _last_error = None
     if is_newer(tag, utils.__version__):
         logger.info(f"new version available: v{tag} (current v{utils.__version__})")
 
 
 def refresh(force: bool = False) -> None:
     """Query GitHub unless the last answer is still fresh."""
+    global _last_error  # pylint: disable = W0603
+
     if not version_check_enabled():
         return
     with _LOCK:
@@ -90,8 +99,11 @@ def refresh(force: bool = False) -> None:
     try:
         _fetch()
     except Exception as error:  # pylint: disable = W0703
-        # Offline, rate limited, DNS blocked: keep the previous answer.
-        logger.debug(f"version check skipped: {error}")
+        # Offline, rate limited, DNS blocked: keep the previous answer but make
+        # the failure visible in the log and in /get_latest_version.
+        with _LOCK:
+            _last_error = str(error)
+        logger.warning(f"version check failed: {error}")
 
 
 def update_info() -> Dict[str, object]:
@@ -100,6 +112,7 @@ def update_info() -> Dict[str, object]:
         latest = _latest
         checked_at = _checked_at
         url = _url
+        last_error = _last_error
     current = utils.__version__
     return {
         "current": current,
@@ -107,6 +120,7 @@ def update_info() -> Dict[str, object]:
         "newer": is_newer(latest, current),
         "url": url,
         "checked_at": int(checked_at),
+        "error": last_error or "",
     }
 
 

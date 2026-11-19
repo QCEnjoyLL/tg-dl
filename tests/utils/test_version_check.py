@@ -30,6 +30,7 @@ class RefreshTestCase(unittest.TestCase):
         version_check._latest = None
         version_check._checked_at = 0.0
         version_check._url = version_check.RELEASES_URL
+        version_check._last_error = None
 
     def tearDown(self):
         self.setUp()
@@ -64,13 +65,15 @@ class RefreshTestCase(unittest.TestCase):
         fetch.assert_called_once_with()
 
     def test_refresh_swallows_network_errors(self):
-        # Offline, DNS-blocked or rate limited: the app must keep working.
+        # Offline, DNS-blocked or rate limited: the app must keep working, but
+        # the reason is exposed so the UI can explain a failed manual check.
         with mock.patch.object(
             version_check, "_fetch", side_effect=OSError("offline")
         ):
             version_check.refresh(force=True)
 
         self.assertIsNone(version_check._latest)
+        self.assertIn("offline", version_check.update_info()["error"])
 
     def test_environment_kill_switch(self):
         with mock.patch.dict(os.environ, {"TDL_VERSION_CHECK": "0"}):
@@ -100,6 +103,7 @@ class RefreshTestCase(unittest.TestCase):
         self.assertTrue(info["newer"])
         self.assertEqual(info["url"], "https://example.test/releases/tag/v99.1.0")
         self.assertGreater(info["checked_at"], 0)
+        self.assertEqual(info["error"], "")
 
 
 if __name__ == "__main__":

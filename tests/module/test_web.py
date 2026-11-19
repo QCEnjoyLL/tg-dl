@@ -265,6 +265,25 @@ class WebApiTestCase(unittest.TestCase):
         self.assertEqual(payload["latest"], "2.14.0")
         self.assertEqual(payload["current"], "2.13.2")
 
+    def test_latest_version_force_triggers_a_check(self):
+        info = {
+            "current": "2.15.0",
+            "latest": "2.15.1",
+            "newer": True,
+            "url": "https://github.com/QCEnjoyLL/tg-dl/releases",
+            "checked_at": 1,
+            "error": "",
+        }
+        with mock.patch.object(
+            web.version_check, "refresh"
+        ) as refresh, mock.patch.object(
+            web.version_check, "update_info", return_value=info
+        ):
+            payload = self.client.get("/get_latest_version?force=1").get_json()
+
+        refresh.assert_called_once_with(force=True)
+        self.assertTrue(payload["newer"])
+
     def test_uploading_list_endpoint(self):
         upload_stat.update(
             -100123,
