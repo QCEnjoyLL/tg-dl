@@ -38,6 +38,10 @@ max_concurrent_transmissions: 4
 # 带宽充足但单文件慢时优先调这个；过高会增加 FloodWait 概率
 # max_concurrent_chunks: 4
 
+# 磁盘预留空间（GB）：下载盘剩余低于该值时暂停下载，等上传成功后删除本地、
+# 空间恢复再自动继续；设 0 关闭。上传与下载已解耦，这是防止写满磁盘的闸门。
+min_free_space_gb: 2
+
 # 本地保存目录，容器内保持 /app/downloads
 # save_path: /app/downloads
 

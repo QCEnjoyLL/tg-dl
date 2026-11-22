@@ -350,3 +350,46 @@ class TransmissionSlotsTestCase(unittest.TestCase):
         app.max_concurrent_chunks = 1
 
         self.assertEqual(app.transmission_slots(), 20)
+
+
+class DiskReserveConfigTestCase(unittest.TestCase):
+    """The disk guard's reserve is configurable and survives hot reload."""
+
+    BASE = {"api_id": 1, "api_hash": "hash", "media_types": ["video"]}
+
+    def _app(self, **extra):
+        app = Application("", "")
+        config = dict(self.BASE)
+        config.update(extra)
+        app.assign_config(config)
+        return app
+
+    def test_default_reserve_is_two_gb(self):
+        app = self._app()
+
+        self.assertEqual(app.min_free_space_gb, 2.0)
+        self.assertEqual(app.min_free_space_bytes, 2 * 1024**3)
+
+    def test_explicit_value_is_used(self):
+        app = self._app(min_free_space_gb=5)
+
+        self.assertEqual(app.min_free_space_gb, 5.0)
+        self.assertEqual(app.min_free_space_bytes, 5 * 1024**3)
+
+    def test_zero_disables_the_guard(self):
+        app = self._app(min_free_space_gb=0)
+
+        self.assertEqual(app.min_free_space_bytes, 0)
+
+    def test_invalid_value_disables_instead_of_crashing(self):
+        app = self._app(min_free_space_gb="lots")
+
+        self.assertEqual(app.min_free_space_gb, 0.0)
+
+    def test_hot_reload_applies_the_new_reserve(self):
+        app = self._app()
+
+        applied, _restart = app.reload_hot_config({"min_free_space_gb": 7})
+
+        self.assertIn("min_free_space_gb", applied)
+        self.assertEqual(app.min_free_space_bytes, 7 * 1024**3)

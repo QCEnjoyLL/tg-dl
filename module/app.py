@@ -22,6 +22,11 @@ from ruamel import yaml
 #: grow them forever.
 MAX_CAPTION_CACHE_GROUPS = 64
 
+#: Free space kept on the download volumes before the disk guard pauses
+#: downloads (``0`` disables the guard). 2 GiB leaves room for the filesystem,
+#: logs and the final move from ``temp/`` to ``save_path``.
+DEFAULT_MIN_FREE_SPACE_GB = 2.0
+
 from module.cloud_drive import CloudDrive, CloudDriveConfig
 from module.config_form import MEDIA_TYPE_OPTIONS, parse_format_list
 from module.fast_download import set_chunk_concurrency
@@ -427,6 +432,8 @@ class Application:
         self.max_download_task: int = 5
         #: Ranges one file is split into concurrently (1 = sequential download).
         self.max_concurrent_chunks: int = 1
+        #: GB of free space to keep on the download volumes (0 = no guard).
+        self.min_free_space_gb: float = DEFAULT_MIN_FREE_SPACE_GB
         self.language = Language.EN
         self.after_upload_telegram_delete: bool = True
         self.web_login_secret: str = ""
@@ -551,6 +558,10 @@ class Application:
             get_config(
                 _config, "max_concurrent_chunks", self.max_concurrent_chunks, int
             )
+        )
+
+        self.min_free_space_gb = self._parse_min_free_space_gb(
+            _config.get("min_free_space_gb", self.min_free_space_gb)
         )
 
         language = _config.get("language", "EN")
@@ -741,6 +752,26 @@ class Application:
                                 it
                             ] = True
         return True
+
+    @staticmethod
+    def _parse_min_free_space_gb(value) -> float:
+        """Parse the disk reserve; unusable input disables the guard."""
+        try:
+            gb = float(value)
+        except (TypeError, ValueError):
+            logger.warning(
+                f"min_free_space_gb 不是数字（{value!r}），已按 0 处理（关闭磁盘保护）"
+            )
+            return 0.0
+        if gb < 0:
+            logger.warning(f"min_free_space_gb={gb} 非法，已按 0 处理（关闭磁盘保护）")
+            return 0.0
+        return gb
+
+    @property
+    def min_free_space_bytes(self) -> int:
+        """Free-space reserve in bytes; ``0`` disables the disk guard."""
+        return int(max(self.min_free_space_gb, 0.0) * 1024**3)
 
     def transmission_slots(self) -> int:
         """Concurrent transfer slots one Pyrogram client needs.
@@ -1148,6 +1179,17 @@ class Application:
                 config["max_concurrent_chunks"]
             )
             applied.append("max_concurrent_chunks")
+
+        if "min_free_space_gb" in config:
+            # The gate reads the reserve on every check, so this is live.
+            self.min_free_space_gb = self._parse_min_free_space_gb(
+                config["min_free_space_gb"]
+            )
+            applied.append("min_free_space_gb")
+            # Lazily imported: the guard belongs to the runtime, not the config.
+            from module import disk_guard  # pylint: disable = C0415
+
+            disk_guard.set_reserve(self.min_free_space_bytes)
 
         if "date_format" in config:
             try:

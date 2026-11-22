@@ -17,7 +17,7 @@ from ruamel import yaml
 from werkzeug.security import check_password_hash
 
 import utils
-from module import config_form, upload_stat
+from module import config_form, disk_guard, upload_stat
 from module.app import Application
 from module.download_stat import (
     DEFAULT_PAGE_SIZE,
@@ -404,6 +404,9 @@ def get_download_speed():
                 _application is not None
                 and _application.cloud_drive_config.enable_upload_file
             ),
+            # Free space of the watched volumes and whether the guard has
+            # paused downloads because it ran low (see module.disk_guard).
+            "disk": disk_guard.status(),
         }
     )
 

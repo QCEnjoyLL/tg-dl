@@ -175,6 +175,16 @@ FIELDS: List[Dict[str, Any]] = [
         "default": 33,
         "hint": "bot 转发消息的频率限制，防止 FloodWait。",
     },
+    {
+        "name": "min_free_space_gb",
+        "path": ["min_free_space_gb"],
+        "label": "磁盘预留空间（GB）",
+        "group": "并发与超时",
+        "type": "number",
+        "min": 0,
+        "default": 2,
+        "hint": "任意下载磁盘剩余低于该值时暂停下载，等上传删除本地文件、空间恢复后自动继续；0 表示关闭保护。",
+    },
     # ---------------------------------------------------------- 文件命名与格式
     {
         "name": "file_formats.audio",

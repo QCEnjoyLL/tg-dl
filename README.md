@@ -3,7 +3,7 @@
 > 基于 [tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader) 的修复分支。
 > 保留原项目的全部功能（Telegram bot 指令、Web UI、rclone 上传、受保护内容下载），并持续修复实际使用中的问题。
 
-当前版本：**v2.15.3**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
+当前版本：**v2.16.0**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
 
 [![Docker](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml)
 [![Release](https://img.shields.io/github/v/release/QCEnjoyLL/tg-dl?label=release&color=blue)](https://github.com/QCEnjoyLL/tg-dl/releases/latest)
@@ -156,6 +156,26 @@ upload_drive:
 > `hash_check` 默认开启：远端同名同大小时会先比较 MD5，内容不同就重新上传，避免「只比大小」把不同的文件当成已上传后删掉本地。
 > 后端不支持哈希（部分网盘没有 MD5）时会告警并退回只比大小；确定不需要可设 `hash_check: false`。
 
+### 下载与上传解耦、磁盘空间保护
+
+上传在后台进行，不占用下载 worker：下载完一个文件就交给后台上传器（并发不设上限），
+worker 立即去取下一个队列项，所以 `max_download_task` 的并发不会被慢网盘拖成一条一条。
+
+上传成功后自动删除本地文件；上传失败则保留本地文件，历史记录保持「仅本地」，
+可以点「上传」重试。代价是**下载可能跑在上传前面**，所以有一个磁盘闸门：
+
+```yaml
+# 下载盘（save_path 与 temp/ 所在磁盘）剩余低于该值时暂停下载
+# 等后台上传删掉本地文件、空间恢复后自动继续；0 = 关闭保护
+min_free_space_gb: 2
+```
+
+- 暂停时会打印 warning（`磁盘空间不足：剩余 … 低于预留 …，暂停下载…`），恢复时打印 info
+- 恢复阈值是「预留值 + 20%」的滞回，避免刚好卡在边界上来回暂停/继续
+- 如果单个文件本身就大于整块磁盘，会直接失败并在「失败」里写明原因，而不是无限等待
+- 进度可在 `GET /get_download_status` 的 `disk` 字段查看：`free / reserve / paused`
+- Hot reload 生效（Web UI 改配置无需重启）
+
 ### 目录与文件名
 
 `file_path_prefix` 决定保存目录层级，可选 `chat_title` / `media_datetime` / `media_type` / `chat_id`：
@@ -280,7 +300,7 @@ web_login_secret: "改成你的密码"
 
 ### 配置热更新说明
 
-保存配置后，以下项**立即生效**：`media_types`、`file_formats`、`file_path_prefix`、`file_name_prefix`、`file_name_prefix_split`、`hide_file_name`、`enable_download_txt`、`after_upload_telegram_delete`、`drop_no_audio_video`、`log_level`、`date_format`、`max_concurrent_chunks`、`language`、广告过滤相关项、`upload_drive.*`、`web_login_secret`。
+保存配置后，以下项**立即生效**：`media_types`、`file_formats`、`file_path_prefix`、`file_name_prefix`、`file_name_prefix_split`、`hide_file_name`、`enable_download_txt`、`after_upload_telegram_delete`、`drop_no_audio_video`、`log_level`、`date_format`、`max_concurrent_chunks`、`min_free_space_gb`、`language`、广告过滤相关项、`upload_drive.*`、`web_login_secret`。
 
 以下项需要**重启进程**：`api_id`、`api_hash`、`bot_token`、`chat`、`proxy`、`save_path`、`web_host`、`web_port`、`max_download_task`、`max_concurrent_transmissions`、`allowed_user_ids`、`start_timeout`。
 

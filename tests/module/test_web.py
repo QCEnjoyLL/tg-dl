@@ -244,6 +244,9 @@ class WebApiTestCase(unittest.TestCase):
         self.assertEqual(payload["completed"], 1)
         self.assertEqual(payload["failed"], 1)
         self.assertEqual(payload["downloading"], 0)
+        # The disk guard reports its state here so a pause is explainable.
+        self.assertIn("disk", payload)
+        self.assertIn("paused", payload["disk"])
 
     def test_latest_version_endpoint(self):
         # Backed by the cached background check, so it answers instantly and

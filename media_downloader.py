@@ -15,7 +15,7 @@ from module.app import Application, ChatDownloadConfig, DownloadStatus, TaskNode
 from module.bot import start_download_bot, stop_download_bot
 from module.cloud_drive import UPLOAD_EXISTS
 from module.config_form import parse_format_list
-from module import upload_stat
+from module import disk_guard, upload_dispatch, upload_stat
 from module.download_stat import (
     TaskCancelled,
     clear_task_cancelled,
@@ -67,6 +67,8 @@ APPLICATION_NAME = "media_downloader"
 app = Application(CONFIG_NAME, DATA_FILE_NAME, APPLICATION_NAME)
 
 queue: asyncio.Queue = asyncio.Queue()
+#: Cloud uploads started by the download workers and run in the background.
+upload_dispatcher = upload_dispatch.UploadDispatcher()
 RETRY_TIME_OUT = 3
 
 logging.getLogger("pyrogram.session.session").addFilter(LogFilter())
@@ -458,6 +460,39 @@ async def save_msg_to_file(
     return DownloadStatus.SuccessDownload, file_name
 
 
+async def _run_cloud_upload(
+    node: TaskNode, message_id: int, file_name: str, ui_file_name: str
+) -> None:
+    """Upload one finished file in the background and record the outcome.
+
+    Runs outside the download worker so a slow drive cannot hold a download
+    slot. The history row is written as "仅本地" by ``download_task`` first and
+    updated here; a failed upload leaves it that way so the Web UI's re-upload
+    button still works and the local file is kept.
+    """
+    try:
+        state = await app.upload_file(
+            file_name, update_cloud_upload_stat, (node, message_id, ui_file_name)
+        )
+    except Exception as error:  # pylint: disable = W0703
+        logger.exception(f"Message[{message_id}] upload failed: {error}")
+        return
+    finally:
+        # The upload row lives only while rclone reports progress.
+        upload_stat.remove(node.chat_id, message_id)
+
+    if not state:
+        logger.warning(
+            f"Message[{message_id}] upload failed, local file kept: {file_name}"
+        )
+        return
+
+    node.upload_success_count += 1
+    if state == UPLOAD_EXISTS:
+        node.upload_skipped_count += 1
+    update_completed_upload_state(node.chat_id, message_id, state)
+
+
 async def download_task(
     client: pyrogram.Client, message: pyrogram.types.Message, node: TaskNode
 ):
@@ -473,8 +508,7 @@ async def download_task(
     download_status = DownloadStatus.FailedDownload
     file_name = None
     file_size = 0
-    upload_ok = False
-    upload_state = None
+    pending_upload = None
 
     try:
         download_status, file_name = await download_media(
@@ -507,23 +541,26 @@ async def download_task(
             file_name,
         )
 
-        # rclone upload
+        # Cloud-drive upload: hand the file to the background dispatcher instead
+        # of awaiting it here. Uploading a multi-GB file used to keep this worker
+        # (one of ``max_download_task``) busy for minutes, which made the whole
+        # downloader look serial. The upload itself deletes the local file when
+        # it succeeds; ``module.disk_guard`` pauses downloads if it falls behind.
         if (
             not node.upload_telegram_chat_id
             and file_name
             and download_status is DownloadStatus.SuccessDownload
+            and app.cloud_drive_config.enable_upload_file
         ):
             ui_file_name = file_name
             if app.hide_file_name:
                 ui_file_name = f"****{os.path.splitext(file_name)[-1]}"
-            upload_state = await app.upload_file(
-                file_name, update_cloud_upload_stat, (node, message.id, ui_file_name)
+            pending_upload = (
+                node,
+                message.id,
+                file_name,
+                ui_file_name,
             )
-            if upload_state:
-                node.upload_success_count += 1
-                upload_ok = True
-                if upload_state == UPLOAD_EXISTS:
-                    node.upload_skipped_count += 1
     except Exception as e:  # pylint: disable = W0703
         logger.exception(f"Message[{message.id}] task failed: {e}")
         # If the download itself completed, keep Success: the file exists and
@@ -562,14 +599,21 @@ async def download_task(
         elif download_status is DownloadStatus.SuccessDownload:
             # Move the row into the completed list. Leaving it in the
             # in-progress dict was why the Web UI kept showing a finished
-            # message at 100% long after the bot card reported success.
+            # message at 100% long after the bot card reported success. The
+            # upload state is filled in by the background job.
             mark_download_completed(
                 node.chat_id,
                 message.id,
                 file_name or "",
                 file_size,
-                upload_state if upload_ok else None,
+                None,
             )
+            if pending_upload is not None:
+                # Submitted after the history row exists: the upload updates
+                # that row, so it must not run first.
+                upload_dispatcher.submit(
+                    lambda job=pending_upload: _run_cloud_upload(*job)
+                )
         else:
             remove_download_result(node.chat_id, message.id)
 
@@ -694,6 +738,15 @@ async def download_media(
 
     message_id = message.id
     last_error: str = ""
+
+    # Do not start writing bytes when the volume cannot hold this file plus the
+    # configured reserve: the guard waits (and logs) until uploads free space.
+    try:
+        await disk_guard.wait_for_space(media_size)
+    except disk_guard.DiskSpaceError as space_error:
+        node.last_error[message.id] = str(space_error)
+        logger.error(f"Message[{message.id}]: {space_error}")
+        return DownloadStatus.FailedDownload, None
 
     for retry in range(3):
         try:
@@ -1175,6 +1228,19 @@ def main():
     )
     try:
         app.pre_run()
+        # Downloads pause when the target volume runs low; the background
+        # uploads delete their local copies, which is what frees the space.
+        disk_guard.set_gate(
+            disk_guard.DiskSpaceGate(
+                [app.temp_save_path, app.save_path],
+                app.min_free_space_bytes,
+            )
+        )
+        if app.min_free_space_bytes:
+            logger.info(
+                f"磁盘保护已启用：任意磁盘剩余低于 {app.min_free_space_gb:g} GB "
+                f"时暂停下载，空间释放后自动继续"
+            )
         history_db = os.environ.get("TDL_HISTORY_DB") or os.path.join(
             app.session_file_path, "history.db"
         )
@@ -1254,6 +1320,21 @@ def main():
             # Await the cancellations, otherwise asyncio warns about pending
             # tasks that were destroyed at interpreter shutdown.
             app.loop.run_until_complete(asyncio.gather(*tasks, return_exceptions=True))
+        # Uploads run outside the download workers; give them a chance to finish.
+        # A one-shot run (no bot token) must not exit before its uploads are
+        # done, while a daemon bounds the wait so SIGINT does not hang on a
+        # stalled drive (those files stay local for the next retry).
+        try:
+            dropped = app.loop.run_until_complete(
+                upload_dispatcher.drain(timeout=60 if app.bot_token else 0)
+            )
+            if dropped:
+                logger.warning(
+                    f"{dropped} 个后台上传在退出时被取消，本地文件已保留，"
+                    f"下次启动或 Web UI 里可重新上传"
+                )
+        except Exception as drain_err:  # pylint: disable = W0703
+            logger.warning(f"停止后台上传失败: {drain_err}")
         logger.info(_t("Stopped!"))
         # check_for_updates(app.proxy)
         logger.info(f"{_t('update config')}......")

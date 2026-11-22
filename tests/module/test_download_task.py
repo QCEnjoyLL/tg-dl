@@ -80,9 +80,7 @@ class DownloadTaskFinalizeTestCase(unittest.IsolatedAsyncioTestCase):
             -100123, 43, "/tmp/finished.mp4", 123, None
         )
 
-    async def test_cloud_upload_state_is_recorded(self):
-        from module.cloud_drive import UPLOAD_EXISTS
-
+    async def test_cloud_upload_is_delegated_to_the_background_dispatcher(self):
         node = mock.Mock()
         node.chat_id = -100123
         node.bot = None
@@ -96,7 +94,10 @@ class DownloadTaskFinalizeTestCase(unittest.IsolatedAsyncioTestCase):
         message.text = None
         message.media = mock.Mock()
 
+        dispatcher = mock.Mock()
         with mock.patch.object(
+            md.app.cloud_drive_config, "enable_upload_file", True
+        ), mock.patch.object(
             md,
             "download_media",
             new=mock.AsyncMock(
@@ -105,9 +106,7 @@ class DownloadTaskFinalizeTestCase(unittest.IsolatedAsyncioTestCase):
         ), mock.patch.object(
             md, "upload_telegram_chat", new=mock.AsyncMock()
         ), mock.patch.object(
-            md.app,
-            "upload_file",
-            new=mock.AsyncMock(return_value=UPLOAD_EXISTS),
+            md, "upload_dispatcher", dispatcher
         ), mock.patch.object(
             md, "report_bot_download_status", new=mock.AsyncMock()
         ), mock.patch.object(
@@ -119,8 +118,67 @@ class DownloadTaskFinalizeTestCase(unittest.IsolatedAsyncioTestCase):
         ):
             await md.download_task(mock.Mock(), message, node)
 
+        # The download row is recorded as "仅本地" first; the upload job fills in
+        # the state later, so the worker can fetch the next message right away.
+        completed_mock.assert_called_once_with(
+            -100123, 44, "/tmp/cloud.mp4", 10, None
+        )
+        dispatcher.submit.assert_called_once()
+
+    async def test_background_upload_records_the_upload_state(self):
+        from module.cloud_drive import UPLOAD_EXISTS
+
+        node = mock.Mock()
+        node.chat_id = -100123
+        node.upload_success_count = 0
+        node.upload_skipped_count = 0
+
+        with mock.patch.object(
+            md.app, "upload_file", new=mock.AsyncMock(return_value=UPLOAD_EXISTS)
+        ), mock.patch.object(
+            md, "update_completed_upload_state"
+        ) as update_mock, mock.patch.object(
+            md.upload_stat, "remove"
+        ) as remove_mock:
+            await md._run_cloud_upload(  # pylint: disable = W0212
+                node, 44, "/tmp/cloud.mp4", "cloud.mp4"
+            )
+
         self.assertEqual(node.upload_success_count, 1)
         self.assertEqual(node.upload_skipped_count, 1)
-        completed_mock.assert_called_once_with(
-            -100123, 44, "/tmp/cloud.mp4", 10, UPLOAD_EXISTS
-        )
+        update_mock.assert_called_once_with(-100123, 44, UPLOAD_EXISTS)
+        remove_mock.assert_called_once_with(-100123, 44)
+
+    async def test_background_upload_failure_keeps_the_row_local(self):
+        node = mock.Mock()
+        node.chat_id = -100123
+        node.upload_success_count = 0
+        node.upload_skipped_count = 0
+
+        with mock.patch.object(
+            md.app, "upload_file", new=mock.AsyncMock(return_value=None)
+        ), mock.patch.object(
+            md, "update_completed_upload_state"
+        ) as update_mock:
+            await md._run_cloud_upload(  # pylint: disable = W0212
+                node, 44, "/tmp/cloud.mp4", "cloud.mp4"
+            )
+
+        # No state update: the row stays "仅本地" so the re-upload button works.
+        update_mock.assert_not_called()
+        self.assertEqual(node.upload_success_count, 0)
+
+    async def test_background_upload_exception_is_contained(self):
+        node = mock.Mock()
+        node.chat_id = -100123
+
+        with mock.patch.object(
+            md.app,
+            "upload_file",
+            new=mock.AsyncMock(side_effect=RuntimeError("drive offline")),
+        ), mock.patch.object(md, "update_completed_upload_state") as update_mock:
+            await md._run_cloud_upload(  # pylint: disable = W0212
+                node, 44, "/tmp/cloud.mp4", "cloud.mp4"
+            )
+
+        update_mock.assert_not_called()
