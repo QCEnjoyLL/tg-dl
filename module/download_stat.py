@@ -27,6 +27,7 @@ from typing import Any, List, Optional
 from loguru import logger
 from pyrogram import Client
 
+from module import pyrogram_guard
 from module.app import TaskNode
 
 MAX_PAGE_SIZE = 500
@@ -48,6 +49,11 @@ class TaskCancelled(Exception):
     ``download_media`` records the failure and the task finalizer in
     ``download_task`` turns a cancelled task into "skip" instead of "failed".
     """
+
+
+#: A cancelled task must unwind the transfer immediately instead of being
+#: swallowed and retried three times by the download wrappers.
+pyrogram_guard.register_propagated_error(TaskCancelled)
 
 
 _PROGRESS_LOCK = threading.RLock()

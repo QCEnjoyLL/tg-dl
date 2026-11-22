@@ -57,6 +57,27 @@ _captured_error: contextvars.ContextVar[Optional[BaseException]] = (
 #: ``DownloadIncomplete``, or ``download_media``'s FloodWait handling breaks.
 _PROPAGATED_ERRORS: tuple = ()
 
+#: Error types registered by other modules that must also propagate out of a
+#: download stream (e.g. the Web UI's ``TaskCancelled``). Registered lazily to
+#: avoid importing the downloader from this low-level module.
+_EXTRA_PROPAGATED: list = []
+
+
+def register_propagated_error(error_type) -> None:
+    """Let ``error_type`` escape the stream instead of being swallowed.
+
+    Without this a "delete this task" request was caught by the download
+    wrappers, turned into a generic failure and retried three times before the
+    task finalizer noticed the cancellation.
+    """
+    # pylint: disable = W0603
+    global _PROPAGATED_ERRORS
+    if error_type in _EXTRA_PROPAGATED:
+        return
+    _EXTRA_PROPAGATED.append(error_type)
+    # Force the next lookup to rebuild the cached tuple.
+    _PROPAGATED_ERRORS = ()
+
 
 def _propagated_errors() -> tuple:
     """Build the tuple of errors Pyrogram re-raises out of ``get_file``."""
@@ -71,7 +92,7 @@ def _propagated_errors() -> tuple:
         error = getattr(pyrogram.errors, name, None)
         if isinstance(error, type):
             errors.append(error)
-    _PROPAGATED_ERRORS = tuple(errors)
+    _PROPAGATED_ERRORS = tuple(errors) + tuple(_EXTRA_PROPAGATED)
     return _PROPAGATED_ERRORS
 
 

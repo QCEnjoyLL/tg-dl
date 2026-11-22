@@ -13,14 +13,22 @@ the sequential path: a truncated range is reopened at the last complete chunk
 boundary, and repeated stalls raise ``DownloadIncomplete`` so ``download_media``
 can retry with backoff.
 
+A failed attempt now keeps both the partial ``.temp`` file and a small
+``.temp.json`` sidecar recording how many bytes of every range are already on
+disk, so the next attempt (or a restart) continues instead of downloading a
+multi-GB file from zero again. Ranges write out of order, which is why the
+sidecar is required: the file length alone cannot tell which ranges are done.
+
 The default is 1, which leaves the stock sequential path untouched.
 """
 
 import asyncio
+import json
 import math
 import os
 import re
 import shutil
+import time
 from typing import List, Optional, Tuple
 
 from loguru import logger
@@ -30,6 +38,12 @@ from module import pyrogram_guard
 #: One range == one in-flight GetFile request; going past this mostly buys
 #: FloodWait instead of bandwidth.
 MAX_CHUNK_CONCURRENCY = 16
+
+#: Sidecar next to ``<file>.temp`` that stores the per-range byte counts.
+STATE_SUFFIX = ".json"
+
+#: Minimum seconds between two sidecar writes while chunks are arriving.
+STATE_SAVE_INTERVAL = 2.0
 
 _concurrency = 1
 
@@ -87,10 +101,63 @@ def chunk_ranges(file_size: int, concurrency: int) -> List[Tuple[int, int]]:
     return ranges
 
 
+def _write_state(state_path: str, state: List[int]) -> None:
+    """Persist the per-range byte counts (best effort, never fatal)."""
+    if not state_path:
+        return
+    try:
+        with open(state_path, "w", encoding="utf-8") as state_file:
+            json.dump(list(state), state_file)
+    except OSError as error:
+        logger.debug(f"could not save download state {state_path}: {error}")
+
+
+def _drop_state(state_path: str) -> None:
+    """Remove the sidecar after a finished download or after giving up on it."""
+    if not state_path or not os.path.exists(state_path):
+        return
+    try:
+        os.remove(state_path)
+    except OSError as error:
+        logger.debug(f"could not remove download state {state_path}: {error}")
+
+
+def _load_state(
+    state_path: str, ranges: List[Tuple[int, int]], file_size: int
+) -> Optional[List[int]]:
+    """Read and validate the sidecar; ``None`` means "cannot be trusted"."""
+    try:
+        with open(state_path, encoding="utf-8") as state_file:
+            raw = json.load(state_file)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(raw, list) or len(raw) != len(ranges):
+        return None
+
+    chunk_size = pyrogram_guard.CHUNK_SIZE
+    state: List[int] = []
+    for value, (start, end) in zip(raw, ranges):
+        expected = min(end * chunk_size, file_size) - start * chunk_size
+        if isinstance(value, bool) or not isinstance(value, int):
+            return None
+        if value < 0 or value > expected:
+            return None
+        state.append(value)
+    return state
+
+
 class _ChunkWriter:
     """Write chunks at absolute offsets and publish a monotonic byte total."""
 
-    def __init__(self, file_obj, file_size: int, progress, progress_args):
+    def __init__(
+        self,
+        file_obj,
+        file_size: int,
+        progress,
+        progress_args,
+        state: Optional[List[int]] = None,
+        state_path: str = "",
+    ):
         self._file = file_obj
         self._size = file_size
         self._progress = progress
@@ -99,7 +166,17 @@ class _ChunkWriter:
         # The progress callback derives the speed from deltas, so it must never
         # see a smaller total after a bigger one.
         self._progress_lock = asyncio.Lock()
-        self.received = 0
+        self._state = state if state is not None else []
+        self._state_path = state_path
+        self._last_save = 0.0
+        # Bytes already on disk from a previous attempt count as progress too.
+        self.received = sum(self._state)
+
+    def state_of(self, index: int) -> int:
+        """Bytes of range ``index`` a previous attempt already wrote."""
+        if not self._state or index < 0 or index >= len(self._state):
+            return 0
+        return self._state[index]
 
     async def write(self, offset: int, chunk: bytes) -> None:
         """Store ``chunk`` at ``offset`` and report the aggregated progress."""
@@ -114,11 +191,27 @@ class _ChunkWriter:
         async with self._progress_lock:
             await self._progress(received, self._size, *self._progress_args)
 
+    def mark(self, index: int, received: int) -> None:
+        """Record how much of range ``index`` is on disk, throttled."""
+        if not self._state:
+            return
+        self._state[index] = received
+        now = time.monotonic()
+        if now - self._last_save >= STATE_SAVE_INTERVAL:
+            self._last_save = now
+            _write_state(self._state_path, self._state)
+
+    def flush_state(self) -> None:
+        """Write the sidecar immediately (failure or cancellation)."""
+        if self._state:
+            _write_state(self._state_path, self._state)
+
 
 async def _download_range(
     client,
     file_id,
     file_size: int,
+    index: int,
     start_chunk: int,
     end_chunk: int,
     writer: _ChunkWriter,
@@ -131,7 +224,8 @@ async def _download_range(
     if expected <= 0:
         return
 
-    received = 0
+    # Bytes of this range that a previous attempt already put on disk.
+    received = min(max(writer.state_of(index), 0), expected)
     stalled = 0
     flood_waits = 0
     while received < expected:
@@ -162,6 +256,7 @@ async def _download_range(
                 await writer.write(absolute, chunk)
                 absolute += len(chunk)
                 received += len(chunk)
+                writer.mark(index, received)
                 progressed = True
                 flood_waits = 0
                 if received >= expected:
@@ -196,12 +291,16 @@ async def _download_range(
         await asyncio.sleep(pyrogram_guard.RESUME_SLEEP)
 
 
-async def _run_ranges(client, file_id, file_size: int, writer: _ChunkWriter, label):
+async def _run_ranges(
+    client, file_id, file_size: int, ranges, writer: _ChunkWriter, label: str
+):
     tasks = [
         asyncio.ensure_future(
-            _download_range(client, file_id, file_size, start, end, writer, label)
+            _download_range(
+                client, file_id, file_size, index, start, end, writer, label
+            )
         )
-        for start, end in chunk_ranges(file_size, _concurrency)
+        for index, (start, end) in enumerate(ranges)
     ]
     try:
         await asyncio.gather(*tasks)
@@ -222,7 +321,8 @@ def parallel_handle_download(original):
 
     The sequential path goes through ``pyrogram_guard.resumable_handle_download``
     so a failed attempt keeps its ``.temp`` and the retry (or the next start)
-    continues instead of downloading the file again from zero.
+    continues instead of downloading the file again from zero. The parallel path
+    keeps the same guarantee through the ``.temp.json`` sidecar.
     """
 
     resumable = pyrogram_guard.resumable_handle_download(original)
@@ -249,16 +349,69 @@ def parallel_handle_download(original):
             os.path.abspath(re.sub("\\\\", "/", os.path.join(directory, file_name)))
             + ".temp"
         )
+        state_path = temp_file_path + STATE_SUFFIX
         label = f"[{file_name}]"
+        ranges = chunk_ranges(file_size, _concurrency)
 
+        state: Optional[List[int]] = None
+        if ranges and os.path.exists(temp_file_path):
+            state = _load_state(state_path, ranges, file_size)
+        if state is None:
+            # No trustworthy sidecar (first attempt, or a version that did not
+            # write one): start over instead of splicing unknown bytes.
+            state = [0] * len(ranges)
+            written = 0
+        else:
+            chunk_size = pyrogram_guard.CHUNK_SIZE
+            written = max(
+                (
+                    start * chunk_size + received
+                    for (start, _end), received in zip(ranges, state)
+                ),
+                default=0,
+            )
+            on_disk = (
+                os.path.getsize(temp_file_path)
+                if os.path.exists(temp_file_path)
+                else 0
+            )
+            if on_disk < written:
+                # The file is shorter than the sidecar claims (crash, cleanup,
+                # manual truncation): the state cannot be trusted.
+                logger.debug(f"{label}: temp file shorter than its state, restarting")
+                state = [0] * len(ranges)
+                written = 0
+
+        if ranges and sum(state) == file_size and written >= file_size:
+            # Complete leftover from a run that died between the last write and
+            # the rename: salvage it instead of downloading everything again.
+            final_path = os.path.splitext(temp_file_path)[0]
+            with open(temp_file_path, "r+b") as file_obj:
+                file_obj.truncate(file_size)
+            _drop_state(state_path)
+            shutil.move(temp_file_path, final_path)
+            return final_path
+
+        writer: Optional[_ChunkWriter] = None
+        received = 0
         try:
-            with open(temp_file_path, "wb") as file_obj:
-                writer = _ChunkWriter(file_obj, file_size, progress, progress_args)
-                await _run_ranges(self, file_id, file_size, writer, label)
+            resume = sum(state) > 0
+            with open(temp_file_path, "r+b" if resume else "wb") as file_obj:
+                writer = _ChunkWriter(
+                    file_obj,
+                    file_size,
+                    progress,
+                    progress_args,
+                    state=state,
+                    state_path=state_path,
+                )
+                await _run_ranges(self, file_id, file_size, ranges, writer, label)
                 received = writer.received
         except BaseException as error:  # pylint: disable = W0703
-            if os.path.exists(temp_file_path):
-                os.remove(temp_file_path)
+            # Keep ".temp" + sidecar so the retry resumes where this attempt
+            # stopped; only an explicit deletion should throw the bytes away.
+            if writer is not None:
+                writer.flush_state()
             if isinstance(
                 error, (asyncio.CancelledError,) + pyrogram_guard.propagated_errors()
             ):
@@ -270,6 +423,7 @@ def parallel_handle_download(original):
             return None
 
         if received != file_size:
+            writer.flush_state()
             logger.warning(
                 f"{label} parallel download incomplete: {received}/{file_size}"
             )
@@ -279,6 +433,7 @@ def parallel_handle_download(original):
             return None
 
         final_path = os.path.splitext(temp_file_path)[0]
+        _drop_state(state_path)
         shutil.move(temp_file_path, final_path)
         return final_path
 

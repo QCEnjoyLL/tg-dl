@@ -1,5 +1,6 @@
 """Tests for the opt-in per-file parallel chunk downloader."""
 
+import json
 import os
 import tempfile
 import unittest
@@ -9,6 +10,7 @@ import pyrogram
 
 from module import pyrogram_guard
 from module.fast_download import (
+    STATE_SUFFIX,
     chunk_ranges,
     get_chunk_concurrency,
     parallel_handle_download,
@@ -216,7 +218,7 @@ class ParallelDownloadTestCase(unittest.IsolatedAsyncioTestCase):
             "a truncated range should have been reopened",
         )
 
-    async def test_repeated_stalls_return_none_and_clean_up(self):
+    async def test_repeated_stalls_keep_the_partial_file_for_resume(self):
         handle = parallel_handle_download(self.fail_original)
         _captured_error.set(None)
 
@@ -224,10 +226,51 @@ class ParallelDownloadTestCase(unittest.IsolatedAsyncioTestCase):
             result = await handle(SilentGetFileClient(), self.packet(CHUNK_SIZE))
 
         self.assertIsNone(result)
-        self.assertFalse(
-            any(name.endswith(".temp") for name in os.listdir(self.directory))
-        )
         self.assertIsInstance(_captured_error.get(), DownloadIncomplete)
+        # The bytes are kept so the retry resumes instead of starting over; the
+        # state sidecar is what makes an out-of-order temp file resumable.
+        temp = os.path.join(self.directory, "video.bin") + ".temp"
+        self.assertTrue(os.path.exists(temp))
+        self.assertTrue(os.path.exists(temp + STATE_SUFFIX))
+
+    async def test_resumes_from_the_state_sidecar(self):
+        data = os.urandom(2 * CHUNK_SIZE)
+        temp = os.path.join(self.directory, "video.bin") + ".temp"
+        with open(temp, "wb") as file_obj:
+            file_obj.write(data[:CHUNK_SIZE])
+        with open(temp + STATE_SUFFIX, "w", encoding="utf-8") as state_file:
+            json.dump([CHUNK_SIZE, 0], state_file)
+
+        client = FakeGetFileClient(data)
+        handle = parallel_handle_download(self.fail_original)
+        path = await handle(client, self.packet(len(data)))
+
+        self.assertEqual(path, os.path.join(self.directory, "video.bin"))
+        with open(path, "rb") as file_obj:
+            self.assertEqual(file_obj.read(), data)
+        # Range 0 is already on disk: only the missing range is fetched again.
+        self.assertEqual(client.offsets, [1])
+        self.assertFalse(os.path.exists(temp + STATE_SUFFIX))
+
+    async def test_cancellation_aborts_immediately_and_keeps_the_bytes(self):
+        from module.download_stat import TaskCancelled
+
+        class CancellingClient:
+            async def get_file(self, *_args, **_kwargs):
+                yield b"x" * CHUNK_SIZE
+                raise TaskCancelled("deleted from the Web UI")
+
+        handle = parallel_handle_download(self.fail_original)
+
+        # Two ranges of two chunks each: the cancellation lands while a range
+        # still has bytes to fetch, which is what the progress callback does in
+        # production (one range of a single chunk finishes before it can fire).
+        set_chunk_concurrency(2)
+        with self.assertRaises(TaskCancelled):
+            await handle(CancellingClient(), self.packet(4 * CHUNK_SIZE))
+
+        temp = os.path.join(self.directory, "video.bin") + ".temp"
+        self.assertTrue(os.path.exists(temp))
 
     async def test_short_write_is_reported_as_incomplete(self):
         """A truncated last chunk must not be accepted as a complete file."""
