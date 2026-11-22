@@ -245,6 +245,9 @@ web_login_secret: "改成你的密码"
 
 ![移动端](docs/ui-mobile.png)
 
+> 截图由 `preview/screenshots.ps1` 从本地静态预览生成（`preview/build.py` 的 mock 数据，
+> 不需要 Telegram 会话）：`powershell -ExecutionPolicy Bypass -File preview\screenshots.ps1`。
+
 功能：
 
 - **明暗主题**：默认跟随系统，右上角可手动切换，选择记在 `localStorage`，刷新不丢
