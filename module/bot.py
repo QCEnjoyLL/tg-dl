@@ -156,6 +156,25 @@ class DownloadBot:
         with open(self.config_path, "w", encoding="utf-8") as yaml_file:
             self._yaml.dump(self.config, yaml_file)
 
+    def create_client(self, app: Application) -> pyrogram.Client:
+        """Build the bot client with the same transfer pool as the main one.
+
+        Bot-triggered downloads (forwarded media, direct links, listened
+        forwards) run on this client. Pyrogram sizes ``get_file_semaphore`` from
+        ``max_concurrent_transmissions`` and defaults it to 1, which used to
+        serialise every such download into one stream regardless of
+        ``max_download_task``.
+        """
+        return pyrogram.Client(
+            app.application_name + "_bot",
+            api_hash=app.api_hash,
+            api_id=app.api_id,
+            bot_token=app.bot_token,
+            workdir=app.session_file_path,
+            proxy=app.proxy,
+            max_concurrent_transmissions=app.transmission_slots(),
+        )
+
     async def start(
         self,
         app: Application,
@@ -164,14 +183,7 @@ class DownloadBot:
         download_chat_task: Callable,
     ):
         """Start bot"""
-        self.bot = pyrogram.Client(
-            app.application_name + "_bot",
-            api_hash=app.api_hash,
-            api_id=app.api_id,
-            bot_token=app.bot_token,
-            workdir=app.session_file_path,
-            proxy=app.proxy,
-        )
+        self.bot = self.create_client(app)
 
         # Command list
         commands = [

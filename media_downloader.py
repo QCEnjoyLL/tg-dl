@@ -1193,10 +1193,7 @@ def main():
 
         # Every parallel range holds one transmission slot for its whole stream,
         # so size the pool for the worst case instead of serialising ranges.
-        transmissions = max(
-            app.max_concurrent_transmissions,
-            app.max_download_task * app.max_concurrent_chunks,
-        )
+        transmissions = app.transmission_slots()
         if transmissions != app.max_concurrent_transmissions:
             logger.info(
                 f"max_concurrent_transmissions {app.max_concurrent_transmissions} "

@@ -742,6 +742,20 @@ class Application:
                             ] = True
         return True
 
+    def transmission_slots(self) -> int:
+        """Concurrent transfer slots one Pyrogram client needs.
+
+        Every parallel range of a file holds one ``get_file`` slot for its whole
+        stream, so the pool is sized for the worst case. Both the main client
+        and the bot client use this number: Pyrogram's default is 1, and a
+        client left at that default serialises every bot-triggered download no
+        matter what ``max_download_task`` says.
+        """
+        return max(
+            self.max_concurrent_transmissions,
+            self.max_download_task * self.max_concurrent_chunks,
+        )
+
     async def upload_file(
         self,
         local_file_path: str,

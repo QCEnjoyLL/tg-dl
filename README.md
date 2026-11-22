@@ -133,6 +133,10 @@ Telegram 的 `upload.GetFile` 每次最多返回 1 MiB，Pyrogram 是**一个文
 > 并行分片同样支持断点续传：失败或被取消时会保留 `temp/` 下的 `.temp` 文件和旁边的 `.temp.json`
 > 进度记录，下次重试（或重启后）从已完成的区间继续，不会把几 GB 的文件从头再拉一遍。
 
+> `max_concurrent_transmissions` 现在对**两个客户端**都生效：自动下载用的主客户端，以及 bot 转发
+> 媒体 / 直链下载用的 bot 客户端（此前 bot 客户端固定是 Pyrogram 默认的 1，所以那类下载总是一条
+> 一条来）。实际传输槽位 = `max(该项, max_download_task × max_concurrent_chunks)`。
+
 ### 上传到网盘
 
 ```yaml

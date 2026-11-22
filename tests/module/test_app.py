@@ -330,3 +330,23 @@ class FilePathPrefixTestCase(unittest.TestCase):
             app.get_file_save_path("video", "chan", "2026_11"),
             os.path.join(os.sep, "downloads", "chan"),
         )
+
+
+class TransmissionSlotsTestCase(unittest.TestCase):
+    """One client must be able to serve every range of every parallel file."""
+
+    def test_pool_covers_parallel_ranges(self):
+        app = Application("", "")
+        app.max_concurrent_transmissions = 2
+        app.max_download_task = 3
+        app.max_concurrent_chunks = 4
+
+        self.assertEqual(app.transmission_slots(), 12)
+
+    def test_explicit_larger_pool_is_kept(self):
+        app = Application("", "")
+        app.max_concurrent_transmissions = 20
+        app.max_download_task = 2
+        app.max_concurrent_chunks = 1
+
+        self.assertEqual(app.transmission_slots(), 20)

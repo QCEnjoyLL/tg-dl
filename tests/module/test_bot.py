@@ -1,12 +1,14 @@
 """Tests for the bot's help card."""
 
 import asyncio
+import tempfile
 import unittest
 from unittest import mock
 
 from pyrogram.parser.parser import Parser
 
 from module import bot, language
+from module.app import Application
 from module.language import Language
 
 
@@ -155,6 +157,47 @@ class HelpUpdateHintTestCase(unittest.TestCase):
             text = bot.build_help_text()
 
         self.assertIn("新版本 v2.14.0 可用（当前 v2.13.2）", text)
+
+
+class BotClientPoolTestCase(unittest.TestCase):
+    """Bot downloads must not be limited to one stream.
+
+    Bot-triggered downloads (forwarded media, direct links, listened forwards)
+    run on the bot client. Pyrogram sizes ``get_file_semaphore`` from
+    ``max_concurrent_transmissions`` (default 1), and only the main client used
+    to be raised, so those downloads serialised no matter what
+    ``max_download_task`` was set to.
+    """
+
+    def _app(self, workdir):
+        app = Application("", "")
+        app.session_file_path = workdir
+        app.api_id = 1
+        app.api_hash = "a" * 32
+        app.bot_token = "1:x"
+        app.max_download_task = 3
+        app.max_concurrent_chunks = 4
+        app.max_concurrent_transmissions = 2
+        return app
+
+    def test_bot_client_uses_the_configured_pool(self):
+        with tempfile.TemporaryDirectory() as workdir:
+            app = self._app(workdir)
+
+            client = bot.DownloadBot().create_client(app)
+
+            self.assertEqual(client.max_concurrent_transmissions, 12)
+            self.assertEqual(client.get_file_semaphore._value, 12)  # pylint: disable = W0212
+            self.assertEqual(client.save_file_semaphore._value, 12)  # pylint: disable = W0212
+
+    def test_pool_never_shrinks_below_the_explicit_config(self):
+        with tempfile.TemporaryDirectory() as workdir:
+            app = self._app(workdir)
+            app.max_concurrent_transmissions = 20
+
+            client = bot.DownloadBot().create_client(app)
+
+            self.assertEqual(client.get_file_semaphore._value, 20)  # pylint: disable = W0212
 
 
 if __name__ == "__main__":
