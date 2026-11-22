@@ -1412,3 +1412,110 @@ class FloodErrorDescriptionTestCase(unittest.TestCase):
             self.assertFalse(os.path.exists(stale))
             self.assertTrue(os.path.exists(fresh))
             self.assertTrue(os.path.exists(keep))
+
+
+class UnknownFileSizeTestCase(unittest.IsolatedAsyncioTestCase):
+    """Media whose metadata carries no size must not be deleted as truncated.
+
+    Some objects (photos without ``file_size``, older voice notes) report no
+    size; comparing the finished file against ``0`` deleted it and recorded a
+    failure, so those messages could never complete.
+    """
+
+    def _write(self, directory, name, payload=b"x" * 10):
+        path = os.path.join(directory, name)
+        with open(path, "wb") as handle:
+            handle.write(payload)
+        return path
+
+    async def test_unknown_size_is_accepted(self):
+        import media_downloader as md
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = self._write(tmp_dir, "photo.bin")
+
+            md._check_download_finish(0, path, "photo.bin")  # pylint: disable = W0212
+
+            self.assertTrue(os.path.exists(path))
+
+    async def test_declared_size_mismatch_is_still_removed(self):
+        import media_downloader as md
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = self._write(tmp_dir, "clip.bin")
+
+            with self.assertRaises(DownloadIncomplete):
+                md._check_download_finish(  # pylint: disable = W0212
+                    11, path, "clip.bin"
+                )
+
+            self.assertFalse(os.path.exists(path))
+
+    async def test_existing_file_with_unknown_size_is_skipped(self):
+        rest_app(MOCK_CONF)
+        client = MockClient()
+
+        class NoSizeVideo:
+            """A video object whose metadata carries no size (file_size is 0)."""
+
+            file_name = "no size known.mp4"
+            mime_type = "video/mp4"
+            file_id = "VIDEO"
+            file_size = 0
+            width = 1920
+            height = 1080
+            duration = 1
+
+        message = MockMessage(id=317, media=True, video=NoSizeVideo())
+
+        with mock.patch(
+            "media_downloader.os.path.getsize", new=lambda _: 512
+        ), mock.patch("media_downloader.fetch_message", new=new_fetch_message), mock.patch(
+            "media_downloader._is_exist", new=lambda _: True
+        ):
+            res = await async_download_media(
+                client, message, ["video"], {"video": ["all"]}
+            )
+
+        # Without a declared size the non-empty leftover counts as finished
+        # instead of being downloaded again on every single run.
+        self.assertEqual(res, (DownloadStatus.SkipDownload, None))
+
+
+class ChatTitleCollisionTestCase(unittest.TestCase):
+    """Two chats can share a title, and the media folder is named after it."""
+
+    def setUp(self):
+        import media_downloader as md
+
+        self.md = md
+        self._prefix = app.file_path_prefix
+        md._seen_chat_titles.clear()  # pylint: disable = W0212
+        md._warned_title_conflicts.clear()  # pylint: disable = W0212
+
+    def tearDown(self):
+        app.file_path_prefix = self._prefix
+
+    def test_same_title_warns_once(self):
+        with mock.patch.object(self.md, "logger") as log:
+            self.md._note_chat_title(-1001, "同名频道")
+            self.md._note_chat_title(-1002, "同名频道")
+            self.md._note_chat_title(-1003, "同名频道")
+
+        self.assertEqual(log.warning.call_count, 1)
+        self.assertIn("同名频道", log.warning.call_args[0][0])
+
+    def test_different_titles_do_not_warn(self):
+        with mock.patch.object(self.md, "logger") as log:
+            self.md._note_chat_title(-1001, "频道甲")
+            self.md._note_chat_title(-1002, "频道乙")
+
+        log.warning.assert_not_called()
+
+    def test_no_warning_when_chat_id_is_part_of_the_path(self):
+        app.file_path_prefix = ["chat_title", "chat_id"]
+        with mock.patch.object(self.md, "logger") as log:
+            self.md._note_chat_title(-1001, "同名频道")
+            self.md._note_chat_title(-1002, "同名频道")
+
+        log.warning.assert_not_called()

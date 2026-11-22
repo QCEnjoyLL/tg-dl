@@ -255,3 +255,78 @@ class AppTestCase(unittest.TestCase):
         # The oldest group was evicted.
         self.assertIsNone(app.get_caption_name(-100, "group-0"))
         self.assertIsNone(app.get_caption_entities(-100, "group-0"))
+
+
+class UploadDriveBooleanConfigTestCase(unittest.TestCase):
+    """An explicitly written ``false`` must beat the built-in default.
+
+    ``after_upload_file_delete`` defaults to True, so the old truthiness check
+    (`if upload_drive_config.get(...)`) silently deleted the local file even
+    when the operator had turned that off.
+    """
+
+    BASE = {
+        "api_id": 1,
+        "api_hash": "hash",
+        "media_types": ["video"],
+    }
+
+    def _app(self, upload_drive):
+        app = Application("", "")
+        config = dict(self.BASE)
+        config["upload_drive"] = upload_drive
+        app.assign_config(config)
+        return app
+
+    def test_after_upload_file_delete_false_is_honoured(self):
+        app = self._app({"after_upload_file_delete": False})
+        self.assertFalse(app.cloud_drive_config.after_upload_file_delete)
+
+    def test_after_upload_file_delete_true_is_honoured(self):
+        app = self._app({"after_upload_file_delete": True})
+        self.assertTrue(app.cloud_drive_config.after_upload_file_delete)
+
+    def test_defaults_are_kept_when_the_keys_are_absent(self):
+        app = self._app({"enable_upload_file": True})
+        self.assertTrue(app.cloud_drive_config.after_upload_file_delete)
+        self.assertFalse(app.cloud_drive_config.before_upload_file_zip)
+        self.assertTrue(app.cloud_drive_config.hash_check)
+
+    def test_enable_upload_file_false_is_honoured(self):
+        app = self._app({"enable_upload_file": False, "after_upload_file_delete": True})
+        self.assertFalse(app.cloud_drive_config.enable_upload_file)
+
+    def test_hot_reload_applies_false(self):
+        app = self._app({})
+        app.reload_hot_config(
+            {"upload_drive": {"after_upload_file_delete": False, "hash_check": False}}
+        )
+        self.assertFalse(app.cloud_drive_config.after_upload_file_delete)
+        self.assertFalse(app.cloud_drive_config.hash_check)
+
+
+class FilePathPrefixTestCase(unittest.TestCase):
+    """The folder is named after the chat title, which is not unique."""
+
+    def test_chat_id_prefix_keeps_two_same_titled_chats_apart(self):
+        app = Application("", "")
+        app.save_path = os.path.join(os.sep, "downloads")
+        app.file_path_prefix = ["chat_title", "chat_id", "media_datetime"]
+
+        first = app.get_file_save_path("video", "同名频道", "2026_11", chat_id=-1001)
+        second = app.get_file_save_path("video", "同名频道", "2026_11", chat_id=-1002)
+
+        self.assertNotEqual(first, second)
+        self.assertIn("-1001", first)
+        self.assertIn("-1002", second)
+
+    def test_chat_id_prefix_is_optional(self):
+        app = Application("", "")
+        app.save_path = os.path.join(os.sep, "downloads")
+        app.file_path_prefix = ["chat_title", "chat_id"]
+
+        # Callers without a chat id (older code paths) keep working unchanged.
+        self.assertEqual(
+            app.get_file_save_path("video", "chan", "2026_11"),
+            os.path.join(os.sep, "downloads", "chan"),
+        )

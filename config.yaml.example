@@ -48,8 +48,11 @@ upload_drive:
   rclone_path: /app/rclone/rclone
   # 会额外生成 zip，建议关闭
   before_upload_file_zip: false
-  # 上传成功（rclone 返回码 0）后删除本地文件
+  # 上传成功（rclone 返回码 0）后删除本地文件；写 false 就不会删
   after_upload_file_delete: true
+  # 远端同名同大小时再比较一次 MD5，内容不同则重新上传（默认开）
+  # 后端不支持哈希（如部分网盘无 MD5）时会告警并退回只比大小
+  # hash_check: true
 
 # bot_token: "your_bot_token"
 # allowed_user_ids:

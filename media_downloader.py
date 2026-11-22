@@ -89,6 +89,14 @@ def _check_download_finish(media_size: int, download_path: str, ui_file_name: st
 
     """
     download_size = os.path.getsize(download_path)
+    # Telegram does not announce a size for every media object (some photos,
+    # voice notes and stickers report ``file_size`` as 0/None). Comparing the
+    # bytes on disk against that 0 declared every such download truncated,
+    # deleted the finished file and recorded a failure. Only enforce the size
+    # when the metadata actually carries one.
+    if not media_size:
+        logger.info(f"{_t('Successfully downloaded')} - {ui_file_name}")
+        return
     if media_size == download_size:
         logger.success(f"{_t('Successfully downloaded')} - {ui_file_name}")
     else:
@@ -282,6 +290,30 @@ def _is_exist(file_path: str) -> bool:
     return not os.path.isdir(file_path) and os.path.exists(file_path)
 
 
+#: ``chat title -> chat id`` seen during this run. The media folder is named
+#: after the title, so two chats with the same title write into one directory
+#: and their identical message ids overwrite each other.
+_seen_chat_titles: dict = {}
+_warned_title_conflicts: set = set()
+
+
+def _note_chat_title(chat_id, title: str) -> None:
+    """Warn once when two chats would share the same folder name."""
+    if "chat_id" in app.file_path_prefix:
+        return
+    # Normalize first: the same chat arrives as an int from the config and as a
+    # string from the Web UI, and a mismatch would warn about itself.
+    current = normalize_chat_id(chat_id)
+    owner = _seen_chat_titles.setdefault(title, current)
+    if str(owner) == str(current) or title in _warned_title_conflicts:
+        return
+    _warned_title_conflicts.add(title)
+    logger.warning(
+        f"频道「{title}」与 {owner} 使用了相同的标题，下载目录会互相覆盖；"
+        f"建议在 file_path_prefix 里加上 chat_id，或分开下载这两个频道。"
+    )
+
+
 # pylint: disable = R0912
 
 
@@ -316,6 +348,7 @@ async def _get_media_meta(
     dirname = validate_title(f"{chat_id}")
     if message.chat and message.chat.title:
         dirname = validate_title(f"{message.chat.title}")
+    _note_chat_title(chat_id, dirname)
 
     if message.date:
         datetime_dir_name = message.date.strftime(app.date_format)
@@ -325,7 +358,9 @@ async def _get_media_meta(
     if _type in ["voice", "video_note"]:
         # pylint: disable = C0209
         file_format = media_obj.mime_type.split("/")[-1]  # type: ignore
-        file_save_path = app.get_file_save_path(_type, dirname, datetime_dir_name)
+        file_save_path = app.get_file_save_path(
+            _type, dirname, datetime_dir_name, chat_id=chat_id
+        )
         file_name = "{} - {}_{}.{}".format(
             message.id,
             _type,
@@ -370,7 +405,9 @@ async def _get_media_meta(
             app.get_file_name(message.id, file_name, caption) + file_name_suffix
         )
 
-        file_save_path = app.get_file_save_path(_type, dirname, datetime_dir_name)
+        file_save_path = app.get_file_save_path(
+            _type, dirname, datetime_dir_name, chat_id=chat_id
+        )
 
         temp_file_name = os.path.join(app.temp_save_path, dirname, gen_file_name)
 
@@ -398,9 +435,12 @@ async def save_msg_to_file(
     dirname = validate_title(
         message.chat.title if message.chat and message.chat.title else str(chat_id)
     )
+    _note_chat_title(chat_id, dirname)
     datetime_dir_name = message.date.strftime(app.date_format) if message.date else "0"
 
-    file_save_path = app.get_file_save_path("msg", dirname, datetime_dir_name)
+    file_save_path = app.get_file_save_path(
+        "msg", dirname, datetime_dir_name, chat_id=chat_id
+    )
     file_name = os.path.join(
         app.temp_save_path,
         file_save_path,
@@ -627,8 +667,11 @@ async def download_media(
                     # Only a byte-exact match proves the file is complete. The
                     # old `file_size or ...` shortcut treated every non-empty
                     # leftover as finished, so a truncated file (older releases
-                    # accepted partial streams) was skipped forever.
-                    if file_size == media_size:
+                    # accepted partial streams) was skipped forever. When the
+                    # metadata has no size there is nothing to compare against,
+                    # so a non-empty leftover counts as done instead of being
+                    # re-downloaded on every run.
+                    if not media_size or file_size == media_size:
                         logger.info(
                             f"id={message.id} {ui_file_name} "
                             f"{_t('already download,download skipped')}.\n"

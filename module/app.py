@@ -485,8 +485,8 @@ class Application:
         # option
         if _config.get("proxy"):
             self.proxy = _config["proxy"]
-        if _config.get("restart_program"):
-            self.restart_program = _config["restart_program"]
+        if "restart_program" in _config:
+            self.restart_program = bool(_config["restart_program"])
         if _config.get("file_path_prefix"):
             self.file_path_prefix = _config["file_path_prefix"]
         if _config.get("file_name_prefix"):
@@ -494,10 +494,14 @@ class Application:
 
         if _config.get("upload_drive"):
             upload_drive_config = _config["upload_drive"]
-            if upload_drive_config.get("enable_upload_file"):
-                self.cloud_drive_config.enable_upload_file = upload_drive_config[
-                    "enable_upload_file"
-                ]
+            # Membership, not truthiness: `after_upload_file_delete` defaults to
+            # True, so `after_upload_file_delete: false` used to be ignored and
+            # the local file was deleted anyway. Any explicitly written boolean
+            # must win over the default.
+            if "enable_upload_file" in upload_drive_config:
+                self.cloud_drive_config.enable_upload_file = bool(
+                    upload_drive_config["enable_upload_file"]
+                )
 
             if upload_drive_config.get("rclone_path"):
                 self.cloud_drive_config.rclone_path = upload_drive_config["rclone_path"]
@@ -505,15 +509,20 @@ class Application:
             if upload_drive_config.get("remote_dir"):
                 self.cloud_drive_config.remote_dir = upload_drive_config["remote_dir"]
 
-            if upload_drive_config.get("before_upload_file_zip"):
-                self.cloud_drive_config.before_upload_file_zip = upload_drive_config[
-                    "before_upload_file_zip"
-                ]
+            if "before_upload_file_zip" in upload_drive_config:
+                self.cloud_drive_config.before_upload_file_zip = bool(
+                    upload_drive_config["before_upload_file_zip"]
+                )
 
-            if upload_drive_config.get("after_upload_file_delete"):
-                self.cloud_drive_config.after_upload_file_delete = upload_drive_config[
-                    "after_upload_file_delete"
-                ]
+            if "after_upload_file_delete" in upload_drive_config:
+                self.cloud_drive_config.after_upload_file_delete = bool(
+                    upload_drive_config["after_upload_file_delete"]
+                )
+
+            if "hash_check" in upload_drive_config:
+                self.cloud_drive_config.hash_check = bool(
+                    upload_drive_config["hash_check"]
+                )
 
             if upload_drive_config.get("upload_adapter"):
                 self.cloud_drive_config.upload_adapter = upload_drive_config[
@@ -775,7 +784,11 @@ class Application:
         return ret
 
     def get_file_save_path(
-        self, media_type: str, chat_title: str, media_datetime: str
+        self,
+        media_type: str,
+        chat_title: str,
+        media_datetime: str,
+        chat_id: Union[int, str, None] = None,
     ) -> str:
         """Get file save path prefix.
 
@@ -783,12 +796,13 @@ class Application:
         ----------
         media_type: str
             see config.yaml media_types
-
         chat_title: str
             see channel or group title
-
         media_datetime: str
             media datetime
+        chat_id: Union[int, str, None]
+            Optional chat id, used by the ``chat_id`` path prefix. Two chats can
+            share a title, and their directory (and message ids) would collide.
 
         Returns
         -------
@@ -804,6 +818,10 @@ class Application:
                 res = os.path.join(res, media_datetime)
             elif prefix == "media_type":
                 res = os.path.join(res, media_type)
+            elif prefix == "chat_id" and chat_id is not None:
+                # Explicit separator keeps the id readable and sortable, and
+                # never turns a positive id into a "negative" folder name.
+                res = os.path.join(res, f"{chat_id}")
         return res
 
     def get_file_name(
@@ -1189,6 +1207,8 @@ class Application:
                 drive.after_upload_file_delete = bool(
                     upload_drive["after_upload_file_delete"]
                 )
+            if "hash_check" in upload_drive:
+                drive.hash_check = bool(upload_drive["hash_check"])
             drive.dir_cache.clear()
             applied.append("upload_drive")
 

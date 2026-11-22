@@ -30,6 +30,7 @@ FILE_PATH_PREFIX_OPTIONS = [
     ("chat_title", "频道/群组名"),
     ("media_datetime", "日期目录"),
     ("media_type", "媒体类型"),
+    ("chat_id", "频道 ID（防同名冲突）"),
 ]
 
 FILE_NAME_PREFIX_OPTIONS = [
@@ -323,6 +324,15 @@ FIELDS: List[Dict[str, Any]] = [
         "type": "bool",
         "default": True,
         "hint": "rclone 返回 0 才删除；失败会保留文件。",
+    },
+    {
+        "name": "upload_drive.hash_check",
+        "path": ["upload_drive", "hash_check"],
+        "label": "云端同大小再校验哈希",
+        "group": "上传到网盘",
+        "type": "bool",
+        "default": True,
+        "hint": "远端同名同大小时再比一次 MD5，内容不同则重新上传，避免误判后删掉本地。后端不支持哈希时自动退回只比大小。",
     },
     # ------------------------------------------------------------------ 网络
     {

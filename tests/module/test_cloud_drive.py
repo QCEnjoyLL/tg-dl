@@ -1,5 +1,7 @@
 """Regression tests for rclone command construction and upload verdicts."""
 
+import os
+import tempfile
 import unittest
 from unittest import mock
 
@@ -179,8 +181,9 @@ class RcloneUploadTestCase(unittest.IsolatedAsyncioTestCase):
             "module.cloud_drive.asyncio.create_subprocess_exec",
             new=mock.AsyncMock(),
         ) as exec_mock:
+            # hash_check off: exercise the size-only verdict this test is about.
             result = await CloudDrive.rclone_upload_file(
-                make_config(), "/save", "/save/f.mp4"
+                make_config(hash_check=False), "/save", "/save/f.mp4"
             )
 
         self.assertEqual(result, UPLOAD_EXISTS)
@@ -247,3 +250,89 @@ class RcloneUploadTestCase(unittest.IsolatedAsyncioTestCase):
         offset = parse("2026-11-13T10:00:00+08:00")
         self.assertIsNotNone(offset)
         self.assertAlmostEqual(utc - offset, 8 * 3600, delta=1)
+
+
+class RemoteContentCheckTestCase(unittest.IsolatedAsyncioTestCase):
+    """A same-size remote object is only trusted when the bytes match.
+
+    The local file is deleted right after an "already uploaded" verdict, so a
+    name+size match alone (a different file with the same length) would lose
+    both copies.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.file_path = os.path.join(self._tmp.name, "file.mp4")
+        with open(self.file_path, "wb") as handle:
+            handle.write(b"same bytes here")
+        self.size = os.path.getsize(self.file_path)
+        self.local_hash = CloudDrive.local_md5(self.file_path)
+
+    async def _upload(self, config, remote_hash, stat_size=None, delete=True):
+        process = FakeProcess(
+            lines=[b"INFO  : file.mp4: Copied (replaced existing)\n"]
+        )
+        with mock.patch.object(
+            CloudDrive, "rclone_mkdir", new=mock.AsyncMock(return_value=True)
+        ), mock.patch.object(
+            CloudDrive,
+            "rclone_remote_stat",
+            new=mock.AsyncMock(
+                return_value={"Size": self.size if stat_size is None else stat_size}
+            ),
+        ), mock.patch.object(
+            CloudDrive,
+            "rclone_remote_hash",
+            new=mock.AsyncMock(return_value=remote_hash),
+        ) as hash_mock, mock.patch(
+            "module.cloud_drive.asyncio.create_subprocess_exec",
+            new=mock.AsyncMock(return_value=process),
+        ) as exec_mock:
+            config.after_upload_file_delete = delete
+            result = await CloudDrive.rclone_upload_file(
+                config, self._tmp.name, self.file_path
+            )
+        return result, hash_mock, exec_mock
+
+    async def test_matching_hash_skips_the_upload(self):
+        result, hash_mock, exec_mock = await self._upload(
+            make_config(), self.local_hash
+        )
+
+        self.assertEqual(result, UPLOAD_EXISTS)
+        hash_mock.assert_awaited()
+        exec_mock.assert_not_called()
+        # Identical content: deleting the local copy is safe.
+        self.assertFalse(os.path.exists(self.file_path))
+
+    async def test_different_hash_reuploads_and_keeps_the_local_copy(self):
+        result, _, exec_mock = await self._upload(
+            make_config(), "ffffffffffffffffffffffffffffffff", delete=False
+        )
+
+        self.assertEqual(result, UPLOAD_NEW)
+        exec_mock.assert_called()
+        self.assertTrue(os.path.exists(self.file_path))
+
+    async def test_unavailable_hash_falls_back_to_the_size_match(self):
+        result, _, exec_mock = await self._upload(make_config(), None)
+
+        # Degrades to the previous size-only verdict instead of failing.
+        self.assertEqual(result, UPLOAD_EXISTS)
+        exec_mock.assert_not_called()
+
+    async def test_hash_check_can_be_disabled(self):
+        result, hash_mock, exec_mock = await self._upload(
+            make_config(hash_check=False), "ffffffffffffffffffffffffffffffff"
+        )
+
+        self.assertEqual(result, UPLOAD_EXISTS)
+        hash_mock.assert_not_awaited()
+        exec_mock.assert_not_called()
+
+    def test_local_md5_matches_hashlib(self):
+        import hashlib
+
+        expected = hashlib.md5(b"same bytes here").hexdigest()
+        self.assertEqual(CloudDrive.local_md5(self.file_path), expected)

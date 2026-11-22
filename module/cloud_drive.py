@@ -1,6 +1,7 @@
 """provide upload cloud drive"""
 import asyncio
 import functools
+import hashlib
 import importlib
 import inspect
 import json
@@ -46,6 +47,7 @@ class CloudDriveConfig:
         ),
         remote_dir: str = "",
         upload_adapter: str = "rclone",
+        hash_check: bool = True,
     ):
         self.enable_upload_file = enable_upload_file
         self.before_upload_file_zip = before_upload_file_zip
@@ -53,6 +55,10 @@ class CloudDriveConfig:
         self.rclone_path = rclone_path
         self.remote_dir = remote_dir
         self.upload_adapter = upload_adapter
+        #: Compare content hashes before trusting a same-size remote file.
+        #: A name+size match alone can be a different file, and the local copy
+        #: is deleted afterwards, so the bytes would be lost.
+        self.hash_check = hash_check
         self.dir_cache: dict = {}  # for remote mkdir
         self.total_upload_success_file_count = 0
         self.aligo = None
@@ -271,6 +277,97 @@ class CloudDrive:
                 f"remove uploaded file {local_file_path} failed: {remove_err}"
             )
 
+    @staticmethod
+    def hashsum_args(
+        rclone_path: str, remote_file_path: str, algorithm: str = "MD5"
+    ) -> list:
+        """Build ``rclone hashsum`` argv for one remote object."""
+        return [str(rclone_path), "hashsum", algorithm, str(remote_file_path)]
+
+    @staticmethod
+    async def rclone_remote_hash(
+        drive_config: CloudDriveConfig, remote_file_path: str
+    ) -> Optional[str]:
+        """Return the remote object's MD5, or ``None`` when it is unavailable.
+
+        Backends without hash support (or an old rclone) make ``hashsum`` fail,
+        which is reported as unknown so the caller can fall back to the size
+        comparison instead of failing the upload.
+        """
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *CloudDrive.hashsum_args(
+                    drive_config.rclone_path, remote_file_path
+                ),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            stdout, _ = await proc.communicate()
+            if proc.returncode != 0:
+                return None
+            text = stdout.decode(errors="replace").strip()
+            if not text:
+                return None
+            # "<hash>  <path>" per line; the first token is the digest.
+            first_line = text.splitlines()[0].split()
+            return first_line[0].lower() if first_line else None
+        except Exception as e:  # pylint: disable = W0703
+            logger.debug(f"remote hash failed for {remote_file_path}: {e}")
+            return None
+
+    @staticmethod
+    def local_md5(file_path: str, block_size: int = 1024 * 1024) -> str:
+        """MD5 of a local file, read in blocks so a huge file is not loaded."""
+        try:
+            digest = hashlib.md5(usedforsecurity=False)  # type: ignore[call-arg]
+        except TypeError:  # Python < 3.9
+            digest = hashlib.md5()
+        with open(file_path, "rb") as file_obj:
+            for block in iter(lambda: file_obj.read(block_size), b""):
+                digest.update(block)
+        return digest.hexdigest()
+
+    @staticmethod
+    async def _same_content(
+        drive_config: CloudDriveConfig, file_path: str, remote_file_path: str
+    ) -> bool:
+        """Whether a same-size remote object can be trusted to hold our bytes.
+
+        The local copy is deleted when this returns True, so a size match alone
+        is not enough: two different files can share a name and a length. When
+        either hash cannot be computed (backend without hashes, old rclone,
+        unreadable local file) the previous size-only verdict is kept and a
+        warning is logged, so behaviour degrades instead of failing.
+        """
+        if not drive_config.hash_check:
+            return True
+        try:
+            local_hash = await asyncio.to_thread(CloudDrive.local_md5, file_path)
+        except OSError as error:
+            logger.warning(
+                f"cannot hash {file_path} ({error}); trusting the size match"
+            )
+            return True
+
+        remote_hash = await CloudDrive.rclone_remote_hash(
+            drive_config, remote_file_path
+        )
+        if not remote_hash:
+            logger.warning(
+                f"remote hash unavailable for {remote_file_path}; "
+                f"trusting the size match"
+            )
+            return True
+        if remote_hash == local_hash:
+            return True
+
+        logger.warning(
+            f"remote {remote_file_path} has the same size but a different "
+            f"content hash ({remote_hash} != {local_hash}); re-uploading it "
+            f"instead of deleting the local copy"
+        )
+        return False
+
     # pylint: disable = R0914
     @staticmethod
     async def rclone_upload_file(
@@ -285,11 +382,14 @@ class CloudDrive:
         Behaviour worth knowing:
 
           * The remote object is inspected first (``rclone lsjson --stat``). If it
-            already exists with the same size the upload is skipped and reported
-            as ``UPLOAD_EXISTS``. Without this check rclone compared the freshly
-            downloaded file's mtime with the remote one, decided they differed and
-            re-uploaded every file, so a drive that deduplicates by hash kept the
-            old object (and its old date) while rclone still said "Copied (new)".
+            already exists with the same size *and* the same MD5 (``hash_check``,
+            default on) the upload is skipped and reported as ``UPLOAD_EXISTS``.
+            A size match alone is not enough: the local file is deleted right
+            after, so a same-size but different file would lose both copies.
+            Without this check rclone compared the freshly downloaded file's
+            mtime with the remote one, decided they differed and re-uploaded
+            every file, so a drive that deduplicates by hash kept the old object
+            (and its old date) while rclone still said "Copied (new)".
           * ``copyto`` targets the exact remote path instead of ``copy`` into a
             directory, so the uploaded name is unambiguous.
           * argv goes through ``create_subprocess_exec``: channel titles and
@@ -344,9 +444,13 @@ class CloudDrive:
                 existing_size is not None
                 and local_size is not None
                 and existing_size == local_size
+                and await CloudDrive._same_content(
+                    drive_config, file_path, remote_file_path
+                )
             ):
-                # Same name, same size: keep the remote object (and its date)
-                # untouched instead of re-uploading it on every run.
+                # Same name, same size and (when hash_check is on) the same
+                # content: keep the remote object (and its date) untouched
+                # instead of re-uploading it on every run.
                 logger.info(
                     f"remote already has {remote_file_path} "
                     f"({local_size} bytes), upload skipped"
