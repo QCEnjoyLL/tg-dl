@@ -2,6 +2,35 @@
 
 版本号规则：MAJOR（破坏性改动或核心重写）/ MINOR（新增功能）/ PATCH（修复、依赖、文档、UI 打磨）。
 
+## v2.15.3
+
+### 修复
+
+- **`after_upload_file_delete: false` 不生效**：布尔项原来按真值判断，而该项默认 `True`，
+  显式写 `false` 会被忽略，上传成功后仍然删除本地文件；现在按「键是否存在」赋值，
+  `enable_upload_file` / `before_upload_file_zip` / `hash_check` 同样处理
+- **没有 file_size 的媒体被当成残缺文件删掉**：部分照片/语音不返回 `file_size`，下载完成后
+  与 `0` 比较被判为截断，文件被删除并记为失败；现在只有元数据带尺寸时才校验，
+  已存在的同大小未知文件也不会每次重下
+- **云端同名同大小被误判为已上传**：之前只比大小就判定「云端已有」并删除本地，内容不同的文件会
+  两边都丢；新增 `upload_drive.hash_check`（默认开）在大小一致时再比一次 MD5，不一致则重新上传，
+  后端不支持哈希时告警并退回只比大小
+- **并行分片失败后从头重下**：`max_concurrent_chunks > 1` 时失败会删掉 `.temp`，几 GB 文件重试
+  从 0 开始；现在保留 `.temp` 和 `.temp.json` 进度记录，按区间续传
+- **Web UI 删除任务后仍会重试三次**：取消异常被下载包装吞掉并当成普通失败；现在取消会立即
+  中止传输（保留已下载分片），任务直接进入「跳过」而不是失败
+- **同名频道目录互相覆盖**：目录按频道标题命名，两个同名频道会写进同一个目录；新增
+  `file_path_prefix: chat_id` 层级，未配置时检测到同名频道会打印一次告警
+
+### 变更
+
+- **发布流水线**：普通分支 push 不再生成/覆盖 `X.Y.Z` 版本标签（只有 tag 构建才产出），
+  发布 job 增加测试门禁，已存在的 tag 会校验指向的提交、已存在的 Release 直接失败而不是静默跳过
+- **依赖固定**：Pyrogram fork 从 `refs/heads/patch` 改为固定 commit + sha256；Docker 构建不再
+  使用 `--trusted-host` 关闭 PyPI 的 TLS 校验
+- **打包元数据**：`setup.py` 补齐 `packages` / `package_data` / `install_requires`，
+  `python_requires` 调整为 `>=3.9`（与 Flask 3.1 / Werkzeug 3.1 的实际要求一致）
+
 ## v2.15.2
 
 ### 修复

@@ -11,11 +11,9 @@ RUN apk add --no-cache --virtual .build-deps gcc musl-dev
 RUN apk add --no-cache rclone
 
 COPY requirements.txt /app/
-RUN pip install --no-cache-dir \
-    --trusted-host pypi.org \
-    --trusted-host files.pythonhosted.org \
-    --trusted-host pypi.python.org \
-    -r requirements.txt \
+# No --trusted-host: TLS verification against PyPI stays on, and the Pyrogram
+# dependency is pinned by commit + sha256 in requirements.txt.
+RUN pip install --no-cache-dir -r requirements.txt \
  && find /usr/local/lib/python3.11/site-packages -name '__pycache__' -type d -prune -exec rm -rf {} +
 
 

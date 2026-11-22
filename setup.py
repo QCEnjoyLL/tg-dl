@@ -1,4 +1,14 @@
-from distutils.core import setup
+"""Packaging metadata for the installer entry point.
+
+The application is normally run from a checkout (``python media_downloader.py``)
+or from the Docker image, but ``pip install .`` used to produce a broken
+installation: only ``media_downloader.py`` was installed while every module and
+template it imports was left behind. ``find_packages`` + ``package_data`` make
+the installed tree complete, and the requirement floor matches what the pinned
+dependencies actually support (Flask 3.1 / Werkzeug 3.1 need >= 3.9).
+"""
+
+from setuptools import find_packages, setup
 
 from utils import __version__
 
@@ -11,6 +21,32 @@ setup(
     url="https://github.com/tangyoha/telegram_media_downloader",
     download_url="https://github.com/tangyoha/telegram_media_downloader/releases/latest",
     py_modules=["media_downloader"],
+    packages=find_packages(include=["module", "module.*", "utils", "utils.*"]),
+    package_data={
+        "module": [
+            "templates/*.html",
+            "static/css/*.css",
+            "static/js/*.js",
+        ]
+    },
+    include_package_data=True,
+    install_requires=[
+        # PEP 508 direct reference: a bare URL is valid in requirements.txt but
+        # rejected as packaging metadata. Same commit + hash as that file.
+        "Pyrogram @ https://github.com/tangyoha/pyrogram/archive/"
+        "51a100c5e2745471ee89c1dd96dd69962973108b.zip"
+        "#sha256=30e55236a741deec461a952fec638e2857e4cf7bb2d8c6616d41fd2e4e0685ca",
+        "PyYAML==6.0.2",
+        "rich==12.5.1",
+        "PyTgCrypto==1.2.6",
+        "loguru==0.6.0",
+        "Werkzeug==3.1.9",
+        "flask==3.1.3",
+        "ply==3.11",
+        "ruamel.yaml==0.17.21",
+        "flask-login==0.6.3",
+        "requests==2.32.3",
+    ],
     classifiers=[
         "Development Status :: 5 - Production/Stable",
         "Environment :: Console",
@@ -22,11 +58,11 @@ setup(
         "Natural Language :: English",
         "Programming Language :: Python",
         "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.7",
-        "Programming Language :: Python :: 3.8",
         "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
         "Topic :: Internet",
         "Topic :: Communications",
         "Topic :: Communications :: Chat",
@@ -38,5 +74,5 @@ setup(
         "Community": "https://t.me/TeegramMediaDownload",
         "Source": "https://github.com/tangyoha/telegram_media_downloader",
     },
-    python_requires="~=3.7",
+    python_requires=">=3.9",
 )
