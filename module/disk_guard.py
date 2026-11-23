@@ -16,6 +16,7 @@ the finished file is moved to ``save_path``.
 """
 
 import asyncio
+from contextlib import asynccontextmanager
 import os
 import shutil
 from typing import Callable, List, Optional
@@ -37,6 +38,10 @@ class DiskSpaceError(Exception):
     """The file can never fit on the target volume."""
 
 
+class DiskWaitCancelled(Exception):
+    """Waiting for disk space was cancelled."""
+
+
 class DiskSpaceGate:
     """Wait until the watched volumes have room for the next download."""
 
@@ -52,6 +57,8 @@ class DiskSpaceGate:
         self._poll_seconds = max(float(poll_seconds), 0.01)
         self._usage_fn = usage_fn or shutil.disk_usage
         self._low = False
+        self._inflight_bytes: int = 0
+        self._waiters: int = 0
 
     @property
     def disabled(self) -> bool:
@@ -96,10 +103,23 @@ class DiskSpaceGate:
         usage = self._tightest_usage()
         return int(usage.free) if usage else None
 
-    def _resume_threshold(self, need_bytes: int) -> int:
-        return self.reserve_bytes + need_bytes + max(
-            int(self.reserve_bytes * (RECOVERY_RATIO - 1.0)), MIN_RECOVERY_SLACK
+    def _resume_threshold(
+        self, need_bytes: int, total_bytes: Optional[int] = None
+    ) -> int:
+        target = (
+            self.reserve_bytes
+            + need_bytes
+            + max(
+                int(self.reserve_bytes * (RECOVERY_RATIO - 1.0)),
+                MIN_RECOVERY_SLACK,
+            )
         )
+        if total_bytes is not None:
+            # Never demand more free space than the volume physically holds,
+            # otherwise a large file that fits (reserve + need <= total) would
+            # deadlock waiting on the hysteresis margin.
+            target = min(target, int(total_bytes))
+        return target
 
     def status(self) -> dict:
         """Snapshot for the Web UI / logs."""
@@ -109,23 +129,43 @@ class DiskSpaceGate:
             "total": int(usage.total) if usage else None,
             "reserve": self.reserve_bytes,
             "paused": bool(self._low),
+            "inflight": self._inflight_bytes,
             "paths": list(self._paths),
         }
 
-    async def wait_for(self, need_bytes: int = 0) -> None:
-        """Block until the volumes can hold ``need_bytes`` more plus the reserve.
-
-        Raises ``DiskSpaceError`` when the file cannot fit even on an empty
-        volume, so the task fails with an actionable reason instead of waiting
-        forever.
-        """
-        if self.disabled:
+    async def _sleep_poll(
+        self, should_cancel: Optional[Callable[[], bool]]
+    ) -> None:
+        if should_cancel is None:
+            await asyncio.sleep(self._poll_seconds)
             return
+        remaining = self._poll_seconds
+        while remaining > 0:
+            if should_cancel():
+                raise DiskWaitCancelled("disk wait cancelled")
+            step = min(remaining, 0.5)
+            await asyncio.sleep(step)
+            remaining -= step
+        if should_cancel():
+            raise DiskWaitCancelled("disk wait cancelled")
+
+    async def _acquire(
+        self,
+        need_bytes: int = 0,
+        *,
+        reserve: bool = False,
+        should_cancel: Optional[Callable[[], bool]] = None,
+    ) -> int:
+        if self.disabled:
+            self._low = False
+            return 0
+        if should_cancel and should_cancel():
+            raise DiskWaitCancelled("disk wait cancelled")
 
         usage = self._tightest_usage()
         if usage is None:
             logger.warning("disk guard cannot read any watched path; not pausing")
-            return
+            return 0
 
         need = max(int(need_bytes), 0)
         if self.reserve_bytes + need > usage.total:
@@ -134,30 +174,84 @@ class DiskSpaceGate:
                 f"（还需预留 {self.reserve_bytes} 字节），无法下载"
             )
 
-        while True:
-            usage = self._tightest_usage()
-            if usage is None:
-                return
-            free = int(usage.free)
+        waiting = False
+        try:
+            while True:
+                if should_cancel and should_cancel():
+                    raise DiskWaitCancelled("disk wait cancelled")
+                if self.disabled:
+                    self._low = False
+                    return 0
 
-            if not self._low and free >= self.reserve_bytes + need:
-                return
-            if self._low and free >= self._resume_threshold(need):
-                self._low = False
-                logger.info(
-                    f"磁盘空间已恢复（剩余 {free} 字节，预留 {self.reserve_bytes}），"
-                    f"继续下载"
-                )
-                return
+                usage = self._tightest_usage()
+                if usage is None:
+                    return 0
+                free = int(usage.free)
+                effective_free = max(free - self._inflight_bytes, 0)
 
-            if not self._low:
-                self._low = True
-                logger.warning(
-                    f"磁盘空间不足：剩余 {free} 字节，"
-                    f"低于预留 {self.reserve_bytes} 字节，暂停下载并等待上传释放空间"
-                    f"（每 {self._poll_seconds:g} 秒检查一次）"
-                )
-            await asyncio.sleep(self._poll_seconds)
+                if not self._low and effective_free >= self.reserve_bytes + need:
+                    if reserve:
+                        self._inflight_bytes += need
+                        return need
+                    return 0
+                if self._low and effective_free >= self._resume_threshold(
+                    need, usage.total
+                ):
+                    self._low = False
+                    logger.info(
+                        f"磁盘空间已恢复（剩余 {free} 字节，预留 {self.reserve_bytes}），"
+                        f"继续下载"
+                    )
+                    if reserve:
+                        self._inflight_bytes += need
+                        return need
+                    return 0
+
+                if not waiting:
+                    self._waiters += 1
+                    waiting = True
+                if not self._low:
+                    self._low = True
+                    logger.warning(
+                        f"磁盘空间不足：剩余 {free} 字节，"
+                        f"低于预留 {self.reserve_bytes} 字节，暂停下载并等待上传释放空间"
+                        f"（每 {self._poll_seconds:g} 秒检查一次）"
+                    )
+                await self._sleep_poll(should_cancel)
+        finally:
+            if waiting:
+                self._waiters = max(self._waiters - 1, 0)
+                if self._waiters == 0:
+                    self._low = False
+
+    async def wait_for(
+        self,
+        need_bytes: int = 0,
+        should_cancel: Optional[Callable[[], bool]] = None,
+    ) -> None:
+        """Block until the volumes can hold ``need_bytes`` more plus the reserve.
+
+        Raises ``DiskSpaceError`` when the file cannot fit even on an empty
+        volume, so the task fails with an actionable reason instead of waiting
+        forever.
+        """
+        await self._acquire(need_bytes, reserve=False, should_cancel=should_cancel)
+
+    @asynccontextmanager
+    async def hold(
+        self,
+        need_bytes: int = 0,
+        should_cancel: Optional[Callable[[], bool]] = None,
+    ):
+        """Reserve ``need_bytes`` while a download runs, releasing it on exit."""
+        reserved = await self._acquire(
+            need_bytes, reserve=True, should_cancel=should_cancel
+        )
+        try:
+            yield
+        finally:
+            if reserved:
+                self._inflight_bytes = max(self._inflight_bytes - reserved, 0)
 
 
 #: The gate created at startup; the Web UI reads its snapshot through
@@ -192,9 +286,24 @@ def status() -> dict:
     return {"enabled": not gate.disabled, **gate.status()}
 
 
-async def wait_for_space(need_bytes: int = 0) -> None:
+async def wait_for_space(
+    need_bytes: int = 0, should_cancel: Optional[Callable[[], bool]] = None
+) -> None:
     """Wait for room before downloading a file of ``need_bytes``."""
     gate = _gate
     if gate is None:
         return
-    await gate.wait_for(need_bytes)
+    await gate.wait_for(need_bytes, should_cancel=should_cancel)
+
+
+@asynccontextmanager
+async def reserve_space(
+    need_bytes: int = 0, should_cancel: Optional[Callable[[], bool]] = None
+):
+    """Reserve ``need_bytes`` while a download runs (no-op without a gate)."""
+    gate = _gate
+    if gate is None:
+        yield
+        return
+    async with gate.hold(need_bytes, should_cancel=should_cancel):
+        yield

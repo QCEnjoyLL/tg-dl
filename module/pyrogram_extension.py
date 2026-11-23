@@ -6,11 +6,10 @@ import secrets
 import struct
 import time
 from copy import deepcopy
-from datetime import datetime
 from functools import wraps
 from io import BytesIO, StringIO
 from mimetypes import MimeTypes
-from typing import Callable, Iterable, List, Optional, Tuple, Union
+from typing import Callable, List, Optional, Tuple, Union
 
 import pyrogram
 from loguru import logger
@@ -36,7 +35,7 @@ from module.app import (
     UploadStatus,
 )
 from module.download_stat import get_download_result
-from module.language import Language, _t
+from module.language import _t
 from module.send_media_group_v2 import cache_media, send_media_group_v2
 from module import upload_stat
 from utils.format import (
@@ -204,21 +203,6 @@ def get_extension(file_id: str, mime_type: str, dot: bool = True) -> str:
     if dot:
         extension = "." + extension
     return extension
-
-
-async def send_message_by_language(
-    client: pyrogram.client.Client,
-    language: Language,
-    chat_id: Union[int, str],
-    reply_to_message_id: int,
-    language_str: List[str],
-):
-    """Record download status"""
-    msg = language_str[language.value - 1]
-
-    return await client.send_message(
-        chat_id, msg, reply_to_message_id=reply_to_message_id
-    )
 
 
 async def download_thumbnail(
@@ -615,18 +599,19 @@ def truncate_caption(
 
     truncated_text = text[:left]
 
-    # If there are entities, need to adjust entity list
+    # If there are entities, need to adjust entity list using UTF-16 offsets
     if entities:
+        truncated_utf16 = get_utf16_length(truncated_text)
         truncated_entities = []
         for entity in entities:
-            if entity.offset >= left:
+            if entity.offset >= truncated_utf16:
                 continue
-            if entity.offset + entity.length <= left:
+            if entity.offset + entity.length <= truncated_utf16:
                 truncated_entities.append(entity)
             else:
                 # For entities that cross the truncation point, adjust length
                 new_entity = deepcopy(entity)
-                new_entity.length = left - entity.offset
+                new_entity.length = truncated_utf16 - entity.offset
                 truncated_entities.append(new_entity)
         return truncated_text, truncated_entities
 
@@ -714,7 +699,7 @@ def convert_message_entity(client, entity: "pyrogram.raw.base.MessageEntity") ->
         offset=entity.offset,
         length=entity.length,
         url=getattr(entity, "url", None),
-        user=types.User(id=user_id),
+        user=types.User(id=user_id) if user_id is not None else None,
         language=getattr(entity, "language", None),
         custom_emoji_id=getattr(entity, "document_id", None),
         expandable=getattr(entity, "collapsed", None),
@@ -901,7 +886,7 @@ async def forward_multi_media(
 
             for it in media_group:
                 node.media_group_ids[message.media_group_id][it.id] = None
-                node.upload_status[message.id] = None
+                node.upload_status[it.id] = None
 
         if not node.media_group_ids[message.media_group_id][message.id]:
             node.upload_status[message.id] = UploadStatus.Uploading
@@ -974,22 +959,22 @@ async def proc_cache_forward(
             download_status = node.download_status.get(key, DownloadStatus.Downloading)
             upload_status = node.upload_status.get(key, UploadStatus.Uploading)
 
-            # Skip if download is not needed or failed
-            if node.skip_msg_id(key) or download_status in {
-                DownloadStatus.SkipDownload,
-                DownloadStatus.FailedDownload,
-            }:
+            # Skip if download/upload is not needed or failed
+            if (
+                node.skip_msg_id(key)
+                or download_status
+                in {
+                    DownloadStatus.SkipDownload,
+                    DownloadStatus.FailedDownload,
+                }
+                or upload_status == UploadStatus.SkipUpload
+            ):
                 continue
 
             # Return if any media is still downloading or uploading
             if (
-                (
-                    check_download_status
-                    and download_status == DownloadStatus.Downloading
-                )
-                or upload_status == UploadStatus.Uploading
-                or upload_status == UploadStatus.SkipUpload
-            ):
+                check_download_status and download_status == DownloadStatus.Downloading
+            ) or upload_status == UploadStatus.Uploading:
                 return ForwardStatus.CacheForward
 
             # Collect the media items that are valid for forwarding
@@ -1009,6 +994,9 @@ async def proc_cache_forward(
                         item.entities = None
 
         node.media_group_ids.pop(message.media_group_id)
+
+    if not multi_media:
+        return ForwardStatus.SkipForward
 
     forward_status = ForwardStatus.SuccessForward
 
@@ -1537,23 +1525,23 @@ async def update_upload_stat(
     # TODO(tyh): web control upload stop
 
     if node.upload_stat_dict.get(message_id):
-        upload_stat = node.upload_stat_dict[message_id]
+        progress_stat = node.upload_stat_dict[message_id]
 
-        if cur_time - upload_stat.last_stat_time >= 1.0:
-            upload_stat.upload_speed = max(
+        if cur_time - progress_stat.last_stat_time >= 1.0:
+            progress_stat.upload_speed = max(
                 int(
-                    (upload_size - upload_stat.upload_size)
-                    / (cur_time - upload_stat.last_stat_time)
+                    (upload_size - progress_stat.upload_size)
+                    / (cur_time - progress_stat.last_stat_time)
                 ),
                 0,
             )
-            upload_stat.last_stat_time = cur_time
-            upload_stat.upload_size = upload_size
+            progress_stat.last_stat_time = cur_time
+            progress_stat.upload_size = upload_size
 
-        node.upload_stat_dict[message_id] = upload_stat
+        node.upload_stat_dict[message_id] = progress_stat
     else:
         duration = cur_time - start_time
-        upload_stat = UploadProgressStat(
+        progress_stat = UploadProgressStat(
             file_name=file_name,
             total_size=total_size,
             upload_size=upload_size,
@@ -1561,7 +1549,7 @@ async def update_upload_stat(
             last_stat_time=cur_time,
             upload_speed=upload_size / (duration if duration > 0 else 1),
         )
-        node.upload_stat_dict[message_id] = upload_stat
+        node.upload_stat_dict[message_id] = progress_stat
 
 
 # pylint: enable=W0201
@@ -1660,66 +1648,3 @@ class HookClient(pyrogram.Client):
             await self.initialize()
 
             return self
-
-
-# pylint: disable=R0914,R0913
-async def forward_messages(
-    client: pyrogram.Client,
-    chat_id: Union[int, str, None],
-    from_chat_id: Union[int, str],
-    message_ids: Union[int, Iterable[int]],
-    disable_notification: bool = None,
-    schedule_date: datetime = None,
-    protect_content: bool = None,
-    drop_author: bool = None,
-    topic_id: int = None,
-    caption: str = None,
-    caption_entities: List[pyrogram.types.MessageEntity] = None,
-) -> Union["types.Message", List["types.Message"]]:
-    """Forward messages of any kind."""
-
-    is_iterable = not isinstance(message_ids, int)
-    message_ids = list(message_ids) if is_iterable else [message_ids]  # type: ignore
-
-    r = await client.invoke(
-        pyrogram.raw.functions.messages.ForwardMessages(
-            to_peer=await client.resolve_peer(chat_id),
-            from_peer=await client.resolve_peer(from_chat_id),
-            id=message_ids,
-            silent=disable_notification or None,
-            random_id=[client.rnd_id() for _ in message_ids],
-            schedule_date=pyrogram.utils.datetime_to_timestamp(schedule_date),
-            noforwards=protect_content,
-            drop_author=drop_author,
-            top_msg_id=topic_id,
-        )
-    )
-
-    forwarded_messages = []
-
-    users = {i.id: i for i in r.users}
-    chats = {i.id: i for i in r.chats}
-
-    for i in r.updates:
-        if isinstance(
-            i,
-            (
-                pyrogram.raw.types.UpdateNewMessage,
-                pyrogram.raw.types.UpdateNewChannelMessage,
-                pyrogram.raw.types.UpdateNewScheduledMessage,
-            ),
-        ):
-            forwarded_messages.append(
-                # pylint: disable=W0212
-                await types.Message._parse(client, i.message, users, chats)
-            )
-
-    if caption and not is_iterable and forwarded_messages:
-        await client.edit_message_caption(
-            chat_id,
-            forwarded_messages[0].id,
-            caption=caption,
-            caption_entities=caption_entities,
-        )
-
-    return types.List(forwarded_messages) if is_iterable else forwarded_messages[0]

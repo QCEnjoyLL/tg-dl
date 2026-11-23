@@ -323,7 +323,12 @@ class BaseFilter:
 
     def check_type(self, p):
         """Check filter type if is right"""
-        if p[1] is None or p[1] is NoneObj or p[3] is None or p[3] is NoneObj:
+        if (
+            p[1] is None
+            or isinstance(p[1], NoneObj)
+            or p[3] is None
+            or isinstance(p[3], NoneObj)
+        ):
             return
         if isinstance(p[1], str):
             if not isinstance(p[3], str) and not isinstance(p[3], ReString):

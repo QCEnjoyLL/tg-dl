@@ -9,6 +9,7 @@ Secrets are never sent to the browser: :func:`read_values` masks them and
 :func:`parse_form` restores the masked placeholder from the current file.
 """
 
+import math
 from typing import Any, Dict, List, Tuple
 
 MASK = "********"
@@ -181,6 +182,8 @@ FIELDS: List[Dict[str, Any]] = [
         "label": "磁盘预留空间（GB）",
         "group": "并发与超时",
         "type": "number",
+        "float": True,
+        "step": "any",
         "min": 0,
         "default": 2,
         "hint": "任意下载磁盘剩余低于该值时暂停下载，等上传删除本地文件、空间恢复后自动继续；0 表示关闭保护。",
@@ -553,10 +556,14 @@ def read_values(config: dict) -> Dict[str, Any]:
 
 
 def _parse_number(field: Dict[str, Any], raw: str, errors: Dict[str, str]):
+    allow_float = bool(field.get("float"))
     try:
-        number = int(raw)
+        number = float(raw) if allow_float else int(raw)
     except ValueError:
-        errors[field["name"]] = "请填写整数"
+        errors[field["name"]] = "请填写数字" if allow_float else "请填写整数"
+        return UNSET
+    if allow_float and not math.isfinite(number):
+        errors[field["name"]] = "请填写有效数字"
         return UNSET
     if field.get("min") is not None and number < field["min"]:
         errors[field["name"]] = f"不能小于 {field['min']}"
@@ -564,6 +571,8 @@ def _parse_number(field: Dict[str, Any], raw: str, errors: Dict[str, str]):
     if field.get("max") is not None and number > field["max"]:
         errors[field["name"]] = f"不能大于 {field['max']}"
         return UNSET
+    if allow_float and number.is_integer():
+        return int(number)
     return number
 
 

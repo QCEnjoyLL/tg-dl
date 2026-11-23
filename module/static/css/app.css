@@ -852,6 +852,11 @@ main:focus {
   flex: none;
 }
 
+.disk-banner {
+  background: var(--red-soft);
+  color: var(--red);
+}
+
 /* ----------------------------------------------------------- grouped .list */
 
 .panel {
@@ -1144,6 +1149,11 @@ tr.is-expanded .trunc-text {
 }
 
 .state-chip.is-remote {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.state-chip.is-uploading {
   background: var(--accent-soft);
   color: var(--accent);
 }

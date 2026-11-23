@@ -15,6 +15,7 @@ from tests.test_common import (
     get_extension,
 )
 from utils.format import replace_date_time
+from utils.meta_data import NoneObj
 
 sys.path.append("..")  # Adds higher directory to python modules path.
 
@@ -442,3 +443,9 @@ class FilterTestCase(unittest.TestCase):
         download_filter.set_debug(True)
         filter_exec(download_filter, "caption == r'.*高桥.*'")
         filter_exec(download_filter, "caption == r'.*高桥.*'")
+
+    def test_check_type_accepts_none_obj_instance(self):
+        download_filter = Filter()
+        # check_type must allow comparisons where either operand is a NoneObj().
+        download_filter.filter.check_type([None, 123, "==", NoneObj()])
+        download_filter.filter.check_type([None, NoneObj(), "==", "abc"])

@@ -8,6 +8,7 @@ import json
 import os
 import re
 import time
+import weakref
 from asyncio import subprocess
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional
@@ -71,6 +72,20 @@ class CloudDriveConfig:
 
 class CloudDrive:
     """rclone support"""
+
+    _mkdir_locks: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict]" = (
+        weakref.WeakKeyDictionary()
+    )
+
+    @classmethod
+    def _mkdir_lock(cls, remote_dir: str) -> asyncio.Lock:
+        loop = asyncio.get_running_loop()
+        locks = cls._mkdir_locks.setdefault(loop, {})
+        lock = locks.get(remote_dir)
+        if lock is None:
+            lock = asyncio.Lock()
+            locks[remote_dir] = lock
+        return lock
 
     @staticmethod
     def init_upload_adapter(drive_config: CloudDriveConfig):
@@ -150,8 +165,39 @@ class CloudDrive:
         return [str(rclone_path), "mkdir", str(remote_dir)]
 
     @staticmethod
+    async def _terminate_process(proc) -> None:
+        """Best-effort termination of an rclone subprocess on cancellation."""
+        if proc is None or getattr(proc, "returncode", None) is not None:
+            return
+        terminate = getattr(proc, "terminate", None)
+        if callable(terminate):
+            try:
+                terminate()
+            except (ProcessLookupError, OSError):
+                return
+        wait = getattr(proc, "wait", None)
+        if not callable(wait):
+            return
+        try:
+            await asyncio.wait_for(wait(), timeout=5.0)
+        except asyncio.TimeoutError:
+            kill = getattr(proc, "kill", None)
+            if callable(kill):
+                try:
+                    kill()
+                except (ProcessLookupError, OSError):
+                    return
+            try:
+                await wait()
+            except Exception:  # pylint: disable = W0703
+                pass
+        except Exception:  # pylint: disable = W0703
+            pass
+
+    @staticmethod
     async def rclone_mkdir(drive_config: CloudDriveConfig, remote_dir: str) -> bool:
         """mkdir in remote without a shell."""
+        proc = None
         try:
             proc = await asyncio.create_subprocess_exec(
                 *CloudDrive.rclone_mkdir_args(drive_config.rclone_path, remote_dir),
@@ -165,6 +211,9 @@ class CloudDrive:
                     f"{output.decode(errors='replace')[-400:]}"
                 )
                 return False
+        except asyncio.CancelledError:
+            await CloudDrive._terminate_process(proc)
+            raise
         except Exception as e:
             logger.warning(f"rclone mkdir {remote_dir} failed: {e}")
             return False
@@ -206,6 +255,7 @@ class CloudDrive:
         without ``--stat``) yields ``None`` so the caller can fall back to
         letting rclone decide during the copy.
         """
+        proc = None
         try:
             proc = await asyncio.create_subprocess_exec(
                 *CloudDrive.rclone_stat_args(
@@ -222,6 +272,9 @@ class CloudDrive:
                 return payload
             if isinstance(payload, list) and payload:
                 return payload[0]
+        except asyncio.CancelledError:
+            await CloudDrive._terminate_process(proc)
+            raise
         except Exception as e:  # pylint: disable = W0703
             logger.debug(f"remote stat failed for {remote_file_path}: {e}")
         return None
@@ -294,6 +347,7 @@ class CloudDrive:
         which is reported as unknown so the caller can fall back to the size
         comparison instead of failing the upload.
         """
+        proc = None
         try:
             proc = await asyncio.create_subprocess_exec(
                 *CloudDrive.hashsum_args(
@@ -311,6 +365,9 @@ class CloudDrive:
             # "<hash>  <path>" per line; the first token is the digest.
             first_line = text.splitlines()[0].split()
             return first_line[0].lower() if first_line else None
+        except asyncio.CancelledError:
+            await CloudDrive._terminate_process(proc)
+            raise
         except Exception as e:  # pylint: disable = W0703
             logger.debug(f"remote hash failed for {remote_file_path}: {e}")
             return None
@@ -406,18 +463,23 @@ class CloudDrive:
         copied_new = False
         skipped_existing = False
         verdict = ""
+        proc = None
         try:
             remote_dir = CloudDrive.remote_dir_for(
                 drive_config, save_path, local_file_path
             )
 
             if not drive_config.dir_cache.get(remote_dir):
-                if await CloudDrive.rclone_mkdir(drive_config, remote_dir):
-                    drive_config.dir_cache[remote_dir] = True
+                async with CloudDrive._mkdir_lock(remote_dir):
+                    if not drive_config.dir_cache.get(remote_dir):
+                        if await CloudDrive.rclone_mkdir(drive_config, remote_dir):
+                            drive_config.dir_cache[remote_dir] = True
 
             file_path = local_file_path
             if drive_config.before_upload_file_zip:
-                zip_file_path = CloudDrive.zip_file(local_file_path)
+                zip_file_path = await asyncio.to_thread(
+                    CloudDrive.zip_file, local_file_path
+                )
                 file_path = zip_file_path
 
             try:
@@ -558,6 +620,9 @@ class CloudDrive:
                     f"rclone upload failed, exit code {retcode}: "
                     f"{local_file_path}\n{''.join(tail)[-800:]}"
                 )
+        except asyncio.CancelledError:
+            await CloudDrive._terminate_process(proc)
+            raise
         except Exception as e:
             logger.error(f"{e.__class__} {e}")
             return None
@@ -593,6 +658,11 @@ class CloudDrive:
                 if aligo_dir:
                     drive_config.dir_cache[remote_dir] = aligo_dir.file_id
 
+            parent_file_id = drive_config.dir_cache.get(remote_dir)
+            if not parent_file_id:
+                logger.warning(f"aligo remote folder not found: {remote_dir}")
+                return None
+
             file_paths = []
             if drive_config.before_upload_file_zip:
                 zip_file_path = CloudDrive.zip_file(local_file_path)
@@ -602,7 +672,7 @@ class CloudDrive:
 
             res = drive_config.aligo.upload_files(
                 file_paths=file_paths,
-                parent_file_id=drive_config.dir_cache[remote_dir],
+                parent_file_id=parent_file_id,
                 check_name_mode="refuse",
             )
 

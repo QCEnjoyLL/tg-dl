@@ -1,5 +1,6 @@
 """Tests for the disk-space gate that pauses downloads."""
 
+import asyncio
 import unittest
 from collections import namedtuple
 from unittest import mock
@@ -119,6 +120,98 @@ class DiskSpaceGateTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(snapshot["free"], GB)
         self.assertEqual(snapshot["paths"], ["/dl"])
 
+    async def test_resume_threshold_is_capped_at_volume_total(self):
+        # A 7.9 GB file on a 10 GB disk with 2 GB reserve fits (9.9 <= 10),
+        # so the hysteresis slack must not demand > 10 GB free and deadlock.
+        need = int(7.9 * GB)
+        volume = FakeVolume(10 * GB, [8 * GB, 10 * GB])
+        gate = disk_guard.DiskSpaceGate(
+            ["/dl"], 2 * GB, poll_seconds=0.01, usage_fn=volume
+        )
+
+        await asyncio.wait_for(gate.wait_for(need), timeout=1.0)
+        self.assertFalse(gate.is_low)
+
+    async def test_should_cancel_aborts_wait_and_clears_low_flag(self):
+        gate = disk_guard.DiskSpaceGate(
+            ["/dl"], 2 * GB, poll_seconds=0.01, usage_fn=FakeVolume(10 * GB, [GB])
+        )
+        cancelled = False
+
+        async def trigger_cancel():
+            nonlocal cancelled
+            await asyncio.sleep(0.03)
+            cancelled = True
+
+        canceller = asyncio.create_task(trigger_cancel())
+        try:
+            with self.assertRaises(disk_guard.DiskWaitCancelled):
+                await gate.wait_for(GB, should_cancel=lambda: cancelled)
+        finally:
+            await canceller
+
+        self.assertFalse(gate.is_low)
+
+    async def test_disabling_reserve_unblocks_waiting_task(self):
+        gate = disk_guard.DiskSpaceGate(
+            ["/dl"], 2 * GB, poll_seconds=0.01, usage_fn=FakeVolume(10 * GB, [GB])
+        )
+
+        async def disable_later():
+            await asyncio.sleep(0.03)
+            gate.reserve_bytes = 0
+
+        updater = asyncio.create_task(disable_later())
+        try:
+            await asyncio.wait_for(gate.wait_for(GB), timeout=1.0)
+        finally:
+            await updater
+
+        self.assertFalse(gate.is_low)
+
+    async def test_hold_reserves_inflight_bytes_across_concurrent_downloads(self):
+        # Volume has 5 GB free and 2 GB reserve -> 3 GB usable.
+        # Two concurrent 2 GB downloads together need 4 GB, so the second must
+        # wait until the first releases its reservation.
+        free = 5 * GB
+        gate = disk_guard.DiskSpaceGate(
+            ["/dl"],
+            2 * GB,
+            poll_seconds=0.01,
+            usage_fn=lambda _p: Usage(10 * GB, 10 * GB - free, free),
+        )
+        events = []
+
+        async def first():
+            async with gate.hold(2 * GB):
+                events.append("first_acquired")
+                self.assertEqual(gate.status()["inflight"], 2 * GB)
+                await asyncio.sleep(0.05)
+                events.append("first_releasing")
+
+        async def second():
+            await asyncio.sleep(0.01)
+            async with gate.hold(2 * GB):
+                events.append("second_acquired")
+
+        await asyncio.wait_for(asyncio.gather(first(), second()), timeout=1.0)
+
+        self.assertEqual(
+            events, ["first_acquired", "first_releasing", "second_acquired"]
+        )
+        self.assertEqual(gate.status()["inflight"], 0)
+
+    async def test_hold_releases_reservation_on_exception(self):
+        gate = disk_guard.DiskSpaceGate(
+            ["/dl"], 2 * GB, poll_seconds=0.01, usage_fn=FakeVolume(10 * GB, [6 * GB])
+        )
+        with self.assertRaises(RuntimeError):
+            async with gate.hold(2 * GB):
+                self.assertEqual(gate.status()["inflight"], 2 * GB)
+                raise RuntimeError("boom")
+
+        self.assertEqual(gate.status()["inflight"], 0)
+
 
 class ModuleLevelGateTestCase(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
@@ -143,3 +236,15 @@ class ModuleLevelGateTestCase(unittest.IsolatedAsyncioTestCase):
         await disk_guard.wait_for_space(GB)
 
         self.assertTrue(disk_guard.status()["enabled"])
+
+    async def test_reserve_space_is_no_op_without_gate_and_reserves_with_gate(self):
+        async with disk_guard.reserve_space(GB):
+            self.assertFalse(disk_guard.status()["enabled"])
+
+        gate = disk_guard.DiskSpaceGate(
+            ["/dl"], 2 * GB, poll_seconds=0.01, usage_fn=FakeVolume(10 * GB, [6 * GB])
+        )
+        disk_guard.set_gate(gate)
+        async with disk_guard.reserve_space(GB):
+            self.assertEqual(disk_guard.status()["inflight"], GB)
+        self.assertEqual(disk_guard.status()["inflight"], 0)

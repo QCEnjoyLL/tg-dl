@@ -41,12 +41,17 @@ from module.pyrogram_extension import (
     get_extension,
     record_download_status,
     report_bot_download_status,
+    report_bot_status,
     set_max_concurrent_transmissions,
     set_meta_data,
     update_cloud_upload_stat,
     upload_telegram_chat,
 )
-from module.pyrogram_guard import DownloadIncomplete, install_get_file_guard
+from module.pyrogram_guard import (
+    PARALLEL_STATE_SUFFIX,
+    DownloadIncomplete,
+    install_get_file_guard,
+)
 from module.web import init_web, set_retry_handler, set_upload_handler
 from utils.format import truncate_filename, validate_title
 from utils.log import LogFilter
@@ -444,7 +449,6 @@ async def save_msg_to_file(
         "msg", dirname, datetime_dir_name, chat_id=chat_id
     )
     file_name = os.path.join(
-        app.temp_save_path,
         file_save_path,
         f"{app.get_file_name(message.id, None, None)}.txt",
     )
@@ -470,27 +474,51 @@ async def _run_cloud_upload(
     updated here; a failed upload leaves it that way so the Web UI's re-upload
     button still works and the local file is kept.
     """
+    started = False
     try:
+        started = upload_stat.try_start(
+            node.chat_id, message_id, file_name=ui_file_name
+        )
+        if not started:
+            logger.info(
+                f"Message[{message_id}] upload already in progress, skipping duplicate"
+            )
+            return
         state = await app.upload_file(
             file_name, update_cloud_upload_stat, (node, message_id, ui_file_name)
         )
+        if not state:
+            logger.warning(
+                f"Message[{message_id}] upload failed, local file kept: {file_name}"
+            )
+            return
+        node.upload_success_count += 1
+        if state == UPLOAD_EXISTS:
+            node.upload_skipped_count += 1
+        update_completed_upload_state(node.chat_id, message_id, state)
     except Exception as error:  # pylint: disable = W0703
         logger.exception(f"Message[{message_id}] upload failed: {error}")
-        return
     finally:
-        # The upload row lives only while rclone reports progress.
-        upload_stat.remove(node.chat_id, message_id)
-
-    if not state:
-        logger.warning(
-            f"Message[{message_id}] upload failed, local file kept: {file_name}"
-        )
-        return
-
-    node.upload_success_count += 1
-    if state == UPLOAD_EXISTS:
-        node.upload_skipped_count += 1
-    update_completed_upload_state(node.chat_id, message_id, state)
+        if started:
+            # The upload row lives only while rclone reports progress.
+            upload_stat.remove(node.chat_id, message_id)
+        cloud_dict = getattr(node, "cloud_drive_upload_stat_dict", None)
+        if isinstance(cloud_dict, dict):
+            cloud_dict.pop(message_id, None)
+        pending = getattr(node, "pending_upload_count", None)
+        if isinstance(pending, int):
+            node.pending_upload_count = max(pending - 1, 0)
+        bot = getattr(node, "bot", None)
+        reply_message_id = getattr(node, "reply_message_id", None)
+        if bot and isinstance(reply_message_id, int) and reply_message_id:
+            try:
+                await report_bot_status(
+                    bot, node, immediate_reply=bool(node.is_finish())
+                )
+            except Exception as report_err:  # pylint: disable = W0703
+                logger.exception(
+                    f"Message[{message_id}] upload status report failed: {report_err}"
+                )
 
 
 async def download_task(
@@ -611,17 +639,16 @@ async def download_task(
             if pending_upload is not None:
                 # Submitted after the history row exists: the upload updates
                 # that row, so it must not run first.
-                upload_dispatcher.submit(
+                if upload_dispatcher.submit(
                     lambda job=pending_upload: _run_cloud_upload(*job)
-                )
+                ):
+                    if isinstance(getattr(node, "pending_upload_count", None), int):
+                        node.pending_upload_count += 1
         else:
             remove_download_result(node.chat_id, message.id)
 
         if not node.bot:
             app.set_download_id(node, message.id, download_status)
-
-        # The upload row lives only while rclone reports progress.
-        upload_stat.remove(node.chat_id, message.id)
 
         try:
             await report_bot_download_status(
@@ -741,121 +768,144 @@ async def download_media(
 
     # Do not start writing bytes when the volume cannot hold this file plus the
     # configured reserve: the guard waits (and logs) until uploads free space.
+    def _cancel_disk_wait() -> bool:
+        return (
+            is_task_cancelled(node.chat_id, message.id)
+            or getattr(node, "is_stop_transmission", False) is True
+            or app.is_running is False
+        )
+
     try:
-        await disk_guard.wait_for_space(media_size)
+        async with disk_guard.reserve_space(
+            media_size, should_cancel=_cancel_disk_wait
+        ):
+            for retry in range(3):
+                try:
+                    temp_download_path = await client.download_media(
+                        message,
+                        file_name=temp_file_name,
+                        progress=update_download_status,
+                        progress_args=(
+                            message_id,
+                            ui_file_name,
+                            task_start_time,
+                            node,
+                            client,
+                        ),
+                    )
+
+                    if temp_download_path and isinstance(temp_download_path, str):
+                        _check_download_finish(
+                            media_size, temp_download_path, ui_file_name
+                        )
+                        await asyncio.sleep(0.5)
+                        # Cross-device moves copy the file; keep the loop free while a
+                        # multi-GB file is being copied.
+                        await asyncio.to_thread(
+                            _move_to_download_path, temp_download_path, file_name
+                        )
+                        # TODO: if not exist file size or media
+                        return DownloadStatus.SuccessDownload, file_name
+
+                    # No path came back: the client aborted and kept its partial file, so
+                    # the next attempt resumes from it. Pause before the retry instead of
+                    # hammering the queue.
+                    last_error = _t("download aborted before the file was written")
+                    delay = _retry_delay(retry)
+                    logger.warning(
+                        f"Message[{message.id}]: {last_error}, "
+                        f"{_t('retrying after')} {delay:g} {_t('seconds')}"
+                    )
+                    await asyncio.sleep(delay)
+                except pyrogram.errors.exceptions.bad_request_400.BadRequest:
+                    logger.warning(
+                        f"Message[{message.id}]: {_t('file reference expired, refetching')}..."
+                    )
+                    await asyncio.sleep(_retry_delay(retry))
+                    message = await fetch_message(client, message)
+                    last_error = _t("file reference expired")
+                    if _check_timeout(retry, message.id):
+                        # pylint: disable = C0301
+                        logger.error(
+                            f"Message[{message.id}]: "
+                            f"{_t('file reference expired for 3 retries, download skipped.')}"
+                        )
+                except DownloadIncomplete as incomplete:
+                    # The fork swallowed the protocol error; keep its cause so a
+                    # [-500 TIMEOUT] on upload.GetFile is not reported as a generic
+                    # interruption. Network causes also get an actionable hint.
+                    last_error = _describe_download_error(incomplete, incomplete.cause)
+                    delay = _retry_delay(
+                        retry, network=_is_network_cause(incomplete.cause)
+                    )
+                    logger.warning(
+                        f"Message[{message.id}]: {last_error}; "
+                        f"{_t('retrying after')} {delay:g} {_t('seconds')}"
+                    )
+                    await asyncio.sleep(delay)
+                    # A truncated stream can also be a stale file reference that the
+                    # fork swallowed; refetch so the next attempt gets a fresh one.
+                    try:
+                        message = await fetch_message(client, message)
+                    except Exception as fetch_err:  # pylint: disable = W0703
+                        logger.warning(
+                            f"Message[{message.id}]: refetch failed: {fetch_err}"
+                        )
+                    if _check_timeout(retry, message.id):
+                        logger.error(
+                            f"Message[{message.id}]: {last_error}; "
+                            f"{_t('download incomplete after 3 retries, download skipped.')}"
+                        )
+                except pyrogram.errors.exceptions.flood_420.Flood as flood_err:
+                    # Covers FloodWait and FloodPremiumWait ("wait N seconds, or buy
+                    # Premium"). Sleeping keeps the retry budget instead of failing the
+                    # file outright; the bytes already downloaded are resumed by the
+                    # get_file guard.
+                    wait = _flood_wait_seconds(flood_err)
+                    last_error = (
+                        f"Telegram 限速（{type(flood_err).__name__}: 等待 {wait:g}s）"
+                    )
+                    logger.warning(
+                        f"Message[{message.id}]: Telegram 限速 "
+                        f"({type(flood_err).__name__})，等待 {wait:g} 秒后继续"
+                    )
+                    await asyncio.sleep(wait + 1)
+                    _check_timeout(retry, message.id)
+                except TypeError:
+                    # pylint: disable = C0301
+                    last_error = _t("Timeout Error occurred when downloading Message")
+                    logger.warning(
+                        f"{_t('Timeout Error occurred when downloading Message')}[{message.id}], "
+                        f"{_t('retrying after')} {RETRY_TIME_OUT} {_t('seconds')}"
+                    )
+                    await asyncio.sleep(RETRY_TIME_OUT)
+                    if _check_timeout(retry, message.id):
+                        logger.error(
+                            f"Message[{message.id}]: {_t('Timing out after 3 reties, download skipped.')}"
+                        )
+                except TaskCancelled:
+                    # The Web UI deleted this task while it was transferring. Stop
+                    # quietly; download_task turns it into a skip.
+                    logger.info(
+                        f"Message[{message.id}]: download cancelled from the Web UI"
+                    )
+                    return DownloadStatus.FailedDownload, None
+                except Exception as e:
+                    # pylint: disable = C0301
+                    logger.error(
+                        f"Message[{message.id}]: "
+                        f"{_t('could not be downloaded due to following exception')}:\n[{e}].",
+                        exc_info=True,
+                    )
+                    last_error = f"{e.__class__.__name__}: {e}"
+                    break
     except disk_guard.DiskSpaceError as space_error:
         node.last_error[message.id] = str(space_error)
         logger.error(f"Message[{message.id}]: {space_error}")
         return DownloadStatus.FailedDownload, None
-
-    for retry in range(3):
-        try:
-            temp_download_path = await client.download_media(
-                message,
-                file_name=temp_file_name,
-                progress=update_download_status,
-                progress_args=(
-                    message_id,
-                    ui_file_name,
-                    task_start_time,
-                    node,
-                    client,
-                ),
-            )
-
-            if temp_download_path and isinstance(temp_download_path, str):
-                _check_download_finish(media_size, temp_download_path, ui_file_name)
-                await asyncio.sleep(0.5)
-                # Cross-device moves copy the file; keep the loop free while a
-                # multi-GB file is being copied.
-                await asyncio.to_thread(
-                    _move_to_download_path, temp_download_path, file_name
-                )
-                # TODO: if not exist file size or media
-                return DownloadStatus.SuccessDownload, file_name
-
-            # No path came back: the client aborted and kept its partial file, so
-            # the next attempt resumes from it. Pause before the retry instead of
-            # hammering the queue.
-            last_error = _t("download aborted before the file was written")
-            delay = _retry_delay(retry)
-            logger.warning(
-                f"Message[{message.id}]: {last_error}, "
-                f"{_t('retrying after')} {delay:g} {_t('seconds')}"
-            )
-            await asyncio.sleep(delay)
-        except pyrogram.errors.exceptions.bad_request_400.BadRequest:
-            logger.warning(
-                f"Message[{message.id}]: {_t('file reference expired, refetching')}..."
-            )
-            await asyncio.sleep(_retry_delay(retry))
-            message = await fetch_message(client, message)
-            last_error = _t("file reference expired")
-            if _check_timeout(retry, message.id):
-                # pylint: disable = C0301
-                logger.error(
-                    f"Message[{message.id}]: "
-                    f"{_t('file reference expired for 3 retries, download skipped.')}"
-                )
-        except DownloadIncomplete as incomplete:
-            # The fork swallowed the protocol error; keep its cause so a
-            # [-500 TIMEOUT] on upload.GetFile is not reported as a generic
-            # interruption. Network causes also get an actionable hint.
-            last_error = _describe_download_error(incomplete, incomplete.cause)
-            delay = _retry_delay(retry, network=_is_network_cause(incomplete.cause))
-            logger.warning(
-                f"Message[{message.id}]: {last_error}; "
-                f"{_t('retrying after')} {delay:g} {_t('seconds')}"
-            )
-            await asyncio.sleep(delay)
-            # A truncated stream can also be a stale file reference that the
-            # fork swallowed; refetch so the next attempt gets a fresh one.
-            try:
-                message = await fetch_message(client, message)
-            except Exception as fetch_err:  # pylint: disable = W0703
-                logger.warning(f"Message[{message.id}]: refetch failed: {fetch_err}")
-            if _check_timeout(retry, message.id):
-                logger.error(
-                    f"Message[{message.id}]: {last_error}; "
-                    f"{_t('download incomplete after 3 retries, download skipped.')}"
-                )
-        except pyrogram.errors.exceptions.flood_420.Flood as flood_err:
-            # Covers FloodWait and FloodPremiumWait ("wait N seconds, or buy
-            # Premium"). Sleeping keeps the retry budget instead of failing the
-            # file outright; the bytes already downloaded are resumed by the
-            # get_file guard.
-            wait = _flood_wait_seconds(flood_err)
-            logger.warning(
-                f"Message[{message.id}]: Telegram 限速 "
-                f"({type(flood_err).__name__})，等待 {wait:g} 秒后继续"
-            )
-            await asyncio.sleep(wait + 1)
-            _check_timeout(retry, message.id)
-        except TypeError:
-            # pylint: disable = C0301
-            logger.warning(
-                f"{_t('Timeout Error occurred when downloading Message')}[{message.id}], "
-                f"{_t('retrying after')} {RETRY_TIME_OUT} {_t('seconds')}"
-            )
-            await asyncio.sleep(RETRY_TIME_OUT)
-            if _check_timeout(retry, message.id):
-                logger.error(
-                    f"Message[{message.id}]: {_t('Timing out after 3 reties, download skipped.')}"
-                )
-        except TaskCancelled:
-            # The Web UI deleted this task while it was transferring. Stop
-            # quietly; download_task turns it into a skip.
-            logger.info(f"Message[{message.id}]: download cancelled from the Web UI")
-            return DownloadStatus.FailedDownload, None
-        except Exception as e:
-            # pylint: disable = C0301
-            logger.error(
-                f"Message[{message.id}]: "
-                f"{_t('could not be downloaded due to following exception')}:\n[{e}].",
-                exc_info=True,
-            )
-            last_error = f"{e.__class__.__name__}: {e}"
-            break
+    except disk_guard.DiskWaitCancelled:
+        logger.info(f"Message[{message.id}]: disk space wait cancelled")
+        return DownloadStatus.SkipDownload, None
 
     if last_error:
         try:
@@ -875,11 +925,9 @@ def _check_config() -> bool:
     print_meta(logger)
     try:
         _load_config()
-        logger.add(
+        app.configure_file_logger(
             os.path.join(app.log_file_path, "tdl.log"),
-            rotation="10 MB",
-            retention="10 days",
-            level=app.log_level,
+            app.log_level,
         )
     except Exception as e:
         logger.exception(f"load config error: {e}")
@@ -1104,16 +1152,8 @@ async def reupload_file(chat_id, message_id: int) -> Tuple[bool, str]:
     if app.hide_file_name:
         ui_file_name = f"****{os.path.splitext(file_path)[-1]}"
 
-    upload_stat.update(
-        chat_id,
-        message_id,
-        file_name=ui_file_name,
-        transferred="",
-        total="",
-        percentage="0%",
-        speed="",
-        eta="",
-    )
+    if not upload_stat.try_start(chat_id, message_id, file_name=ui_file_name):
+        return False, "该文件正在上传中，请稍候"
 
     async def on_progress(transferred, total, percentage, speed, eta):
         upload_stat.update(
@@ -1183,23 +1223,46 @@ STALE_TEMP_MAX_AGE = 7 * 24 * 60 * 60
 def _cleanup_stale_temp_files(
     directory: str, max_age: float = STALE_TEMP_MAX_AGE
 ) -> int:
-    """Remove abandoned ``.temp`` files left by downloads nobody retried."""
+    """Remove abandoned ``.temp`` and ``.temp.json`` files left behind."""
     if not directory or not os.path.isdir(directory):
         return 0
     removed = 0
     now = time.time()
+    sidecar_suffix = ".temp" + PARALLEL_STATE_SUFFIX
     for root, _dirs, names in os.walk(directory):
+        name_set = set(names)
         for name in names:
-            if not name.endswith(".temp"):
-                continue
             path = os.path.join(root, name)
-            try:
-                if now - os.path.getmtime(path) < max_age:
+            if name.endswith(".temp"):
+                try:
+                    if now - os.path.getmtime(path) < max_age:
+                        continue
+                    os.remove(path)
+                    removed += 1
+                except OSError:
                     continue
-                os.remove(path)
-                removed += 1
-            except OSError:
-                continue
+                sidecar_path = path + PARALLEL_STATE_SUFFIX
+                if os.path.exists(sidecar_path):
+                    try:
+                        os.remove(sidecar_path)
+                        removed += 1
+                    except OSError:
+                        pass
+            elif name.endswith(sidecar_suffix):
+                temp_name = name[: -len(PARALLEL_STATE_SUFFIX)]
+                temp_path = path[: -len(PARALLEL_STATE_SUFFIX)]
+                try:
+                    is_orphan = temp_name not in name_set and not os.path.exists(
+                        temp_path
+                    )
+                    if not is_orphan and now - os.path.getmtime(path) < max_age:
+                        continue
+                    os.remove(path)
+                    removed += 1
+                except FileNotFoundError:
+                    continue
+                except OSError:
+                    continue
     return removed
 
 
@@ -1247,7 +1310,7 @@ def main():
         init_history_db(history_db)
         # Background release check: the bot help card and the Web UI read the
         # cached result, so nothing here ever blocks on the network.
-        start_background_check()
+        start_background_check(proxy=app.proxy)
         # Partial files are kept for resume; drop the ones nobody came back for.
         stale_temp_files = _cleanup_stale_temp_files(app.temp_save_path)
         if stale_temp_files:
@@ -1336,7 +1399,6 @@ def main():
         except Exception as drain_err:  # pylint: disable = W0703
             logger.warning(f"停止后台上传失败: {drain_err}")
         logger.info(_t("Stopped!"))
-        # check_for_updates(app.proxy)
         logger.info(f"{_t('update config')}......")
         try:
             app.update_config()

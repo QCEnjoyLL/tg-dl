@@ -43,6 +43,18 @@ class TaskNodeScanningTestCase(unittest.TestCase):
 
         self.assertTrue(node.is_finish())
 
+    def test_pending_background_uploads_block_finish(self):
+        node = TaskNode(chat_id=-100)
+        node.is_running = True
+        node.total_task = 1
+        node.total_download_task = 1
+        node.pending_upload_count = 1
+
+        self.assertFalse(node.is_finish())
+
+        node.pending_upload_count = 0
+        self.assertTrue(node.is_finish())
+
 
 def make_message(message_id: int = 1):
     return SimpleNamespace(

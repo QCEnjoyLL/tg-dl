@@ -219,6 +219,8 @@ media_types:
 
 max_download_task: 2
 max_concurrent_transmissions: 4
+max_concurrent_chunks: 4
+min_free_space_gb: 2
 
 upload_drive:
   enable_upload_file: true
@@ -226,6 +228,7 @@ upload_drive:
   remote_dir: "115:Telegram"
   rclone_path: /app/rclone/rclone
   after_upload_file_delete: true
+  hash_check: true
 
 web_host: 0.0.0.0
 web_port: 5000
@@ -243,6 +246,8 @@ FORM_VALUES = {
     "allowed_user_ids": "me",
     "max_download_task": "2",
     "max_concurrent_transmissions": "4",
+    "max_concurrent_chunks": "4",
+    "min_free_space_gb": "2",
     "start_timeout": "60",
     "forward_limit": "33",
     "file_formats.audio": "all",
@@ -262,6 +267,7 @@ FORM_VALUES = {
     "upload_drive.rclone_path": "/app/rclone/rclone",
     "upload_drive.before_upload_file_zip": False,
     "upload_drive.after_upload_file_delete": True,
+    "upload_drive.hash_check": True,
     "proxy.scheme": "",
     "proxy.hostname": "",
     "proxy.port": "",
@@ -357,7 +363,14 @@ MOCK_JS = """
         uploading: data.uploading.length,
         completed: data.downloaded.length,
         failed: data.failed.length,
-        upload_enabled: true
+        upload_enabled: true,
+        disk: {
+          enabled: true,
+          paused: false,
+          free: 128 * 1024 * 1024 * 1024,
+          total: 500 * 1024 * 1024 * 1024,
+          reserve: 2 * 1024 * 1024 * 1024
+        }
       })));
     }
     if (u.indexOf('already_down=false') !== -1) {

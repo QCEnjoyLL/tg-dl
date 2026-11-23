@@ -59,6 +59,8 @@
     counts: { downloading: 0, uploading: 0, completed: 0, failed: 0 },
     // Only meaningful with upload_drive.enable_upload_file.
     uploadEnabled: false,
+    // Disk space guard snapshot from /get_download_status.
+    disk: null,
   };
 
   const el = {
@@ -93,6 +95,8 @@
     emptyText: $("#empty-text"),
     emptyAction: $("#empty-action"),
     pausedBanner: $("#paused-banner"),
+    diskBanner: $("#disk-banner"),
+    diskBannerText: $("#disk-banner-text"),
     pager: $("#pager"),
     pagerInfo: $("#pager-info"),
     pageSize: $("#page-size"),
@@ -263,6 +267,19 @@
 
   function pctText(value) {
     return Number.isInteger(value) ? value + "%" : value.toFixed(1) + "%";
+  }
+
+  function formatBytes(bytes) {
+    const num = Number(bytes);
+    if (!Number.isFinite(num) || num < 0) return "";
+    const units = ["B", "KB", "MB", "GB", "TB"];
+    let idx = 0;
+    let val = num;
+    while (val >= 1024 && idx < units.length - 1) {
+      val /= 1024;
+      idx += 1;
+    }
+    return (idx === 0 ? Math.round(val) : val.toFixed(1)) + " " + units[idx];
   }
 
   function clockText(date) {
@@ -557,16 +574,19 @@
     }
   }
 
-  function uploadStateKey(row) {    if (row.upload_state === "exists") return "exists";
+  function uploadStateKey(row) {
+    if (row.upload_state === "exists") return "exists";
     if (row.upload_state === "uploaded" || (!row.upload_state && row.upload_success)) {
       return "uploaded";
     }
+    if (row.uploading) return "uploading";
     return "local";
   }
 
   function uploadChipHtml(key) {
     if (key === "exists") return '<span class="state-chip is-remote">云端已有</span>';
     if (key === "uploaded") return '<span class="state-chip is-uploaded">已上传</span>';
+    if (key === "uploading") return '<span class="state-chip is-uploading">上传中</span>';
     return '<span class="state-chip">仅本地</span>';
   }
 
@@ -646,10 +666,11 @@
     const copyBtn = tr.querySelector('[data-action="copy"]');
     if (copyBtn) setActionLabel(copyBtn, "复制保存路径 " + name);
     // "仅本地" rows get a re-upload button, but only when an upload target is
-    // configured; rows already on the remote have nothing to re-send.
+    // configured and the file is not already uploading in the background.
     const uploadBtn = tr.querySelector('[data-action="upload"]');
     if (uploadBtn) {
-      uploadBtn.hidden = !state.uploadEnabled || Boolean(row.upload_success);
+      uploadBtn.hidden =
+        !state.uploadEnabled || Boolean(row.upload_success) || Boolean(row.uploading);
       setActionLabel(uploadBtn, "重新上传 " + name);
     }
     const deleteBtn = tr.querySelector('[data-action="delete"]');
@@ -832,13 +853,12 @@
       downloaded: "本次运行还没有完成的下载",
       failed: "没有失败任务",
     };
-    const rawRows = tabRows(state.tab);
     const visibleRows = filteredRows(state.tab);
     const isFiltered = hasActiveFilters(state.tab);
 
     if (el.empty) el.empty.hidden = visibleRows.length > 0;
     if (visibleRows.length === 0) {
-      if (rawRows.length > 0 && isFiltered) {
+      if (isFiltered) {
         const q = state.query.trim();
         setText(
           el.emptyText,
@@ -937,18 +957,38 @@
     renderEmpty();
   }
 
+  function renderDiskBanner() {
+    if (!el.diskBanner) return;
+    const disk = state.disk;
+    const paused = Boolean(disk && disk.enabled && disk.paused);
+    el.diskBanner.hidden = !paused;
+    if (!paused) return;
+    const freeText = formatBytes(disk.free);
+    const reserveText = formatBytes(disk.reserve);
+    let msg = "磁盘空间不足";
+    if (freeText && reserveText) {
+      msg += "（剩余 " + freeText + "，低于预留 " + reserveText + "）";
+    }
+    msg += "：下载已暂停，等待上传删除本地文件后自动恢复。";
+    setText(el.diskBannerText, msg);
+  }
+
   function renderStatus() {
     const running = state.action === "pause";
-    setText(el.statState, running ? "运行中" : "已暂停");
+    const diskPaused = Boolean(
+      running && state.disk && state.disk.enabled && state.disk.paused
+    );
+    setText(el.statState, !running ? "已暂停" : diskPaused ? "磁盘暂停" : "运行中");
     if (el.statState) {
-      el.statState.classList.toggle("is-running", running);
-      el.statState.classList.toggle("is-paused", !running);
+      el.statState.classList.toggle("is-running", running && !diskPaused);
+      el.statState.classList.toggle("is-paused", !running || diskPaused);
     }
     if (el.liveDot) {
-      el.liveDot.classList.toggle("is-paused", !running || state.pollingPaused);
+      el.liveDot.classList.toggle("is-paused", !running || diskPaused || state.pollingPaused);
     }
 
     if (el.pausedBanner) el.pausedBanner.hidden = running;
+    renderDiskBanner();
 
     if (el.pauseBtn) {
       el.pauseBtn.dataset.value = state.action;
@@ -982,10 +1022,20 @@
 
   const inFlight = {
     status: false,
-    downloading: false,
-    uploading: false,
-    downloaded: false,
-    failed: false,
+  };
+
+  const tabControllers = {
+    downloading: null,
+    uploading: null,
+    downloaded: null,
+    failed: null,
+  };
+
+  const tabRequestSeq = {
+    downloading: 0,
+    uploading: 0,
+    downloaded: 0,
+    failed: 0,
   };
 
   function tabEndpoint(tab) {
@@ -1028,7 +1078,10 @@
         page: Number(payload.page) || 1,
         pages: Number(payload.pages) || 1,
         total: Number(payload.total) || 0,
-        allTotal: Number(payload.all_total || payload.total) || 0,
+        allTotal:
+          payload.all_total !== undefined
+            ? Number(payload.all_total) || 0
+            : Number(payload.total) || 0,
       };
     }
     state[tab] = rows;
@@ -1041,11 +1094,29 @@
     if (!filtered) state.counts[countKey(tab)] = info.total;
   }
 
-  async function loadTab(tab) {
-    if (inFlight[tab]) return;
-    inFlight[tab] = true;
+  async function loadTab(tab, options) {
+    const background = Boolean(options && options.background);
+    if (background && tabControllers[tab]) return;
+
+    if (tabControllers[tab]) {
+      try {
+        tabControllers[tab].abort();
+      } catch (e) {
+        /* ignore abort errors from already-settled controllers */
+      }
+    }
+
+    const seq = ++tabRequestSeq[tab];
+    const controller =
+      typeof AbortController === "function" ? new AbortController() : null;
+    tabControllers[tab] = controller;
+
     try {
-      const payload = await api(tabUrl(tab));
+      const payload = await api(
+        tabUrl(tab),
+        controller ? { signal: controller.signal } : undefined
+      );
+      if (seq !== tabRequestSeq[tab]) return;
       applyPageResponse(tab, payload);
       if (tab === "downloading") renderDownloading();
       else if (tab === "uploading") renderUploading();
@@ -1055,25 +1126,30 @@
         renderCounts();
         syncToolbar();
       }
+    } catch (err) {
+      if (err && err.name === "AbortError") return;
+      throw err;
     } finally {
-      inFlight[tab] = false;
+      if (tabControllers[tab] === controller) {
+        tabControllers[tab] = null;
+      }
     }
   }
 
-  function loadDownloading() {
-    return loadTab("downloading");
+  function loadDownloading(options) {
+    return loadTab("downloading", options);
   }
 
-  function loadUploading() {
-    return loadTab("uploading");
+  function loadUploading(options) {
+    return loadTab("uploading", options);
   }
 
-  function loadDownloaded() {
-    return loadTab("downloaded");
+  function loadDownloaded(options) {
+    return loadTab("downloaded", options);
   }
 
-  function loadFailed() {
-    return loadTab("failed");
+  function loadFailed(options) {
+    return loadTab("failed", options);
   }
 
   async function loadStatus() {
@@ -1101,6 +1177,7 @@
         if (typeof res.upload_enabled === "boolean") {
           state.uploadEnabled = res.upload_enabled;
         }
+        state.disk = res.disk && typeof res.disk === "object" ? res.disk : null;
         renderCounts();
         syncToolbar();
       }
@@ -1108,9 +1185,9 @@
       const nextAction = running ? "pause" : "continue";
       if (nextAction !== state.action) {
         state.action = nextAction;
-        renderStatus();
         if (state.tab === "downloading") renderDownloading();
       }
+      renderStatus();
       if (!state.pollingPaused) {
         setText(el.updated, "更新于 " + clockText());
       }
@@ -1158,11 +1235,11 @@
     }
   }
 
-  function refreshActive() {
-    if (state.tab === "downloading") return loadDownloading();
-    if (state.tab === "uploading") return loadUploading();
-    if (state.tab === "downloaded") return loadDownloaded();
-    return loadFailed();
+  function refreshActive(options) {
+    if (state.tab === "downloading") return loadDownloading(options);
+    if (state.tab === "uploading") return loadUploading(options);
+    if (state.tab === "downloaded") return loadDownloaded(options);
+    return loadFailed(options);
   }
 
   /* ------------------------------------------------------------------ tabs */
@@ -1768,7 +1845,8 @@
     const bounds =
       field.type === "number"
         ? (field.min !== undefined ? ' min="' + field.min + '"' : "") +
-          (field.max !== undefined ? ' max="' + field.max + '"' : "")
+          (field.max !== undefined ? ' max="' + field.max + '"' : "") +
+          (field.step !== undefined ? ' step="' + esc(field.step) + '"' : "")
         : "";
     const autocomplete = field.type === "password" ? ' autocomplete="new-password"' : "";
 
@@ -2098,6 +2176,7 @@
   let errorCount = 0;
 
   function notifyError(err) {
+    if (err && err.name === "AbortError") return;
     errorCount += 1;
     if (el.liveDot) el.liveDot.classList.add("is-error");
     if (errorCount === 1 || errorCount % 15 === 0) {
@@ -2123,7 +2202,7 @@
     const interval = TAB_REFRESH[state.tab] || 1000;
     if (now - lastTabFetch >= interval) {
       lastTabFetch = now;
-      refreshActive().catch(notifyError);
+      refreshActive({ background: true }).catch(notifyError);
     }
   }
 

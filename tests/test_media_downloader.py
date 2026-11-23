@@ -346,16 +346,11 @@ class MockClient:
         return True
 
 
-def check_for_updates(_: dict = None):
-    pass
-
-
 @mock.patch("media_downloader.get_extension", new=get_extension)
 @mock.patch("module.pyrogram_extension.get_extension", new=get_extension)
 @mock.patch("media_downloader.fetch_message", new=new_fetch_message)
 @mock.patch("media_downloader.get_chat_history_v2", new=get_chat_history)
 @mock.patch("media_downloader.RETRY_TIME_OUT", new=0)
-@mock.patch("utils.updates.check_for_updates", new=check_for_updates)
 class MediaDownloaderTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -1370,6 +1365,66 @@ class ReuploadFileTestCase(unittest.IsolatedAsyncioTestCase):
         finally:
             os.remove(file_path)
 
+    async def test_reupload_rejects_when_already_uploading(self):
+        import media_downloader as md
+        from module import upload_stat
+
+        upload_stat.clear()
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as handle:
+            file_path = handle.name
+        try:
+            upload_stat.try_start(-100, 9, file_name=file_path)
+            with mock.patch.object(
+                md.app.cloud_drive_config, "enable_upload_file", True
+            ), mock.patch.object(
+                md,
+                "get_completed_download",
+                return_value={"file_name": file_path, "upload_state": None},
+            ), mock.patch.object(
+                md.app, "upload_file", new=mock.AsyncMock()
+            ) as upload_mock:
+                ok, reason = await md.reupload_file(-100, 9)
+
+            self.assertFalse(ok)
+            self.assertIn("正在上传中", reason)
+            upload_mock.assert_not_awaited()
+            self.assertTrue(upload_stat.is_uploading(-100, 9))
+        finally:
+            upload_stat.clear()
+            os.remove(file_path)
+
+    async def test_reupload_succeeds_with_hide_file_name_enabled(self):
+        import media_downloader as md
+        from module import download_stat, upload_stat
+
+        upload_stat.clear()
+        download_stat.close_history_db()
+        download_stat.init_history_db(None)
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as handle:
+            file_path = handle.name
+        try:
+            with download_stat._PROGRESS_LOCK:  # pylint: disable = W0212
+                download_stat._download_result[-100] = {
+                    15: {"down_byte": 10, "total_size": 10, "file_name": "****.mp4"}
+                }
+            download_stat.mark_download_completed(-100, 15, file_path, 10, None)
+
+            with mock.patch.object(md.app, "hide_file_name", True), mock.patch.object(
+                md.app.cloud_drive_config, "enable_upload_file", True
+            ), mock.patch.object(
+                md.app, "upload_file", new=mock.AsyncMock(return_value="uploaded")
+            ) as upload_mock:
+                ok, state = await md.reupload_file(-100, 15)
+
+            self.assertTrue(ok)
+            self.assertEqual(state, "uploaded")
+            upload_mock.assert_awaited_once()
+            self.assertEqual(upload_mock.await_args.args[0], file_path)
+        finally:
+            upload_stat.clear()
+            download_stat.close_history_db()
+            os.remove(file_path)
+
 
 class FloodErrorDescriptionTestCase(unittest.TestCase):
     """FLOOD_PREMIUM_WAIT must explain itself in the failed-task list."""
@@ -1412,6 +1467,100 @@ class FloodErrorDescriptionTestCase(unittest.TestCase):
             self.assertFalse(os.path.exists(stale))
             self.assertTrue(os.path.exists(fresh))
             self.assertTrue(os.path.exists(keep))
+
+    def test_cleanup_stale_temp_files_handles_sidecars_and_orphans(self):
+        import media_downloader as md
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            fresh = os.path.join(tmp_dir, "fresh.temp")
+            fresh_json = fresh + ".json"
+            stale = os.path.join(tmp_dir, "stale.temp")
+            stale_json = stale + ".json"
+            orphan_json = os.path.join(tmp_dir, "orphan.temp.json")
+            for path in (fresh, fresh_json, stale, stale_json, orphan_json):
+                open(path, "wb").close()
+
+            old_time = time.time() - md.STALE_TEMP_MAX_AGE - 10
+            for path in (stale, stale_json):
+                os.utime(path, (old_time, old_time))
+
+            removed = _cleanup_stale_temp_files(tmp_dir)
+
+            self.assertEqual(removed, 3)
+            self.assertFalse(os.path.exists(stale))
+            self.assertFalse(os.path.exists(stale_json))
+            self.assertFalse(os.path.exists(orphan_json))
+            self.assertTrue(os.path.exists(fresh))
+            self.assertTrue(os.path.exists(fresh_json))
+
+
+class RelativeSaveMsgAndRetryErrorTestCase(unittest.IsolatedAsyncioTestCase):
+    async def test_save_msg_to_file_uses_relative_save_path_not_temp(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cwd = os.getcwd()
+            os.chdir(tmpdir)
+            try:
+                rest_app(MOCK_CONF)
+                app.save_path = "rel_downloads"
+                app.temp_save_path = os.path.join(tmpdir, "temp_dir")
+                app.date_format = "%Y_%m"
+                message = MockMessage(
+                    id=55,
+                    dis_chat=True,
+                    chat=Chat(chat_id=456, chat_title="RelChat"),
+                    date=datetime(2024, 1, 2, 3, 4, 5),
+                    text="hello relative",
+                )
+                status, saved_path = await save_msg_to_file(app, 456, message)
+                self.assertEqual(status, DownloadStatus.SuccessDownload)
+                self.assertNotIn("temp_dir", saved_path)
+                self.assertTrue(os.path.isfile(saved_path))
+                with open(saved_path, encoding="utf-8") as handle:
+                    self.assertEqual(handle.read(), "hello relative")
+            finally:
+                os.chdir(cwd)
+
+    async def test_download_media_records_last_error_on_flood_and_type_error(self):
+        rest_app(MOCK_CONF)
+        message = MockMessage(
+            id=801,
+            media=True,
+            video=MockVideo(
+                file_name="clip.mp4",
+                mime_type="video/mp4",
+                file_size=1024,
+            ),
+        )
+
+        class FloodClient:
+            async def download_media(self, *_args, **_kwargs):
+                raise pyrogram.errors.exceptions.flood_420.FloodWait(value=5)
+
+        class TypeErrClient:
+            async def download_media(self, *_args, **_kwargs):
+                raise TypeError("timeout")
+
+        with (
+            mock.patch("media_downloader.RETRY_TIME_OUT", 0),
+            mock.patch("media_downloader.asyncio.sleep", new=mock.AsyncMock()),
+            mock.patch("media_downloader._is_exist", return_value=False),
+            mock.patch("media_downloader.fetch_message", new=new_fetch_message),
+        ):
+            node_flood = TaskNode(chat_id=-123)
+            status_f, _ = await download_media(
+                FloodClient(), message, ["video"], {"video": ["all"]}, node_flood
+            )
+            self.assertEqual(status_f, DownloadStatus.FailedDownload)
+            self.assertIn(801, node_flood.last_error)
+            self.assertIn("FloodWait", node_flood.last_error[801])
+
+            node_type = TaskNode(chat_id=-123)
+            status_t, _ = await download_media(
+                TypeErrClient(), message, ["video"], {"video": ["all"]}, node_type
+            )
+            self.assertEqual(status_t, DownloadStatus.FailedDownload)
+            self.assertIn(801, node_type.last_error)
+            self.assertTrue(node_type.last_error[801])
 
 
 class UnknownFileSizeTestCase(unittest.IsolatedAsyncioTestCase):

@@ -1,7 +1,9 @@
 """Regression tests for rclone command construction and upload verdicts."""
 
+import asyncio
 import os
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
@@ -336,3 +338,164 @@ class RemoteContentCheckTestCase(unittest.IsolatedAsyncioTestCase):
 
         expected = hashlib.md5(b"same bytes here").hexdigest()
         self.assertEqual(CloudDrive.local_md5(self.file_path), expected)
+
+
+class _HangingStdout:
+    def __init__(self, started: asyncio.Event):
+        self._started = started
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        self._started.set()
+        await asyncio.sleep(60)
+        raise StopAsyncIteration
+
+
+class _CancellableProcess:
+    def __init__(self, started: asyncio.Event):
+        self.stdout = _HangingStdout(started)
+        self.returncode = None
+        self.terminated = False
+        self.killed = False
+
+    def terminate(self):
+        self.terminated = True
+        self.returncode = -15
+
+    def kill(self):
+        self.killed = True
+        self.returncode = -9
+
+    async def wait(self):
+        return self.returncode
+
+
+class RcloneCancellationTestCase(unittest.IsolatedAsyncioTestCase):
+    async def test_cancelling_upload_terminates_rclone_and_cleans_zip(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            src = os.path.join(tmp_dir, "video.mp4")
+            with open(src, "wb") as f:
+                f.write(b"payload")
+            zip_path = os.path.join(tmp_dir, "video.zip")
+            started = asyncio.Event()
+            proc = _CancellableProcess(started)
+            config = make_config(before_upload_file_zip=True)
+
+            with mock.patch.object(
+                CloudDrive, "rclone_mkdir", new=mock.AsyncMock(return_value=True)
+            ), mock.patch.object(
+                CloudDrive, "rclone_remote_stat", new=mock.AsyncMock(return_value=None)
+            ), mock.patch(
+                "module.cloud_drive.asyncio.create_subprocess_exec",
+                new=mock.AsyncMock(return_value=proc),
+            ):
+                task = asyncio.create_task(
+                    CloudDrive.rclone_upload_file(config, tmp_dir, src)
+                )
+                await asyncio.wait_for(started.wait(), timeout=1.0)
+                task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+
+            self.assertTrue(proc.terminated)
+            self.assertFalse(os.path.exists(zip_path))
+
+    async def test_terminate_process_escalates_to_kill_on_timeout(self):
+        proc = _CancellableProcess(asyncio.Event())
+        proc.terminate = lambda: setattr(proc, "terminated", True)
+
+        async def timeout_wait_for(coro, timeout=None):
+            coro.close()
+            raise asyncio.TimeoutError
+
+        with mock.patch(
+            "module.cloud_drive.asyncio.wait_for",
+            side_effect=timeout_wait_for,
+        ):
+            await CloudDrive._terminate_process(proc)  # pylint: disable = W0212
+
+        self.assertTrue(proc.terminated)
+        self.assertTrue(proc.killed)
+
+
+class CloudDriveConcurrencyAndAligoTestCase(unittest.IsolatedAsyncioTestCase):
+    async def test_concurrent_uploads_deduplicate_rclone_mkdir(self):
+        config = make_config()
+        mkdir_calls = 0
+
+        async def slow_mkdir(_cfg, _remote_dir):
+            nonlocal mkdir_calls
+            mkdir_calls += 1
+            await asyncio.sleep(0.02)
+            return True
+
+        with (
+            mock.patch.object(CloudDrive, "rclone_mkdir", side_effect=slow_mkdir),
+            mock.patch.object(
+                CloudDrive, "rclone_remote_stat", new=mock.AsyncMock(return_value=None)
+            ),
+            mock.patch(
+                "module.cloud_drive.asyncio.create_subprocess_exec",
+                side_effect=lambda *_a, **_kw: FakeProcess(),
+            ),
+        ):
+            r1, r2 = await asyncio.gather(
+                CloudDrive.rclone_upload_file(config, "/save", "/save/chan/a.mp4"),
+                CloudDrive.rclone_upload_file(config, "/save", "/save/chan/b.mp4"),
+            )
+
+        self.assertEqual(r1, UPLOAD_NEW)
+        self.assertEqual(r2, UPLOAD_NEW)
+        self.assertEqual(mkdir_calls, 1)
+
+    async def test_rclone_upload_zips_in_worker_thread_and_cleans_up(self):
+        loop_thread = threading.get_ident()
+        zip_threads = []
+        orig_zip = CloudDrive.zip_file
+
+        def spy_zip(path):
+            zip_threads.append(threading.get_ident())
+            return orig_zip(path)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            src = os.path.join(tmpdir, "chan", "clip.mp4")
+            os.makedirs(os.path.dirname(src), exist_ok=True)
+            with open(src, "wb") as handle:
+                handle.write(b"payload")
+            zip_path = os.path.join(os.path.dirname(src), "clip.zip")
+            config = make_config(before_upload_file_zip=True)
+
+            with (
+                mock.patch.object(
+                    CloudDrive, "rclone_mkdir", new=mock.AsyncMock(return_value=True)
+                ),
+                mock.patch.object(
+                    CloudDrive, "rclone_remote_stat", new=mock.AsyncMock(return_value=None)
+                ),
+                mock.patch.object(CloudDrive, "zip_file", side_effect=spy_zip),
+                mock.patch(
+                    "module.cloud_drive.asyncio.create_subprocess_exec",
+                    return_value=FakeProcess(),
+                ),
+            ):
+                result = await CloudDrive.rclone_upload_file(config, tmpdir, src)
+
+            self.assertEqual(result, UPLOAD_NEW)
+            self.assertEqual(len(zip_threads), 1)
+            self.assertNotEqual(zip_threads[0], loop_thread)
+            self.assertFalse(os.path.exists(zip_path))
+
+    def test_aligo_upload_returns_none_when_folder_missing(self):
+        fake_aligo = mock.MagicMock()
+        fake_aligo.get_folder_by_path.return_value = None
+        config = make_config(upload_adapter="aligo", before_upload_file_zip=True)
+        config.aligo = fake_aligo
+
+        with mock.patch.object(CloudDrive, "zip_file") as zip_mock:
+            res = CloudDrive.aligo_upload_file(config, "/save", "/save/chan/a.mp4")
+
+        self.assertIsNone(res)
+        zip_mock.assert_not_called()
+        fake_aligo.upload_files.assert_not_called()

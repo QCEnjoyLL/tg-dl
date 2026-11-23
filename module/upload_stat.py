@@ -20,6 +20,10 @@ _LOCK = threading.RLock()
 _uploading: Dict[str, Dict[int, dict]] = {}
 
 
+def _chat_key(chat_id) -> str:
+    return str(chat_id).strip()
+
+
 def _percent(value) -> float:
     """Parse rclone's ``"42%"`` (or ``"-"``) into a number."""
     text = str(value or "").strip().rstrip("%").strip()
@@ -55,18 +59,52 @@ def update(
         "updated_at": time.time(),
     }
     with _LOCK:
-        _uploading.setdefault(str(chat_id), {})[int(message_id)] = row
+        _uploading.setdefault(_chat_key(chat_id), {})[int(message_id)] = row
+
+
+def try_start(chat_id, message_id: int, file_name: str = "") -> bool:
+    """Claim the upload slot for ``(chat_id, message_id)`` if not already active."""
+    key = _chat_key(chat_id)
+    msg_id = int(message_id)
+    with _LOCK:
+        messages = _uploading.get(key)
+        if messages and msg_id in messages:
+            return False
+        _uploading.setdefault(key, {})[msg_id] = {
+            "chat": chat_id,
+            "id": msg_id,
+            "file_name": str(file_name or ""),
+            "transferred": "",
+            "total": "",
+            "percentage": 0.0,
+            "progress": 0.0,
+            "speed": "",
+            "speed_bytes": 0,
+            "eta": "",
+            "updated_at": time.time(),
+        }
+        return True
+
+
+def is_uploading(chat_id, message_id: int) -> bool:
+    """Whether ``(chat_id, message_id)`` currently has an active upload."""
+    key = _chat_key(chat_id)
+    msg_id = int(message_id)
+    with _LOCK:
+        messages = _uploading.get(key)
+        return bool(messages and msg_id in messages)
 
 
 def remove(chat_id, message_id: int) -> None:
     """Drop one message once its upload finished or failed."""
     with _LOCK:
-        messages = _uploading.get(str(chat_id))
+        key = _chat_key(chat_id)
+        messages = _uploading.get(key)
         if not messages:
             return
         messages.pop(int(message_id), None)
         if not messages:
-            _uploading.pop(str(chat_id), None)
+            _uploading.pop(key, None)
 
 
 def snapshot() -> dict:

@@ -75,6 +75,17 @@ class DownloadStatTestCase(unittest.TestCase):
         # Synchronous success must not be reported as a failure.
         self.assertEqual(get_failed_downloads(), {})
 
+    def test_completed_keeps_real_path_when_progress_filename_is_masked(self):
+        with download_stat._PROGRESS_LOCK:  # pylint: disable = W0212
+            download_stat._download_result[-100] = {
+                7: {"down_byte": 10, "total_size": 20, "file_name": "****.mp4"}
+            }
+
+        mark_download_completed(-100, 7, "/downloads/secret.mp4", 20, None)
+
+        record = download_stat.get_completed_download(-100, 7)
+        self.assertEqual(record["file_name"], "/downloads/secret.mp4")
+
     def test_completed_history_is_not_capped(self):
         for index in range(1200):
             mark_download_completed(-100, index, f"/tmp/{index}.mp4", 1)

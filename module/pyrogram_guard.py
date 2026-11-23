@@ -34,10 +34,13 @@ import re
 import shutil
 from typing import Optional
 
-log = logging.getLogger(__name__)
+from loguru import logger as log
 
 #: Telegram's ``upload.GetFile`` returns at most 1 MiB per request.
 CHUNK_SIZE = 1024 * 1024
+
+#: Sidecar next to ``<file>.temp`` written by the parallel downloader.
+PARALLEL_STATE_SUFFIX = ".json"
 
 #: Consecutive attempts that made no progress at all before giving up.
 MAX_STALLED_ATTEMPTS = 3
@@ -303,7 +306,7 @@ def guard_get_file(original):
                 if flood_waits > MAX_FLOOD_WAITS_PER_STREAM:
                     _raise_incomplete(received, file_size, cause=flood)
                 log.warning(
-                    "[%s] flood wait %ss on GetFile (%s); resuming at %s/%s bytes",
+                    "[{}] flood wait {}s on GetFile ({}); resuming at {}/{} bytes",
                     getattr(self, "name", "client"),
                     wait,
                     type(flood).__name__,
@@ -396,7 +399,7 @@ def resumable_handle_download(original):
                 raise
             _captured_error.set(error)
             log.warning(
-                "[%s] download failed after %s/%s bytes; keeping the partial file",
+                "[{}] download failed after {}/{} bytes; keeping the partial file",
                 getattr(self, "name", "client"),
                 received,
                 file_size,
@@ -416,6 +419,22 @@ def resumable_handle_download(original):
 
 def _resume_offset(temp_path: str, file_size: int) -> int:
     """Bytes already on disk that can be trusted, or 0 to start over."""
+    sidecar = temp_path + PARALLEL_STATE_SUFFIX
+    if os.path.exists(sidecar):
+        # Parallel chunks write out of order (and can make the sparse file reach
+        # file_size while middle ranges are still zero-filled). Sequential resume
+        # cannot tell holes from real bytes, so drop both and start clean.
+        log.warning(
+            "parallel state sidecar {} present; discarding sparse temp file to restart sequentially",
+            sidecar,
+        )
+        for path in (sidecar, temp_path):
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+            except OSError:
+                pass
+        return 0
     if not os.path.exists(temp_path):
         return 0
     try:

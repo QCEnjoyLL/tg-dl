@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 
+from loguru import logger
 from ruamel import yaml
 
 import module.app
@@ -90,6 +91,48 @@ class AppTestCase(unittest.TestCase):
             with open(data_path, encoding="utf-8") as data_file:
                 data = yaml.YAML().load(data_file.read())
             self.assertEqual(data["chat"][0]["chat_id"], 123)
+
+    def test_update_config_matches_chats_by_id_after_reorder_or_removal(self):
+        app = Application("", "")
+        cfg_a = ChatDownloadConfig()
+        cfg_a.last_read_message_id = 100
+        cfg_a.finish_task = 1
+        cfg_b = ChatDownloadConfig()
+        cfg_b.last_read_message_id = 200
+        cfg_b.finish_task = 1
+        app.chat_download_config = {111: cfg_a, 222: cfg_b}
+
+        # Simulated hot reload via Web UI: 111 was removed and 222 moved to index 0,
+        # plus a newly added chat 333 was placed at index 1.
+        app.config["chat"] = [
+            {"chat_id": 222, "last_read_message_id": 0},
+            {"chat_id": 333, "last_read_message_id": 0},
+        ]
+
+        app.update_config(False)
+
+        self.assertEqual(len(app.config["chat"]), 2)
+        self.assertEqual(app.config["chat"][0]["chat_id"], 222)
+        self.assertEqual(app.config["chat"][0]["last_read_message_id"], 201)
+        self.assertEqual(app.config["chat"][1]["chat_id"], 333)
+        self.assertEqual(app.config["chat"][1]["last_read_message_id"], 0)
+        self.assertTrue(
+            all("chat_id" in entry for entry in app.config["chat"])
+        )
+
+    def test_update_config_without_config_chat_key_does_not_raise(self):
+        app = Application("", "")
+        cfg = ChatDownloadConfig()
+        cfg.last_read_message_id = 10
+        cfg.finish_task = 1
+        app.chat_download_config = {111: cfg}
+        app.config = {}
+        app.app_data = {}
+
+        app.update_config(False)
+
+        self.assertEqual(app.app_data["chat"][0]["chat_id"], 111)
+        self.assertNotIn("chat", app.config)
 
     def test_file_formats_are_normalized_to_lists(self):
         app = Application("", "")
@@ -393,3 +436,71 @@ class DiskReserveConfigTestCase(unittest.TestCase):
 
         self.assertIn("min_free_space_gb", applied)
         self.assertEqual(app.min_free_space_bytes, 7 * 1024**3)
+
+
+class HotReloadAccuracyTestCase(unittest.TestCase):
+    BASE = {
+        "api_id": 12345,
+        "api_hash": "hash",
+        "bot_token": "1:tok",
+        "media_types": ["video"],
+        "file_formats": {"audio": ["all"], "document": ["all"], "video": ["all"]},
+        "max_download_task": 4,
+        "forward_limit": 20,
+        "log_level": "INFO",
+        "chat": [{"chat_id": -1001, "last_read_message_id": 0}],
+    }
+
+    def test_unchanged_keys_are_omitted_and_forward_limit_hot_reloads(self):
+        app = Application("", "")
+        app.config = dict(self.BASE)
+        app.assign_config(self.BASE)
+
+        same = dict(self.BASE)
+        same["api_id"] = "12345"  # str vs int should not count as a change
+        applied, restart = app.reload_hot_config(same)
+        self.assertEqual(applied, [])
+        self.assertEqual(restart, [])
+
+        updated = dict(self.BASE)
+        updated["forward_limit"] = 45
+        applied, restart = app.reload_hot_config(updated)
+        self.assertIn("forward_limit", applied)
+        self.assertNotIn("forward_limit", restart)
+        self.assertEqual(app.forward_limit_call.max_limit_call_times, 45)
+
+        changed_restart = dict(updated)
+        changed_restart["max_download_task"] = 8
+        changed_restart.pop("bot_token")
+        applied, restart = app.reload_hot_config(changed_restart)
+        self.assertEqual(applied, [])
+        self.assertEqual(restart, ["bot_token", "max_download_task"])
+
+    def test_log_level_hot_reload_reconfigures_file_sink(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = os.path.join(tmpdir, "tdl.log")
+            app = Application("", "")
+            app.assign_config(dict(self.BASE))
+            self.assertTrue(app.configure_file_logger(log_path, "INFO"))
+            try:
+                logger.debug("hidden-at-info")
+                logger.info("visible-at-info")
+
+                applied, restart = app.reload_hot_config({"log_level": "debug"})
+                self.assertIn("log_level", applied)
+                self.assertEqual(restart, [])
+                self.assertEqual(app.log_level, "DEBUG")
+
+                logger.debug("visible-at-debug")
+            finally:
+                if app._log_sink_id is not None:  # pylint: disable = W0212
+                    try:
+                        logger.remove(app._log_sink_id)  # pylint: disable = W0212
+                    except ValueError:
+                        pass
+
+            with open(log_path, encoding="utf-8") as log_file:
+                content = log_file.read()
+            self.assertNotIn("hidden-at-info", content)
+            self.assertIn("visible-at-info", content)
+            self.assertIn("visible-at-debug", content)

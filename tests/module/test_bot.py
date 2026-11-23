@@ -1,14 +1,16 @@
 """Tests for the bot's help card."""
 
 import asyncio
+import os
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 
 from pyrogram.parser.parser import Parser
 
 from module import bot, language
-from module.app import Application
+from module.app import Application, QueryHandler, QueryHandlerStr, TaskType
 from module.language import Language
 
 
@@ -198,6 +200,130 @@ class BotClientPoolTestCase(unittest.TestCase):
             client = bot.DownloadBot().create_client(app)
 
             self.assertEqual(client.get_file_semaphore._value, 20)  # pylint: disable = W0212
+
+
+class BotCommandHandlersTestCase(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self._saved_language = language._language  # pylint: disable = W0212
+        language.set_language(Language.EN)
+
+    def tearDown(self):
+        language.set_language(self._saved_language)
+
+    async def test_download_from_link_returns_on_extra_tokens(self):
+        client = mock.AsyncMock()
+        message = SimpleNamespace(
+            id=10,
+            text="https://t.me/channel/1 extra",
+            from_user=SimpleNamespace(id=100),
+        )
+        with mock.patch.object(bot, "parse_link", new=mock.AsyncMock()) as parse_mock:
+            await bot.download_from_link(client, message)
+
+        client.send_message.assert_awaited_once()
+        parse_mock.assert_not_awaited()
+
+    async def test_download_from_link_awaits_error_when_message_missing(self):
+        client = mock.AsyncMock()
+        message = SimpleNamespace(
+            id=10,
+            text="https://t.me/channel/99",
+            from_user=SimpleNamespace(id=100),
+        )
+        fake_bot = SimpleNamespace(
+            client=SimpleNamespace(
+                get_chat=mock.AsyncMock(
+                    return_value=SimpleNamespace(id=-1001, title="Chan")
+                ),
+                get_messages=mock.AsyncMock(),
+            )
+        )
+        with (
+            mock.patch.object(bot, "_bot", fake_bot),
+            mock.patch.object(
+                bot, "parse_link", new=mock.AsyncMock(return_value=(-1001, 99, None))
+            ),
+            mock.patch.object(bot, "retry", new=mock.AsyncMock(return_value=None)),
+        ):
+            await bot.download_from_link(client, message)
+
+        client.send_message.assert_awaited_once()
+
+    async def test_download_from_bot_replies_instead_of_raising_on_bad_range(self):
+        client = mock.AsyncMock()
+        message = SimpleNamespace(
+            id=11,
+            text="/download https://t.me/channel 20 10",
+            from_user=SimpleNamespace(id=100),
+        )
+        await bot.download_from_bot(client, message)
+
+        client.send_message.assert_awaited_once()
+        sent_text = client.send_message.call_args.args[1]
+        self.assertIn("end_offset_id(10) < start_offset_id(20)", sent_text)
+
+    async def test_download_from_bot_handles_invalid_link_without_unbound_error(self):
+        client = mock.AsyncMock()
+        message = SimpleNamespace(
+            id=12,
+            text="/download invalid_link 1 5",
+            from_user=SimpleNamespace(id=100),
+        )
+        fake_bot = SimpleNamespace(
+            client=SimpleNamespace(),
+            filter=bot.Filter(),
+        )
+        with (
+            mock.patch.object(bot, "_bot", fake_bot),
+            mock.patch.object(
+                bot, "parse_link", new=mock.AsyncMock(return_value=(None, None, None))
+            ),
+        ):
+            await bot.download_from_bot(client, message)
+
+        client.send_message.assert_awaited_once()
+        self.assertIn("Invalid chat link", client.send_message.call_args.args[1])
+
+    async def test_stop_task_edits_using_chat_id(self):
+        client = mock.AsyncMock()
+        handler = QueryHandlerStr.get_str(QueryHandler.StopDownload.value)
+        query = SimpleNamespace(
+            data=handler,
+            message=SimpleNamespace(
+                id=55,
+                from_user=SimpleNamespace(id=999999),
+                chat=SimpleNamespace(id=424242),
+            ),
+        )
+        fake_bot = SimpleNamespace(task_node={})
+        with mock.patch.object(bot, "_bot", fake_bot):
+            await bot.stop_task(client, query, handler, TaskType.Download)
+
+        client.edit_message_text.assert_awaited_once()
+        self.assertEqual(client.edit_message_text.call_args.args[0], 424242)
+        self.assertEqual(client.edit_message_text.call_args.args[1], 55)
+
+    async def test_add_filter_and_update_config_persistence(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            download_bot = bot.DownloadBot()
+            download_bot.config_path = os.path.join(tmpdir, "bot.yaml")
+
+            # Empty filters on fresh install must not create an empty bot.yaml.
+            download_bot.update_config()
+            self.assertFalse(os.path.exists(download_bot.config_path))
+
+            client = mock.AsyncMock()
+            message = SimpleNamespace(
+                id=13,
+                text="/add_filter id > 10",
+                from_user=SimpleNamespace(id=100),
+            )
+            with mock.patch.object(bot, "_bot", download_bot):
+                await bot.add_filter(client, message)
+
+            self.assertEqual(download_bot.download_filter, ["id > 10"])
+            self.assertTrue(os.path.exists(download_bot.config_path))
+            client.send_message.assert_awaited_once()
 
 
 if __name__ == "__main__":

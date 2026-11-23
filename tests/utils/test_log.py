@@ -26,3 +26,7 @@ class MetaTestCase(unittest.TestCase):
 
         result2 = LogFilter().filter(MockLog(funcName="Synced"))
         self.assertEqual(result2, True)
+
+        for name in ("in", "ok", "voke", "download"):
+            with self.subTest(funcName=name):
+                self.assertTrue(LogFilter().filter(MockLog(funcName=name)))

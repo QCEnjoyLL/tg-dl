@@ -308,6 +308,35 @@ class WebApiTestCase(unittest.TestCase):
         self.assertEqual(row["upload_speed"], "2 MB/s")
         self.assertEqual(row["eta"], "5s")
 
+    def test_completed_row_reports_active_upload_state(self):
+        download_stat.mark_download_completed(-100123, 9, "/tmp/a.mp4", 10, None)
+        upload_stat.try_start(-100123, 9, file_name="/tmp/a.mp4")
+
+        payload = self.client.get(
+            "/get_download_list?already_down=true&page=1&page_size=25"
+        ).get_json()
+
+        self.assertEqual(payload["total"], 1)
+        self.assertTrue(payload["rows"][0]["uploading"])
+
+    def test_completed_row_masks_filename_when_hide_file_name_enabled(self):
+        download_stat.mark_download_completed(
+            -100123, 10, "/downloads/private/video.mp4", 10, None
+        )
+        fake_app = mock.Mock(hide_file_name=True)
+        with mock.patch.object(web, "_application", fake_app):
+            payload = self.client.get(
+                "/get_download_list?already_down=true&page=1&page_size=25"
+            ).get_json()
+
+        self.assertEqual(payload["total"], 1)
+        row = payload["rows"][0]
+        self.assertEqual(row["filename"], "****.mp4")
+        self.assertEqual(row["save_path"], "****.mp4")
+        # The database keeps the real path so reupload_file can still read it.
+        stored = download_stat.get_completed_download(-100123, 10)
+        self.assertEqual(stored["file_name"], "/downloads/private/video.mp4")
+
     def test_download_status_reports_upload_speed_and_count(self):
         upload_stat.update(-100123, 9, percentage="10%", speed="2 MB/s")
         with mock.patch.object(web, "get_total_download_speed", return_value=1024):
@@ -743,6 +772,29 @@ class ConfigFormTestCase(_ConfigFixture):
         self.assertEqual(saved["proxy"]["hostname"], "10.0.0.1")
         self.assertEqual(saved["proxy"]["port"], 8080)
         self.assertEqual(saved["proxy"]["password"], "should-not-leak")
+
+    def test_form_accepts_float_min_free_space_gb(self):
+        response = self.client.post(
+            "/set_config_form", data=self.base_form(min_free_space_gb="1.5")
+        )
+        self.assertEqual(response.get_json()["code"], "1")
+        self.assertEqual(self.saved_config()["min_free_space_gb"], 1.5)
+
+        response_int = self.client.post(
+            "/set_config_form", data=self.base_form(min_free_space_gb="2.0")
+        )
+        self.assertEqual(response_int.get_json()["code"], "1")
+        saved_int = self.saved_config()["min_free_space_gb"]
+        self.assertEqual(saved_int, 2)
+        self.assertIsInstance(saved_int, int)
+
+        for bad in ("nan", "-1", "abc"):
+            bad_resp = self.client.post(
+                "/set_config_form", data=self.base_form(min_free_space_gb=bad)
+            )
+            payload = bad_resp.get_json()
+            self.assertEqual(payload["code"], "0", bad)
+            self.assertIn("min_free_space_gb", payload["errors"], bad)
 
 
 class WebAssetTestCase(unittest.TestCase):

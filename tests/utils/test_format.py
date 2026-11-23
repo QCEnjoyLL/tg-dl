@@ -99,6 +99,12 @@ class FormatTestCase(unittest.TestCase):
             "xasd as 2020-03-01 00:00:00 21321fszv",
         )
 
+        # Custom fmt must be forwarded to left and right recursive splits too.
+        self.assertEqual(
+            replace_date_time("from 2020.03.08 to 2020.03.09 end", "%Y/%m/%d"),
+            "from 2020/03/08 to 2020/03/09 end",
+        )
+
     def test_get_byte_from_str(self):
         # B
         self.assertEqual(get_byte_from_str("2B"), 2)

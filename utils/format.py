@@ -154,10 +154,10 @@ def replace_date_time(text: str, fmt: str = "%Y-%m-%d %H:%M:%S") -> str:
     if not res.match:
         return text
     if res.left_str:
-        res_str += replace_date_time(res.left_str)
+        res_str += replace_date_time(res.left_str, fmt)
     res_str += res.value
     if res.right_str:
-        res_str += replace_date_time(res.right_str)
+        res_str += replace_date_time(res.right_str, fmt)
 
     return res_str
 

@@ -1,6 +1,7 @@
 """Bot for media downloader"""
 
 import asyncio
+import io
 import os
 from datetime import datetime
 from typing import Callable, List, Union
@@ -28,7 +29,6 @@ from module.get_chat_history_v2 import get_chat_history_v2
 from module.language import Language, _t
 from module.pyrogram_extension import (
     check_user_permission,
-    get_utf16_length,
     parse_link,
     proc_cache_forward,
     report_bot_forward_status,
@@ -37,6 +37,7 @@ from module.pyrogram_extension import (
     set_meta_data,
     upload_telegram_chat_message,
 )
+from utils.atomic_write import write_text_atomic
 from utils.format import replace_date_time, validate_title
 from utils.meta_data import MetaData
 from utils.version_check import update_info
@@ -149,12 +150,13 @@ class DownloadBot:
 
     def update_config(self):
         """Update config from str."""
+        if not self.download_filter and not os.path.exists(self.config_path):
+            return
         self.config["download_filter"] = self.download_filter
 
-        # ``self.config_path`` is ``bot.yaml``; a hard-coded "d" here silently
-        # wrote the bot config to an unrelated file in the CWD.
-        with open(self.config_path, "w", encoding="utf-8") as yaml_file:
-            self._yaml.dump(self.config, yaml_file)
+        buf = io.StringIO()
+        self._yaml.dump(self.config, buf)
+        write_text_atomic(self.config_path, buf.getvalue())
 
     def create_client(self, app: Application) -> pyrogram.Client:
         """Build the bot client with the same transfer pool as the main one.
@@ -587,6 +589,9 @@ async def add_filter(client: pyrogram.Client, message: pyrogram.types.Message):
         None
     """
 
+    if not message.text:
+        return
+
     args = message.text.split(maxsplit=1)
     if len(args) != 2:
         await client.send_message(
@@ -598,7 +603,9 @@ async def add_filter(client: pyrogram.Client, message: pyrogram.types.Message):
     filter_str = replace_date_time(args[1])
     res, err = _bot.filter.check_filter(filter_str)
     if res:
-        _bot.app.down = args[1]
+        if args[1] not in _bot.download_filter:
+            _bot.download_filter.append(args[1])
+        _bot.update_config()
         await client.send_message(
             message.from_user.id, f"{_t('Add download filter')} : {args[1]}"
         )
@@ -607,270 +614,6 @@ async def add_filter(client: pyrogram.Client, message: pyrogram.types.Message):
             message.from_user.id, f"{err}\n{_t('Check error, please add again!')}"
         )
     return
-
-
-async def add_filter_advertisement_filter(
-    client: pyrogram.Client, message: pyrogram.types.Message
-):
-    """
-    Set the download filter of the bot.
-
-    Parameters:
-        client (pyrogram.Client): The pyrogram client.
-        message (pyrogram.types.Message): The message containing the command.
-
-    Returns:
-        None
-    """
-
-    args = message.text.split(maxsplit=1)
-    if len(args) != 2:
-        await client.send_message(
-            message.from_user.id,
-            _t("Invalid command format. Please use /add_ad filter"),
-        )
-        return
-
-    filter_str = args[1]
-
-    _bot.app.filter_advertisement_list.append(filter_str)
-    await client.send_message(message.from_user.id, f"{_t('Add filter')} : {args[1]}")
-    _bot.app.update_config(True)
-
-
-async def remove_filter_advertisement_filter(
-    client: pyrogram.Client, message: pyrogram.types.Message
-):
-    """
-    Add or remove advertisement filter
-    """
-
-    args = message.text.split(maxsplit=1)
-    if len(args) != 2:
-        await client.send_message(
-            message.from_user.id,
-            _t("Invalid command format. Please use /remove_ad filter"),
-        )
-        return
-
-    filter_str = args[1]
-    if filter_str in _bot.app.filter_advertisement_list:
-        _bot.app.filter_advertisement_list.remove(filter_str)
-        await client.send_message(
-            message.from_user.id, f"{_t('Remove filter')} : {args[1]}"
-        )
-
-        _bot.app.update_config(True)
-    else:
-        await client.send_message(
-            message.from_user.id, f"{_t('Filter')} : {args[1]} {_t('not exist')}"
-        )
-
-
-async def set_add_advertisement(
-    client: pyrogram.Client, message: pyrogram.types.Message
-):
-    """
-    Add or remove advertisement filter
-    """
-
-    args = message.text.split(maxsplit=2)
-    if len(args) < 2:
-        await client.send_message(
-            message.from_user.id,
-            _t("Invalid command format. Please use /set_ad mesage_link advertisement"),
-        )
-        return
-
-    mesage_link = args[1]
-    advertisement_str = None if len(args) < 3 else args[2]
-
-    try:
-        chat_id, _, _ = await parse_link(_bot.client, mesage_link)
-        _bot.app.group_add_advertisement[chat_id] = advertisement_str
-        _bot.app.update_config(True)
-        await client.send_message(
-            message.from_user.id, f"{_t('Set advertisement')} : {advertisement_str}"
-        )
-    except Exception as e:
-        await client.send_message(
-            message.from_user.id, f"{_t('Parse link error')}: {e}"
-        )
-        return
-
-
-class MessageProcessor:
-    """Helper class for processing message captions and entities."""
-
-    def __init__(self, raw_message, filter_str):
-        self.raw_message = raw_message
-        self.raw_caption = raw_message.caption
-        self.filter_str = filter_str
-        self.raw_filter_str = pyrogram.parser.utils.add_surrogates(filter_str)
-        self.raw_caption_str = pyrogram.parser.utils.add_surrogates(raw_message.caption)
-        self.idx = self.raw_caption_str.find(self.raw_filter_str)
-        self.start_offset = self.idx
-        self.end_offset = self.idx + get_utf16_length(filter_str)
-        self.filtered_entities = []
-
-    # pylint: disable = R0916
-    def process_entities(self):
-        """Process and filter message entities."""
-        for entity in self.raw_message.caption_entities:
-            cur_start_offset = entity.offset
-            cur_end_offset = entity.offset + entity.length
-
-            # Check if entity should be included
-            if (
-                (
-                    cur_start_offset >= self.start_offset
-                    and cur_end_offset <= self.end_offset
-                )
-                or (
-                    cur_start_offset < self.start_offset
-                    and cur_end_offset > self.start_offset
-                )
-                or (
-                    cur_start_offset < self.end_offset
-                    and cur_end_offset > self.end_offset
-                )
-            ):
-                self.filtered_entities.append(entity)
-
-        self.filtered_entities.sort(key=lambda x: x.offset)
-
-    def get_total_span(self):
-        """Calculate the total span for text extraction."""
-        if self.filtered_entities:
-            first_entity = self.filtered_entities[0]
-            last_entity = self.filtered_entities[-1]
-            return (
-                min(self.start_offset, first_entity.offset),
-                max(self.end_offset, last_entity.offset + last_entity.length),
-            )
-        return (self.start_offset, self.end_offset)
-
-    def extract_text(self, total_span):
-        """Extract and process text with adjusted entity offsets."""
-        text = self.raw_caption[total_span[0] : total_span[1]]
-        for entity in self.filtered_entities:
-            entity.offset -= total_span[0]
-        return pyrogram.parser.Parser.unparse(text, self.filtered_entities, True)
-
-
-async def proc_replace_advertisement(mesage_link: str, filter_str: str):
-    """
-    Process and replace advertisement content in a message.
-
-    This function takes a message link and a filter string, retrieves the message,
-    and processes its caption by handling entities and filtering advertisement content.
-    It preserves the formatting and entities while replacing the specified filter text.
-
-    Args:
-        mesage_link (str): The link to the Telegram message
-        filter_str (str): The string to filter/replace in the message caption
-
-    Returns:
-        str: The processed caption with preserved formatting and entities
-
-    Raises:
-        Exception: If there are issues parsing the message link or accessing the message
-    """
-    chat_id, message_id, _ = await parse_link(_bot.client, mesage_link)
-    raw_message = await retry(_bot.client.get_messages, args=(chat_id, message_id))
-
-    processor = MessageProcessor(raw_message, filter_str)
-    processor.process_entities()
-    total_span = processor.get_total_span()
-    return processor.extract_text(total_span)
-
-
-async def add_replace_advertisement_filter(
-    client: pyrogram.Client, message: pyrogram.types.Message
-):
-    """
-    Set the download filter of the bot.
-
-    Parameters:
-        client (pyrogram.Client): The pyrogram client.
-        message (pyrogram.types.Message): The message containing the command.
-
-    Returns:
-        None
-    """
-
-    args = message.text.split(maxsplit=2)
-    if len(args) != 3:
-        await client.send_message(
-            message.from_user.id,
-            _t("Invalid command format. Please use /add_replace_ad your filter"),
-        )
-        return
-
-    mesage_link = args[1]
-    filter_str = args[2]
-
-    try:
-        filter_str = await proc_replace_advertisement(mesage_link, filter_str)
-        _bot.app.replace_advertisement_list.append(filter_str)
-        _bot.app.update_config(True)
-        await client.send_message(
-            message.from_user.id, f"{_t('Add filter')} : {filter_str}"
-        )
-    except Exception as e:
-        await client.send_message(
-            message.from_user.id, f"{_t('Add filter')} : {filter_str}\n{e}"
-        )
-        return
-
-
-async def remove_replace_advertisement_filter(
-    client: pyrogram.Client, message: pyrogram.types.Message
-):
-    """
-    Set the download filter of the bot.
-
-    Parameters:
-        client (pyrogram.Client): The pyrogram client.
-        message (pyrogram.types.Message): The message containing the command.
-
-    Returns:
-        None
-    """
-
-    args = message.text.split(maxsplit=2)
-    if len(args) != 3:
-        await client.send_message(
-            message.from_user.id,
-            _t(
-                "Invalid command format. Please use /remove_replace_ad mesage_link advertisement_filter"
-            ),
-        )
-        return
-
-    mesage_link = args[1]
-    filter_str = args[2]
-
-    try:
-        filter_str = await proc_replace_advertisement(mesage_link, filter_str)
-
-        if filter_str in _bot.app.replace_advertisement_list:
-            _bot.app.replace_advertisement_list.remove(filter_str)
-            await client.send_message(
-                message.from_user.id, f"{_t('Remove filter')} : {filter_str}"
-            )
-        else:
-            # The old code appended the filter here (the opposite of what
-            # /remove_replace_ad means) and called send_message() without args.
-            await client.send_message(
-                message.from_user.id, f"{_t('Filter')} : {filter_str} not exist"
-            )
-        _bot.app.update_config(True)
-    except Exception as e:
-        await client.send_message(
-            message.from_user.id, f"{_t('Add filter')} : {filter_str}\n{e}"
-        )
-        return
 
 
 async def direct_download(
@@ -954,11 +697,12 @@ async def download_from_link(client: pyrogram.Client, message: pyrogram.types.Me
         "<i>https://t.me/12000000/1</i>\n\n"
     )
 
-    text = message.text.split()
+    text = (message.text or "").split()
     if len(text) != 1:
         await client.send_message(
             message.from_user.id, msg, parse_mode=pyrogram.enums.ParseMode.HTML
         )
+        return
 
     chat_id, message_id, _ = await parse_link(_bot.client, text[0])
 
@@ -973,7 +717,7 @@ async def download_from_link(client: pyrogram.Client, message: pyrogram.types.Me
             if download_message:
                 await direct_download(_bot, entity.id, message, download_message)
             else:
-                client.send_message(
+                await client.send_message(
                     message.from_user.id,
                     f"{_t('From')} {entity.title} {_t('download')} {message_id} {_t('error')}!",
                     reply_to_message_id=message.id,
@@ -1021,9 +765,13 @@ async def download_from_bot(client: pyrogram.Client, message: pyrogram.types.Mes
     limit = 0
     if end_offset_id:
         if end_offset_id < start_offset_id:
-            raise ValueError(
-                f"end_offset_id < start_offset_id, {end_offset_id} < {start_offset_id}"
+            await client.send_message(
+                message.from_user.id,
+                f"end_offset_id({end_offset_id}) < start_offset_id({start_offset_id}), "
+                f"end_offset_id {_t('must be greater than')} offset_id",
+                reply_to_message_id=message.id,
             )
+            return
 
         limit = end_offset_id - start_offset_id + 1
 
@@ -1038,9 +786,17 @@ async def download_from_bot(client: pyrogram.Client, message: pyrogram.types.Mes
             )
             return
     try:
+        entity = None
         chat_id, _, _ = await parse_link(_bot.client, url)
         if chat_id:
             entity = await _bot.client.get_chat(chat_id)
+        if not entity:
+            await client.send_message(
+                message.from_user.id,
+                _t("Invalid chat link"),
+                reply_to_message_id=message.id,
+            )
+            return
         if entity:
             chat_title = entity.title
             reply_message = f"from {chat_title} "
@@ -1501,21 +1257,21 @@ async def stop_task(
                 ],
             )
             await client.edit_message_text(
-                query.message.from_user.id,
+                query.message.chat.id,
                 query.message.id,
                 f"{_t('Stop')} {_t(task_type.name)}...",
                 reply_markup=InlineKeyboardMarkup(buttons),
             )
         else:
             await client.edit_message_text(
-                query.message.from_user.id,
+                query.message.chat.id,
                 query.message.id,
                 f"{_t('No Task')}",
             )
     else:
         task_id = query.data.split(" ")[2]
         await client.edit_message_text(
-            query.message.from_user.id,
+            query.message.chat.id,
             query.message.id,
             f"{_t('Stop')} {_t(task_type.name)}...",
         )

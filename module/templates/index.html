@@ -230,6 +230,15 @@
       <span>全部任务已暂停：传输与速度已冻结，点右上角「继续」恢复。</span>
     </div>
 
+    <div class="paused-banner disk-banner" id="disk-banner" role="status" hidden>
+      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 9v4M12 17h.01" />
+        <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
+      </svg>
+      <span id="disk-banner-text">磁盘空间不足，下载已暂停，等待上传释放空间…</span>
+    </div>
+
     <section class="panel" aria-label="任务列表">
       <div class="table-scroll" id="table-scroll" tabindex="0" role="region" aria-label="任务表格">
         <table class="table" id="table-downloading" role="tabpanel" aria-labelledby="tab-downloading">

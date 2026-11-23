@@ -557,8 +557,8 @@ def mark_download_completed(
 
         now = int(time.time())
         row = dict(row or {})
-        final_name = row.get("file_name") or file_name or ""
-        final_size = int(row.get("total_size") or total_size or 0)
+        final_name = file_name or row.get("file_name") or ""
+        final_size = int(total_size or row.get("total_size") or 0)
         upload_success = 1 if upload_state else 0
 
         conn = _get_db()

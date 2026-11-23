@@ -32,7 +32,7 @@ def write_text_atomic(path: str, text: str) -> None:
     """Write ``text`` to ``path`` without ever truncating a previous version."""
     directory = os.path.dirname(path) or "."
     handle, temp_path = tempfile.mkstemp(
-        dir=directory, prefix=".config-", suffix=".yaml"
+        dir=directory, prefix=".tgdl-tmp-", suffix=".tmp"
     )
     try:
         with os.fdopen(handle, "w", encoding="utf-8") as temp_file:

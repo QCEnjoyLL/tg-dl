@@ -4,10 +4,17 @@ import unittest
 from unittest import mock
 
 import media_downloader as md
-from module.app import DownloadStatus
+from module import upload_stat
+from module.app import DownloadStatus, TaskNode
 
 
 class DownloadTaskFinalizeTestCase(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        upload_stat.clear()
+
+    def tearDown(self):
+        upload_stat.clear()
+
     async def test_exception_still_records_failure_and_finishes_task(self):
         node = mock.Mock()
         node.chat_id = -100123
@@ -182,3 +189,40 @@ class DownloadTaskFinalizeTestCase(unittest.IsolatedAsyncioTestCase):
             )
 
         update_mock.assert_not_called()
+
+    async def test_background_upload_skips_duplicate_active_upload(self):
+        node = TaskNode(chat_id=-100123)
+        upload_stat.try_start(-100123, 44, file_name="cloud.mp4")
+
+        with mock.patch.object(
+            md.app, "upload_file", new=mock.AsyncMock(return_value="uploaded")
+        ) as upload_mock:
+            await md._run_cloud_upload(  # pylint: disable = W0212
+                node, 44, "/tmp/cloud.mp4", "cloud.mp4"
+            )
+
+        upload_mock.assert_not_awaited()
+        # Rejecting the duplicate must leave the in-progress slot intact.
+        self.assertTrue(upload_stat.is_uploading(-100123, 44))
+
+    async def test_background_upload_updates_node_counters_and_bot_card(self):
+        node = TaskNode(chat_id=-100123, reply_message_id=99, bot=mock.Mock())
+        node.is_running = True
+        node.total_task = 1
+        node.total_download_task = 1
+        node.pending_upload_count = 1
+        node.cloud_drive_upload_stat_dict[44] = mock.Mock()
+
+        with mock.patch.object(
+            md.app, "upload_file", new=mock.AsyncMock(return_value="uploaded")
+        ), mock.patch.object(md, "update_completed_upload_state"), mock.patch.object(
+            md, "report_bot_status", new=mock.AsyncMock()
+        ) as report_mock:
+            await md._run_cloud_upload(  # pylint: disable = W0212
+                node, 44, "/tmp/cloud.mp4", "cloud.mp4"
+            )
+
+        self.assertEqual(node.pending_upload_count, 0)
+        self.assertNotIn(44, node.cloud_drive_upload_stat_dict)
+        self.assertTrue(node.is_finish())
+        report_mock.assert_awaited_once_with(node.bot, node, immediate_reply=True)

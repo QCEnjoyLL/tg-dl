@@ -63,6 +63,17 @@ class UploadStatTestCase(unittest.TestCase):
     def test_total_speed_is_zero_without_rows(self):
         self.assertEqual(upload_stat.total_speed(), 0)
 
+    def test_try_start_and_is_uploading_deduplicate_across_str_and_int(self):
+        self.assertFalse(upload_stat.is_uploading(-100123, 42))
+        self.assertTrue(upload_stat.try_start(-100123, 42, file_name="a.mp4"))
+        self.assertTrue(upload_stat.is_uploading("-100123", 42))
+        # Second claim on the same message (even as str chat id) is rejected.
+        self.assertFalse(upload_stat.try_start("-100123", 42, file_name="a.mp4"))
+
+        upload_stat.remove("-100123", 42)
+        self.assertFalse(upload_stat.is_uploading(-100123, 42))
+        self.assertTrue(upload_stat.try_start(-100123, 42, file_name="a.mp4"))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -13,13 +13,15 @@ from setuptools import find_packages, setup
 from utils import __version__
 
 setup(
-    name="telegram-media-downloader",
+    name="tg-dl",
     version=__version__,
-    author="tangyoha",
-    author_email="tangyoha@outlook.com",
-    description="A simple script to download media from telegram",
-    url="https://github.com/tangyoha/telegram_media_downloader",
-    download_url="https://github.com/tangyoha/telegram_media_downloader/releases/latest",
+    author="QCEnjoyLL",
+    description=(
+        "Telegram media downloader with bot, Web UI and a fixed rclone "
+        "upload/delete pipeline"
+    ),
+    url="https://github.com/QCEnjoyLL/tg-dl",
+    download_url="https://github.com/QCEnjoyLL/tg-dl/releases/latest",
     py_modules=["media_downloader"],
     packages=find_packages(include=["module", "module.*", "utils", "utils.*"]),
     package_data={
@@ -36,7 +38,6 @@ setup(
         "Pyrogram @ https://github.com/tangyoha/pyrogram/archive/"
         "51a100c5e2745471ee89c1dd96dd69962973108b.zip"
         "#sha256=30e55236a741deec461a952fec638e2857e4cf7bb2d8c6616d41fd2e4e0685ca",
-        "PyYAML==6.0.2",
         "rich==12.5.1",
         "PyTgCrypto==1.2.6",
         "loguru==0.6.0",
@@ -45,7 +46,6 @@ setup(
         "ply==3.11",
         "ruamel.yaml==0.17.21",
         "flask-login==0.6.3",
-        "requests==2.32.3",
     ],
     classifiers=[
         "Development Status :: 5 - Production/Stable",
@@ -70,9 +70,8 @@ setup(
         "Topic :: Software Development :: Libraries :: Python Modules",
     ],
     project_urls={
-        "Tracker": "https://github.com/tangyoha/telegram_media_downloader/issues",
-        "Community": "https://t.me/TeegramMediaDownload",
-        "Source": "https://github.com/tangyoha/telegram_media_downloader",
+        "Tracker": "https://github.com/QCEnjoyLL/tg-dl/issues",
+        "Source": "https://github.com/QCEnjoyLL/tg-dl",
     },
     python_requires=">=3.9",
 )

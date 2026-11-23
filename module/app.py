@@ -186,6 +186,8 @@ class TaskNode:
         self.client = None
         self.upload_success_count: int = 0
         self.upload_skipped_count: int = 0
+        #: Background cloud uploads submitted by this node that have not finished yet.
+        self.pending_upload_count: int = 0
         self.is_stop_transmission = False
         self.media_group_ids: dict = {}
         self.media_group_ids_lock: Lock = Lock()
@@ -216,6 +218,7 @@ class TaskNode:
             and not self.is_scanning
             and self.task_type != TaskType.ListenForward
             and self.total_task == self.total_download_task
+            and self.pending_upload_count <= 0
         )
 
     def stop_transmission(self):
@@ -454,6 +457,9 @@ class Application:
         )
         self.group_add_advertisement: dict = {}
         self.forward_limit_call = LimitCall(max_limit_call_times=33)
+        self._log_sink_id: Optional[int] = None
+        self._log_file: Optional[str] = None
+        self._startup_chat_config = None
 
         self.loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self.loop)
@@ -711,6 +717,11 @@ class Application:
                 value.download_filter
             )
 
+        if "chat" in _config:
+            self._startup_chat_config = self._to_plain(_config["chat"])
+        elif isinstance(self.config, dict) and "chat" in self.config:
+            self._startup_chat_config = self._to_plain(self.config["chat"])
+
         return True
 
     def assign_app_data(self, app_data: dict) -> bool:
@@ -957,12 +968,23 @@ class Application:
         immediate: bool
             If update config immediate,default True
         """
-        # TODO: fix this not exist chat
-        if not self.app_data.get("chat") and self.config.get("chat"):
-            self.app_data["chat"] = [
-                {"chat_id": i} for i in range(0, len(self.config["chat"]))
-            ]
-        idx = 0
+        app_data_chats = self.app_data.get("chat")
+        if not isinstance(app_data_chats, list):
+            app_data_chats = []
+            self.app_data["chat"] = app_data_chats
+
+        config_chats = self.config.get("chat")
+        config_by_id = {}
+        if isinstance(config_chats, list):
+            for entry in config_chats:
+                if isinstance(entry, dict) and "chat_id" in entry:
+                    config_by_id[str(entry["chat_id"]).strip()] = entry
+
+        data_by_id = {}
+        for entry in app_data_chats:
+            if isinstance(entry, dict) and "chat_id" in entry:
+                data_by_id[str(entry["chat_id"]).strip()] = entry
+
         # pylint: disable = R1733
         for key, value in self.chat_download_config.items():
             # pylint: disable = W0201
@@ -983,23 +1005,24 @@ class Application:
 
             self.chat_download_config[key].ids_to_retry = list(unfinished_ids)
 
-            if idx >= len(self.app_data["chat"]):
-                self.app_data["chat"].append({})
-
+            key_str = str(key).strip()
             if value.finish_task:
-                # The Web UI form can change the chat list without a restart;
-                # the running task nodes still refer to the old order, so align
-                # the config list defensively instead of indexing out of range.
-                config_chats = self.config.setdefault("chat", [])
-                while len(config_chats) <= idx:
-                    config_chats.append({})
-                config_chats[idx]["last_read_message_id"] = (
-                    value.last_read_message_id + 1
-                )
+                # Match by chat_id instead of list index: the Web UI form can
+                # reorder, add, or remove chats while the downloader is running.
+                cfg_entry = config_by_id.get(key_str)
+                if cfg_entry is not None:
+                    cfg_entry["last_read_message_id"] = (
+                        value.last_read_message_id + 1
+                    )
 
-            self.app_data["chat"][idx]["chat_id"] = key
-            self.app_data["chat"][idx]["ids_to_retry"] = value.ids_to_retry
-            idx += 1
+            data_entry = data_by_id.get(key_str)
+            if data_entry is None:
+                data_entry = {"chat_id": key, "ids_to_retry": value.ids_to_retry}
+                app_data_chats.append(data_entry)
+                data_by_id[key_str] = data_entry
+            else:
+                data_entry["chat_id"] = key
+                data_entry["ids_to_retry"] = value.ids_to_retry
 
         self.config["save_path"] = self.save_path
         self.config["file_path_prefix"] = self.file_path_prefix
@@ -1106,6 +1129,47 @@ class Application:
             )
         return formats
 
+    @staticmethod
+    def _to_plain(value):
+        """Convert ruamel.yaml containers into plain Python dicts/lists."""
+        if isinstance(value, dict):
+            return {k: Application._to_plain(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [Application._to_plain(v) for v in value]
+        return value
+
+    def configure_file_logger(
+        self, log_file: Optional[str] = None, level: Optional[str] = None
+    ) -> bool:
+        """Register or reconfigure the rotating ``tdl.log`` loguru sink."""
+        if log_file:
+            self._log_file = log_file
+
+        target_level = str(level or self.log_level or "INFO").strip().upper()
+        try:
+            logger.level(target_level)
+        except ValueError:
+            logger.warning(f"invalid log_level: {target_level!r}")
+            return False
+
+        if not self._log_file:
+            return True
+
+        if self._log_sink_id is not None:
+            try:
+                logger.remove(self._log_sink_id)
+            except ValueError:
+                pass
+            self._log_sink_id = None
+
+        self._log_sink_id = logger.add(
+            self._log_file,
+            rotation="10 MB",
+            retention="10 days",
+            level=target_level,
+        )
+        return True
+
     def reload_hot_config(self, config: dict) -> Tuple[List[str], List[str]]:
         """Apply the settings that can change without restarting the process.
 
@@ -1122,6 +1186,7 @@ class Application:
         applied: List[str] = []
         restart: List[str] = []
 
+        prev_config = self.config if isinstance(self.config, dict) else {}
         # Keep the in-memory copy in sync so shutdown persistence writes the
         # values the operator just saved.
         self.config = config
@@ -1139,66 +1204,102 @@ class Application:
                 applied.append("file_formats")
 
         if "file_path_prefix" in config:
-            self.file_path_prefix = list(config["file_path_prefix"])
-            applied.append("file_path_prefix")
+            new_path_prefix = list(config["file_path_prefix"] or [])
+            if new_path_prefix != list(self.file_path_prefix):
+                self.file_path_prefix = new_path_prefix
+                applied.append("file_path_prefix")
 
         if "file_name_prefix" in config:
-            self.file_name_prefix = list(config["file_name_prefix"])
-            applied.append("file_name_prefix")
+            new_name_prefix = list(config["file_name_prefix"] or [])
+            if new_name_prefix != list(self.file_name_prefix):
+                self.file_name_prefix = new_name_prefix
+                applied.append("file_name_prefix")
 
         if "file_name_prefix_split" in config:
-            self.file_name_prefix_split = str(config["file_name_prefix_split"])
-            applied.append("file_name_prefix_split")
+            new_split = str(config["file_name_prefix_split"])
+            if new_split != self.file_name_prefix_split:
+                self.file_name_prefix_split = new_split
+                applied.append("file_name_prefix_split")
 
         if "hide_file_name" in config:
-            self.hide_file_name = bool(config["hide_file_name"])
-            applied.append("hide_file_name")
+            new_hide = bool(config["hide_file_name"])
+            if new_hide != bool(self.hide_file_name):
+                self.hide_file_name = new_hide
+                applied.append("hide_file_name")
 
         if "enable_download_txt" in config:
-            self.enable_download_txt = bool(config["enable_download_txt"])
-            applied.append("enable_download_txt")
+            new_txt = bool(config["enable_download_txt"])
+            if new_txt != bool(self.enable_download_txt):
+                self.enable_download_txt = new_txt
+                applied.append("enable_download_txt")
 
         if "after_upload_telegram_delete" in config:
-            self.after_upload_telegram_delete = bool(
-                config["after_upload_telegram_delete"]
-            )
-            applied.append("after_upload_telegram_delete")
+            new_delete = bool(config["after_upload_telegram_delete"])
+            if new_delete != bool(self.after_upload_telegram_delete):
+                self.after_upload_telegram_delete = new_delete
+                applied.append("after_upload_telegram_delete")
 
         if "drop_no_audio_video" in config:
-            self.drop_no_audio_video = bool(config["drop_no_audio_video"])
-            applied.append("drop_no_audio_video")
+            new_drop = bool(config["drop_no_audio_video"])
+            if new_drop != bool(self.drop_no_audio_video):
+                self.drop_no_audio_video = new_drop
+                applied.append("drop_no_audio_video")
 
         if "log_level" in config:
-            self.log_level = str(config["log_level"])
-            applied.append("log_level")
+            new_level = str(config["log_level"] or "").strip().upper()
+            try:
+                logger.level(new_level)
+            except ValueError:
+                logger.warning(f"invalid log_level: {config['log_level']!r}")
+            else:
+                if new_level != str(self.log_level or "INFO").strip().upper():
+                    self.log_level = new_level
+                    self.configure_file_logger(level=new_level)
+                    applied.append("log_level")
 
         if "max_concurrent_chunks" in config:
             # New downloads pick this up immediately; ranges already in flight
             # keep the split they started with.
-            self.max_concurrent_chunks = set_chunk_concurrency(
-                config["max_concurrent_chunks"]
-            )
-            applied.append("max_concurrent_chunks")
+            prev_chunks = self.max_concurrent_chunks
+            new_chunks = set_chunk_concurrency(config["max_concurrent_chunks"])
+            self.max_concurrent_chunks = new_chunks
+            if new_chunks != prev_chunks:
+                applied.append("max_concurrent_chunks")
 
         if "min_free_space_gb" in config:
             # The gate reads the reserve on every check, so this is live.
-            self.min_free_space_gb = self._parse_min_free_space_gb(
-                config["min_free_space_gb"]
-            )
-            applied.append("min_free_space_gb")
-            # Lazily imported: the guard belongs to the runtime, not the config.
-            from module import disk_guard  # pylint: disable = C0415
+            new_gb = self._parse_min_free_space_gb(config["min_free_space_gb"])
+            if new_gb != self.min_free_space_gb:
+                self.min_free_space_gb = new_gb
+                applied.append("min_free_space_gb")
+                # Lazily imported: the guard belongs to the runtime, not the config.
+                from module import disk_guard  # pylint: disable = C0415
 
-            disk_guard.set_reserve(self.min_free_space_bytes)
+                disk_guard.set_reserve(self.min_free_space_bytes)
+
+        if "forward_limit" in config:
+            try:
+                new_limit = int(config["forward_limit"])
+            except (TypeError, ValueError):
+                logger.warning(f"invalid forward_limit: {config['forward_limit']!r}")
+            else:
+                if (
+                    new_limit >= 1
+                    and new_limit != self.forward_limit_call.max_limit_call_times
+                ):
+                    self.forward_limit_call.max_limit_call_times = new_limit
+                    applied.append("forward_limit")
 
         if "date_format" in config:
+            new_fmt = str(config["date_format"])
             try:
-                datetime(2023, 10, 31).strftime(str(config["date_format"]))
+                datetime(2023, 10, 31).strftime(new_fmt)
             except Exception as e:  # pylint: disable = W0703
                 logger.warning(f"config date format error: {e}")
             else:
-                self.date_format = str(config["date_format"])
-                applied.append("date_format")
+                if new_fmt != self.date_format:
+                    self.date_format = new_fmt
+                    applied.append("date_format")
 
         if "language" in config:
             try:
@@ -1206,30 +1307,35 @@ class Application:
             except KeyError:
                 logger.warning(f"unknown language: {config['language']}")
             else:
-                self.set_language(language)
-                applied.append("language")
+                if language != self.language:
+                    self.set_language(language)
+                    applied.append("language")
 
         if "filter_advertisement_list" in config:
-            self.filter_advertisement_list = (
+            new_filter_ads = (
                 yaml.comments.CommentedSeq(config["filter_advertisement_list"])
                 if config["filter_advertisement_list"]
                 else yaml.comments.CommentedSeq([])
             )
-            applied.append("filter_advertisement_list")
+            if list(new_filter_ads) != list(self.filter_advertisement_list):
+                self.filter_advertisement_list = new_filter_ads
+                applied.append("filter_advertisement_list")
 
         if "replace_advertisement_list" in config:
-            self.replace_advertisement_list = (
+            new_replace_ads = (
                 yaml.comments.CommentedSeq(config["replace_advertisement_list"])
                 if config["replace_advertisement_list"]
                 else yaml.comments.CommentedSeq([])
             )
-            applied.append("replace_advertisement_list")
+            if list(new_replace_ads) != list(self.replace_advertisement_list):
+                self.replace_advertisement_list = new_replace_ads
+                applied.append("replace_advertisement_list")
 
         if "group_add_advertisement" in config:
-            self.group_add_advertisement = dict(
-                config["group_add_advertisement"] or {}
-            )
-            applied.append("group_add_advertisement")
+            new_group_ads = dict(config["group_add_advertisement"] or {})
+            if new_group_ads != dict(self.group_add_advertisement or {}):
+                self.group_add_advertisement = new_group_ads
+                applied.append("group_add_advertisement")
 
         if "web_login_secret" in config:
             new_secret = str(config["web_login_secret"] or "")
@@ -1243,33 +1349,93 @@ class Application:
             elif new_secret != self.web_login_secret:
                 self.web_login_secret = new_secret
                 applied.append("web_login_secret")
+        elif "web_login_secret" in prev_config and self.web_login_secret:
+            restart.append("web_login_secret")
 
         upload_drive = config.get("upload_drive")
         if isinstance(upload_drive, dict):
             drive = self.cloud_drive_config
+            drive_changed = False
             if "enable_upload_file" in upload_drive:
-                drive.enable_upload_file = bool(upload_drive["enable_upload_file"])
+                new_enable = bool(upload_drive["enable_upload_file"])
+                if new_enable != bool(drive.enable_upload_file):
+                    drive.enable_upload_file = new_enable
+                    drive_changed = True
             if upload_drive.get("upload_adapter"):
-                drive.upload_adapter = upload_drive["upload_adapter"]
+                new_adapter = upload_drive["upload_adapter"]
+                if new_adapter != drive.upload_adapter:
+                    drive.upload_adapter = new_adapter
+                    drive_changed = True
             if upload_drive.get("remote_dir"):
-                drive.remote_dir = upload_drive["remote_dir"]
+                new_remote = upload_drive["remote_dir"]
+                if new_remote != drive.remote_dir:
+                    drive.remote_dir = new_remote
+                    drive_changed = True
             if upload_drive.get("rclone_path"):
-                drive.rclone_path = upload_drive["rclone_path"]
+                new_rclone = upload_drive["rclone_path"]
+                if new_rclone != drive.rclone_path:
+                    drive.rclone_path = new_rclone
+                    drive_changed = True
             if "before_upload_file_zip" in upload_drive:
-                drive.before_upload_file_zip = bool(
-                    upload_drive["before_upload_file_zip"]
-                )
+                new_zip = bool(upload_drive["before_upload_file_zip"])
+                if new_zip != bool(drive.before_upload_file_zip):
+                    drive.before_upload_file_zip = new_zip
+                    drive_changed = True
             if "after_upload_file_delete" in upload_drive:
-                drive.after_upload_file_delete = bool(
-                    upload_drive["after_upload_file_delete"]
-                )
+                new_del = bool(upload_drive["after_upload_file_delete"])
+                if new_del != bool(drive.after_upload_file_delete):
+                    drive.after_upload_file_delete = new_del
+                    drive_changed = True
             if "hash_check" in upload_drive:
-                drive.hash_check = bool(upload_drive["hash_check"])
-            drive.dir_cache.clear()
-            applied.append("upload_drive")
+                new_hash = bool(upload_drive["hash_check"])
+                if new_hash != bool(drive.hash_check):
+                    drive.hash_check = new_hash
+                    drive_changed = True
+            if drive_changed:
+                drive.dir_cache.clear()
+                applied.append("upload_drive")
 
         # Everything below builds a client, a task node or the HTTP listener at
         # startup, so a running process can only pick it up after a restart.
+        def _same_int(a, b) -> bool:
+            try:
+                return int(a) == int(b)
+            except (TypeError, ValueError):
+                return str(a or "") == str(b or "")
+
+        def _is_restart_changed(key: str, val) -> bool:
+            if key in ("api_id", "api_hash", "bot_token", "save_path", "web_host"):
+                return str(val or "") != str(getattr(self, key) or "")
+            if key == "chat_id":
+                return str(val or "") != str(self._chat_id or "")
+            if key == "chat":
+                baseline = (
+                    self._startup_chat_config
+                    if self._startup_chat_config is not None
+                    else (
+                        self._to_plain(prev_config.get("chat"))
+                        if "chat" in prev_config
+                        else None
+                    )
+                )
+                return self._to_plain(val) != baseline
+            if key == "proxy":
+                return self._to_plain(val or {}) != self._to_plain(self.proxy or {})
+            if key in (
+                "web_port",
+                "max_download_task",
+                "max_concurrent_transmissions",
+                "start_timeout",
+            ):
+                return not _same_int(val, getattr(self, key))
+            if key == "allowed_user_ids":
+                new_ids = [str(x).strip() for x in (val or [])]
+                cur_ids = [str(x).strip() for x in (self.allowed_user_ids or [])]
+                return new_ids != cur_ids
+            if key in ("restart_program", "debug_web"):
+                return bool(val) != bool(getattr(self, key))
+            return False
+
         for key in (
             "api_id",
             "api_hash",
@@ -1283,13 +1449,16 @@ class Application:
             "max_download_task",
             "max_concurrent_transmissions",
             "allowed_user_ids",
-            "forward_limit",
             "start_timeout",
             "restart_program",
             "debug_web",
         ):
             if key in config:
-                restart.append(key)
+                if _is_restart_changed(key, config[key]):
+                    restart.append(key)
+            elif key in prev_config and key != "chat_id":
+                if _is_restart_changed(key, None):
+                    restart.append(key)
 
         return applied, restart
 

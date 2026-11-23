@@ -34,13 +34,14 @@ from typing import List, Optional, Tuple
 from loguru import logger
 
 from module import pyrogram_guard
+from utils.atomic_write import write_text_atomic
 
 #: One range == one in-flight GetFile request; going past this mostly buys
 #: FloodWait instead of bandwidth.
 MAX_CHUNK_CONCURRENCY = 16
 
 #: Sidecar next to ``<file>.temp`` that stores the per-range byte counts.
-STATE_SUFFIX = ".json"
+STATE_SUFFIX = pyrogram_guard.PARALLEL_STATE_SUFFIX
 
 #: Minimum seconds between two sidecar writes while chunks are arriving.
 STATE_SAVE_INTERVAL = 2.0
@@ -106,8 +107,7 @@ def _write_state(state_path: str, state: List[int]) -> None:
     if not state_path:
         return
     try:
-        with open(state_path, "w", encoding="utf-8") as state_file:
-            json.dump(list(state), state_file)
+        write_text_atomic(state_path, json.dumps(list(state)))
     except OSError as error:
         logger.debug(f"could not save download state {state_path}: {error}")
 
@@ -171,6 +171,7 @@ class _ChunkWriter:
         self._last_save = 0.0
         # Bytes already on disk from a previous attempt count as progress too.
         self.received = sum(self._state)
+        self._reported = self.received
 
     def state_of(self, index: int) -> int:
         """Bytes of range ``index`` a previous attempt already wrote."""
@@ -184,11 +185,12 @@ class _ChunkWriter:
             self._file.seek(offset)
             self._file.write(chunk)
             self.received += len(chunk)
-            received = self.received
 
         if self._progress is None:
             return
         async with self._progress_lock:
+            received = max(self._reported, self.received)
+            self._reported = received
             await self._progress(received, self._size, *self._progress_args)
 
     def mark(self, index: int, received: int) -> None:

@@ -13,6 +13,7 @@ from typing import Optional, Tuple, Union
 
 from flask import Flask, jsonify, redirect, render_template, request
 from flask_login import LoginManager, UserMixin, login_required, login_user, logout_user
+from loguru import logger as app_log
 from ruamel import yaml
 from werkzeug.security import check_password_hash
 
@@ -49,7 +50,6 @@ from utils import version_check
 
 log = logging.getLogger("werkzeug")
 log.setLevel(logging.ERROR)
-app_log = logging.getLogger(__name__)
 
 _yaml = yaml.YAML()
 
@@ -136,7 +136,7 @@ def run_web_server(app: Application, host: str):
     debug = bool(app.debug_web) and loopback
     if app.debug_web and not loopback:
         app_log.warning(
-            "debug_web=true would expose Werkzeug's interactive debugger on %s; "
+            "debug_web=true would expose Werkzeug's interactive debugger on {}; "
             "ignoring it. Bind to 127.0.0.1 if you really need the debugger.",
             host,
         )
@@ -158,7 +158,7 @@ def _effective_web_host(app: Application) -> str:
     if host not in ("127.0.0.1", "localhost", "::1"):
         app_log.warning(
             "web_login_secret is empty; forcing the Web UI to listen on "
-            "127.0.0.1 instead of %s. Set web_login_secret to expose it.",
+            "127.0.0.1 instead of {}. Set web_login_secret to expose it.",
             host,
         )
         return "127.0.0.1"
@@ -257,7 +257,7 @@ def login():
         retry_after = _login_retry_after(client_ip)
         if retry_after > 0:
             app_log.warning(
-                "login blocked for %s: too many failures (%.0fs left)",
+                "login blocked for {}: too many failures ({:.0f}s left)",
                 client_ip,
                 retry_after,
             )
@@ -486,16 +486,24 @@ def _progress_rows() -> list:
 def _format_completed_row(value: dict) -> dict:
     file_name = value.get("file_name") or ""
     norm_path = file_name.replace("\\", "/")
+    if _application is not None and _application.hide_file_name and norm_path:
+        masked = f"****{os.path.splitext(norm_path)[-1]}"
+        display_name = masked
+        display_path = masked
+    else:
+        display_name = norm_path.rsplit("/", 1)[-1] if norm_path else ""
+        display_path = norm_path
     return {
         "chat": value.get("chat"),
         "id": value.get("id"),
-        "filename": norm_path.rsplit("/", 1)[-1] if norm_path else "",
+        "filename": display_name,
         "total_size": format_byte(value.get("total_size") or 0),
-        "save_path": norm_path,
+        "save_path": display_path,
         "completed_time": value.get("completed_time") or 0,
         "upload_success": bool(value.get("upload_success")),
         # "uploaded" (new) / "exists" (already on the remote) / None
         "upload_state": value.get("upload_state"),
+        "uploading": upload_stat.is_uploading(value.get("chat"), value.get("id")),
     }
 
 
@@ -1026,7 +1034,7 @@ def set_config_form():
         applied, restart_required = _application.reload_hot_config(config)
         _refresh_login_config(_application)
 
-    app_log.info("config.yaml updated from the Web UI form: %s", applied)
+    app_log.info("config.yaml updated from the Web UI form: {}", applied)
     return jsonify(
         {
             "code": "1",
@@ -1077,7 +1085,7 @@ def set_config():
         applied, restart_required = _application.reload_hot_config(parsed)
         _refresh_login_config(_application)
 
-    app_log.info("config.yaml updated from the Web UI: %s", applied)
+    app_log.info("config.yaml updated from the Web UI: {}", applied)
     return jsonify(
         {
             "code": "1",

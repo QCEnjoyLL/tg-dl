@@ -218,7 +218,7 @@ web_login_secret: "改成你的密码"
 
 ## Web UI
 
-界面完全重写过，不再依赖 layui，静态资源从 ~880KB 降到 ~35KB（CSS/JS 合计，不含 logo 等文档图片）。
+界面完全重写过，不再依赖 layui，静态资源从 ~880KB 降到 ~120KB（CSS/JS 合计，不含 logo 等文档图片）。
 页面品牌名为 **TeleVault**（仓库名仍是 tg-dl），Logo 为「归档环 + 下载箭头」，登录页与 favicon 一致。
 
 **登录页**
@@ -251,7 +251,7 @@ web_login_secret: "改成你的密码"
 功能：
 
 - **明暗主题**：默认跟随系统，右上角可手动切换，选择记在 `localStorage`，刷新不丢
-- **顶部概览**：下载中、已完成、失败数量，以及运行/暂停状态（数量来自服务端计数，与分页无关）
+- **顶部概览**：下载中、上传中、已完成、失败数量，以及运行/暂停状态（数量来自服务端计数，与分页无关）
 - **四个标签**：下载中、上传中、已完成、失败；支持深链，`http://host:5000/#failed` 直接打开失败页
 - **上传中**：显示文件名、大小、上传进度、上传速度与剩余时间；顶部速度条同时显示 `↓ 下载 / ↑ 上传` 速度
 - **仅本地重新上传**：「已完成」里只保留本地文件的行（上传失败或未启用上传）带「上传」按钮，点一下只重传这一个文件
@@ -303,7 +303,7 @@ web_login_secret: "改成你的密码"
 
 ### 配置热更新说明
 
-保存配置后，以下项**立即生效**：`media_types`、`file_formats`、`file_path_prefix`、`file_name_prefix`、`file_name_prefix_split`、`hide_file_name`、`enable_download_txt`、`after_upload_telegram_delete`、`drop_no_audio_video`、`log_level`、`date_format`、`max_concurrent_chunks`、`min_free_space_gb`、`language`、广告过滤相关项、`upload_drive.*`、`web_login_secret`。
+保存配置后，以下项**立即生效**：`media_types`、`file_formats`、`file_path_prefix`、`file_name_prefix`、`file_name_prefix_split`、`hide_file_name`、`enable_download_txt`、`after_upload_telegram_delete`、`drop_no_audio_video`、`log_level`、`date_format`、`max_concurrent_chunks`、`min_free_space_gb`、`forward_limit`、`language`、广告过滤相关项、`upload_drive.*`、`web_login_secret`。
 
 以下项需要**重启进程**：`api_id`、`api_hash`、`bot_token`、`chat`、`proxy`、`save_path`、`web_host`、`web_port`、`max_download_task`、`max_concurrent_transmissions`、`allowed_user_ids`、`start_timeout`。
 
@@ -339,24 +339,25 @@ systemctl stop tg-dl         # 服务里配置 KillSignal=SIGINT
 
 仓库自带 [`.github/workflows/docker-publish.yml`](.github/workflows/docker-publish.yml)：
 
-- 推送到 `master` / `main`、打 `v*` tag、或在 Actions 页面手动触发时构建
-- 自动推送到 **GHCR**：`ghcr.io/qcenjoyll/tg-dl`
-- 版本号只有一处来源：`utils/__init__.py` 的 `__version__`。镜像标签、git tag、GitHub Release 全部由它生成，不会互相对不上
-- 标签规则：`2.15.2`（当前版本）、`2.15`（minor 系列）、`latest`（默认分支）、分支名、`sha-xxxxxxx`
-- 镜像内注入 `org.opencontainers.image.version` / `.revision`，`docker inspect` 一眼能看到版本
-- 镜像推送成功后自动创建 **GitHub Release**：标题 `v2.15.2`，正文取自 `CHANGELOG.md` 同名章节 + 拉取命令
+- 推送到 `master` / `main`、推送 `v*` tag、或在 Actions 页面手动触发时构建
+- 推送前先运行 `compileall` 语法检查和完整 `Tests` 测试套件，通过后才构建并推送到 **GHCR**：`ghcr.io/qcenjoyll/tg-dl`
+- 版本号只有一处来源：`utils/__init__.py` 的 `__version__`。镜像标签、git tag、GitHub Release 全部由它校验并生成，不会互相对不上
+- 标签规则：普通分支推送只更新 `latest`、分支名、`sha-xxxxxxx`；仅当推送 `v*` tag（如 `v2.16.0`）时才发布版本标签 `2.16.0`、`2.16`
+- 镜像内注入 `org.opencontainers.image.version` / `.revision`，并在 tag 构建推送后通过 `docker inspect` 校验标签一致
+- tag 构建且镜像推送成功后自动创建 **GitHub Release**：标题 `v2.16.0`，正文取自 `CHANGELOG.md` 同名章节 + 拉取命令；已存在的 Release 会直接失败（版本号不可变，不会静默覆盖）
 - Pull Request 只构建不推送，也不会创建 Release
-- 构建前先跑 `python -m compileall` 做语法检查
 
 ### 发布新版本
 
-1. 改 `utils/__init__.py` 里的 `__version__`（如 `2.15.3`）
-2. 在 `CHANGELOG.md` 顶部加 `## v2.15.3` 章节（Release 正文就是这段内容）
-3. 提交并推送到 `master` / `main`
+1. 改 `utils/__init__.py` 里的 `__version__`（如 `2.16.1`）
+2. 在 `CHANGELOG.md` 顶部加 `## v2.16.1` 章节（Release 正文就是这段内容，工作流会先校验章节存在）
+3. 提交、打 tag 并推送到远端：
+   ```bash
+   git push origin master
+   git tag v2.16.1 && git push origin v2.16.1
+   ```
 
-工作流会自动构建镜像、打 `v2.15.3` tag 并创建 Release。版本号已存在的 Release 会跳过，重复推送不会报错。
-
-> 手动推 `v*` tag 也可以，但 tag 必须和 `__version__` 一致，否则工作流会直接失败——避免发布说明和实际运行的代码对不上。
+> `v*` tag 必须与 `utils/__init__.py` 中的 `__version__` 完全一致，且同名 Release 不能已存在，否则工作流会直接失败——避免发布说明、镜像标签与实际运行代码对不上。
 
 ### 多架构
 
@@ -522,7 +523,7 @@ v2.13.0 起存在 `sessions/history.db`（SQLite，可用环境变量 `TDL_HISTO
 - 修复上述五个问题（见文末[修复清单](#修复清单)）
 - bot 帮助卡片：按钮改指本仓库与 BotFather，底部附每条命令带说明的可复制示例
 - 修复 Web 写接口契约（真实 JSON）、认证绕过、rclone 命令注入、上传失败误删本地、任务卡死等 P0 问题
-- 重写 Web UI 与登录页：明暗主题、概览卡片、单任务暂停/恢复/删除、在线配置编辑、退出登录、失败重试/删除、移动端适配、深链；移除 layui 与前端假 AES 加密，静态资源从 ~880KB 降到 ~35KB（CSS/JS 合计）
+- 重写 Web UI 与登录页：明暗主题、概览卡片、单任务暂停/恢复/删除、在线配置编辑、退出登录、失败重试/删除、移动端适配、深链；移除 layui 与前端假 AES 加密，静态资源从 ~880KB 降到 ~120KB（CSS/JS 合计）
 - 统一下载补丁链（`fast_download` + 断点续传 + 流截断守卫），失败/中断留下的 `.temp` 在重试时从断点继续；依赖升到 Flask 3.1 / Werkzeug 3.1
 - 下载历史改为 SQLite 持久化（`sessions/history.db`，无条数上限），列表由服务端分页 / 搜索 / 筛选，
   Web UI 支持一键清空已完成与失败记录
@@ -553,6 +554,25 @@ v2.13.0 起存在 `sessions/history.db`（SQLite，可用环境变量 `TDL_HISTO
 > Docker / compose 用户不受影响（配置本来就是挂载进容器的，从未进过镜像）。
 
 逐条历史记录见 [CHANGELOG.md](CHANGELOG.md)；当前版本见顶部的 Release 徽章。
+
+<details>
+<summary><b>v2.16.0</b> — 下载与上传解耦、磁盘空间保护</summary>
+
+- **下载与上传解耦**：下载完成后立即交给后台上传器（`UploadDispatcher`），download worker 立即处理下一条消息；历史先记为「仅本地」，上传成功后自动更新为「已上传 / 云端已有」
+- **磁盘空间保护**（`min_free_space_gb`，默认 2 GB）：下载盘剩余空间低于预留值时自动暂停下载，待上传删除本地文件、空间恢复到预留值 +20% 后自动继续
+- `/get_download_status` 增加 `disk` 字段；退出时按模式排空或取消未完成上传，保留本地文件以便下次重试
+
+</details>
+
+<details>
+<summary><b>v2.15.3</b> — 上传哈希校验、并行分片断点续传、防同名目录冲突</summary>
+
+- 修复 `after_upload_file_delete: false` 等显式布尔项被忽略的问题，以及无 `file_size` 媒体被当成残缺文件删除的问题
+- 新增 `upload_drive.hash_check`（默认开启）：远端同名同大小时先比对 MD5，不一致则重传；并行分片下载支持保留 `.temp.json` 断点续传
+- Web UI 删除取消的任务不再误重试；bot 客户端同步扩大传输并发池；支持 `file_path_prefix: chat_id` 避免同名频道互相覆盖
+- 发布流水线增加测试门禁、Pyrogram 依赖固定为 commit + sha256、`setup.py` 补全安装元数据
+
+</details>
 
 <details>
 <summary><b>v2.15.2</b> — 版本检测更快、可手动检查</summary>

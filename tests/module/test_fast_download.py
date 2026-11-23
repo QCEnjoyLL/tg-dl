@@ -1,5 +1,7 @@
 """Tests for the opt-in per-file parallel chunk downloader."""
 
+import asyncio
+import io
 import json
 import os
 import tempfile
@@ -11,6 +13,8 @@ import pyrogram
 from module import pyrogram_guard
 from module.fast_download import (
     STATE_SUFFIX,
+    _ChunkWriter,
+    _write_state,
     chunk_ranges,
     get_chunk_concurrency,
     parallel_handle_download,
@@ -423,6 +427,47 @@ class InstalledGuardTestCase(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(file_obj.read(), data)
         self.assertEqual(client.offsets, [1])
         self.assertEqual(self.stock_calls, [])
+
+
+class ChunkWriterAndStateTestCase(unittest.IsolatedAsyncioTestCase):
+    def test_write_state_is_atomic_with_no_temp_leftovers(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_path = os.path.join(tmpdir, "clip.mp4.temp.json")
+            _write_state(state_path, [1024, 2048])
+            with open(state_path, encoding="utf-8") as handle:
+                self.assertEqual(json.load(handle), [1024, 2048])
+            self.assertEqual(os.listdir(tmpdir), ["clip.mp4.temp.json"])
+
+    async def test_chunk_writer_progress_never_decreases_under_lock_race(self):
+        buf = io.BytesIO()
+        reported = []
+        entered_first = asyncio.Event()
+        release_first = asyncio.Event()
+
+        async def progress(current, total):
+            reported.append((current, total))
+            if len(reported) == 1:
+                entered_first.set()
+                await release_first.wait()
+
+        writer = _ChunkWriter(buf, 30, progress, ())
+
+        # Task 1 acquires _progress_lock and pauses inside callback.
+        t1 = asyncio.create_task(writer.write(0, b"a" * 10))
+        await entered_first.wait()
+
+        # Task 2 and Task 3 complete _write_lock before t2/t3 enter _progress_lock.
+        t2 = asyncio.create_task(writer.write(10, b"b" * 10))
+        await asyncio.sleep(0)
+        t3 = asyncio.create_task(writer.write(20, b"c" * 10))
+        await asyncio.sleep(0)
+
+        release_first.set()
+        await asyncio.gather(t1, t2, t3)
+
+        values = [curr for curr, _total in reported]
+        self.assertEqual(values, sorted(values))
+        self.assertEqual(values[-1], 30)
 
 
 if __name__ == "__main__":

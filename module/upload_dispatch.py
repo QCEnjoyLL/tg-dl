@@ -32,21 +32,23 @@ class UploadDispatcher:
         """Uploads currently running."""
         return len(self._tasks)
 
-    def submit(self, factory: Callable[[], Awaitable[None]]) -> None:
+    def submit(self, factory: Callable[[], Awaitable[None]]) -> bool:
         """Start one upload now.
 
         ``factory`` is a zero-argument callable returning the coroutine, so a
         task can be created without awaiting anything from the caller.
+        Returns whether the job was scheduled on a running event loop.
         """
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:  # pragma: no cover - only outside an event loop
             logger.warning("upload dispatcher used without a running event loop")
-            return
+            return False
 
         task = loop.create_task(self._run(factory))
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+        return True
 
     async def _run(self, factory: Callable[[], Awaitable[None]]) -> None:
         try:

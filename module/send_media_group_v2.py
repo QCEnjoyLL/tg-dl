@@ -1,5 +1,4 @@
 """send media group"""
-import logging
 import os
 import re
 from datetime import datetime
@@ -8,8 +7,6 @@ from typing import Callable, List, Optional, Union
 import pyrogram
 from pyrogram import raw, types, utils
 from pyrogram.file_id import FileType
-
-log = logging.getLogger(__name__)
 
 # pylint: disable = R0915, R0902, R0912
 async def cache_media(

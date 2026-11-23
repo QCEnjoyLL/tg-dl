@@ -9,6 +9,7 @@
 .DS_Store
 .cache/
 .mypy_cache/
+.ruff_cache/
 .coverage
 settings.json
 
@@ -70,5 +71,6 @@ log/
 temp/
 config.yaml
 data.yaml
+bot.yaml
 *.scss
 *.css.map
