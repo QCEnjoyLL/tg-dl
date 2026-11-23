@@ -14,6 +14,11 @@
   --seg-track: #e6e6eb;
   --seg-thumb: var(--card);
   --seg-edge: 0 1px 2px rgb(0 0 0 / 0.12), 0 0 0 0.5px rgb(0 0 0 / 0.08);
+  --switch-track: #d4d4dc;
+  --switch-track-hover: #c7c7d2;
+  --switch-border: #8e8e98;
+  --switch-thumb: #ffffff;
+  --switch-thumb-shadow: 0 1px 2px rgb(0 0 0 / 0.18), 0 0 0 0.5px rgb(0 0 0 / 0.08);
   --line: #e3e3e8;
   --line-2: #ececf0;
   --border-input: #7d7d87;
@@ -74,6 +79,11 @@
   --seg-track: #242429;
   --seg-thumb: #3a3a42;
   --seg-edge: inset 0 0.5px 0 rgb(255 255 255 / 0.08), 0 1px 2px rgb(0 0 0 / 0.3);
+  --switch-track: #34343c;
+  --switch-track-hover: #3e3e48;
+  --switch-border: #555562;
+  --switch-thumb: #d4d4dc;
+  --switch-thumb-shadow: 0 1px 2px rgb(0 0 0 / 0.45), 0 0 0 0.5px rgb(255 255 255 / 0.12);
   --line: #333339;
   --line-2: #2c2c32;
   --border-input: #6e6e78;
@@ -1715,9 +1725,9 @@ tr.is-expanded .trunc-text {
   display: block;
   width: 38px;
   height: 22px;
-  border: 1px solid var(--border-input);
+  border: 1px solid var(--switch-border);
   border-radius: var(--radius-pill);
-  background: var(--seg-track);
+  background: var(--switch-track);
 }
 
 .switch-track::after {
@@ -1728,8 +1738,8 @@ tr.is-expanded .trunc-text {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: var(--card);
-  box-shadow: var(--seg-edge);
+  background: var(--switch-thumb);
+  box-shadow: var(--switch-thumb-shadow);
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -1739,13 +1749,23 @@ tr.is-expanded .trunc-text {
   }
 
   .switch-track::after {
-    transition: transform var(--dur) var(--ease-out);
+    transition: transform var(--dur) var(--ease-out),
+      background-color var(--dur) var(--ease-out);
   }
+}
+
+.switch:hover .switch-track {
+  background: var(--switch-track-hover);
 }
 
 .switch input:checked + .switch-track {
   background: var(--accent-solid);
   border-color: var(--accent-solid);
+}
+
+.switch:hover input:checked + .switch-track {
+  background: var(--accent-solid-hover);
+  border-color: var(--accent-solid-hover);
 }
 
 .switch input:checked + .switch-track::after {

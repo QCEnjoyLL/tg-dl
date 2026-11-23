@@ -61,6 +61,15 @@ class EmptyAndStatusAssetsTestCase(unittest.TestCase):
         self.assertIn("is-uploading", JS)
         self.assertIn(".state-chip.is-uploading", CSS)
 
+    def test_unchecked_switch_uses_dedicated_tokens(self):
+        track_match = re.search(r"(?m)^\.switch-track\s*\{([^}]*)\}", CSS)
+        thumb_match = re.search(r"(?m)^\.switch-track::after\s*\{([^}]*)\}", CSS)
+        self.assertIsNotNone(track_match)
+        self.assertIsNotNone(thumb_match)
+        self.assertIn("var(--switch-track)", track_match.group(1))
+        self.assertIn("var(--switch-thumb)", thumb_match.group(1))
+        self.assertNotIn("var(--card)", thumb_match.group(1))
+
     def test_tab_loading_guards_against_polling_races(self):
         self.assertIn("tabRequestSeq", JS)
         self.assertIn("AbortController", JS)
