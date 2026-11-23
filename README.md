@@ -3,7 +3,7 @@
 > 基于 [tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader) 的修复分支。
 > 保留原项目的全部功能（Telegram bot 指令、Web UI、rclone 上传、受保护内容下载），并持续修复实际使用中的问题。
 
-当前版本：**v2.16.1**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
+当前版本：**v2.16.2**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
 
 [![Docker](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml)
 [![Release](https://img.shields.io/github/v/release/QCEnjoyLL/tg-dl?label=release&color=blue)](https://github.com/QCEnjoyLL/tg-dl/releases/latest)
@@ -554,6 +554,15 @@ v2.13.0 起存在 `sessions/history.db`（SQLite，可用环境变量 `TDL_HISTO
 > Docker / compose 用户不受影响（配置本来就是挂载进容器的，从未进过镜像）。
 
 逐条历史记录见 [CHANGELOG.md](CHANGELOG.md)；当前版本见顶部的 Release 徽章。
+
+<details>
+<summary><b>v2.16.2</b> — 未启用开关配色修复、/add_filter 提示与 Bot 回归测试</summary>
+
+- 配置面板未启用开关在深色下几乎隐形（滑块与弹窗同色），改为独立明暗色阶并补齐悬停反馈
+- `/add_filter` 缺少参数时回复用法说明，重复添加不再写入重复项
+- 补充 Bot 命令回归测试（直链下载、区间校验、`stop_task` 目标会话、过滤器持久化）
+
+</details>
 
 <details>
 <summary><b>v2.16.1</b> — 续传/上传解耦/磁盘闸门/Bot/热更新集中修复与仓库整理</summary>

@@ -325,6 +325,54 @@ class BotCommandHandlersTestCase(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(os.path.exists(download_bot.config_path))
             client.send_message.assert_awaited_once()
 
+    async def test_add_filter_rejects_empty_command_text(self):
+        client = mock.AsyncMock()
+        download_bot = bot.DownloadBot()
+        message = SimpleNamespace(id=14, text=None, from_user=SimpleNamespace(id=100))
+
+        with mock.patch.object(bot, "_bot", download_bot):
+            await bot.add_filter(client, message)
+
+        # A text-less command must not raise AttributeError on split().
+        client.send_message.assert_awaited_once()
+
+    async def test_add_filter_does_not_store_duplicates(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            download_bot = bot.DownloadBot()
+            download_bot.config_path = os.path.join(tmpdir, "bot.yaml")
+            client = mock.AsyncMock()
+            message = SimpleNamespace(
+                id=15,
+                text="/add_filter id > 10",
+                from_user=SimpleNamespace(id=100),
+            )
+
+            with mock.patch.object(bot, "_bot", download_bot):
+                await bot.add_filter(client, message)
+                await bot.add_filter(client, message)
+
+            self.assertEqual(download_bot.download_filter, ["id > 10"])
+
+    async def test_stop_task_all_branch_stops_every_task(self):
+        client = mock.AsyncMock()
+        handler = QueryHandlerStr.get_str(QueryHandler.StopDownload.value)
+        query = SimpleNamespace(
+            data=f"{handler} task all",
+            message=SimpleNamespace(
+                id=66,
+                from_user=SimpleNamespace(id=999999),
+                chat=SimpleNamespace(id=777),
+            ),
+        )
+        fake_bot = SimpleNamespace(task_node={}, stop_task=mock.MagicMock())
+
+        with mock.patch.object(bot, "_bot", fake_bot):
+            await bot.stop_task(client, query, handler, TaskType.Download)
+
+        client.edit_message_text.assert_awaited_once()
+        self.assertEqual(client.edit_message_text.call_args.args[0], 777)
+        fake_bot.stop_task.assert_called_once_with("all")
+
 
 if __name__ == "__main__":
     unittest.main()

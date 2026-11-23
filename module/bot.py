@@ -590,6 +590,10 @@ async def add_filter(client: pyrogram.Client, message: pyrogram.types.Message):
     """
 
     if not message.text:
+        await client.send_message(
+            message.from_user.id,
+            _t("Invalid command format. Please use /add_filter your filter"),
+        )
         return
 
     args = message.text.split(maxsplit=1)
