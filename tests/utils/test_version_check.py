@@ -36,9 +36,6 @@ class RefreshTestCase(unittest.TestCase):
     def tearDown(self):
         self.setUp()
 
-    def tearDown(self):
-        self.setUp()
-
     def test_update_info_is_empty_before_the_first_check(self):
         info = version_check.update_info()
 
