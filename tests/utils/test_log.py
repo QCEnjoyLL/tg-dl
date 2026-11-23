@@ -1,4 +1,5 @@
 """Unittest module for log handlers."""
+
 import sys
 import unittest
 

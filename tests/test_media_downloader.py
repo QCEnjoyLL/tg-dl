@@ -1,4 +1,5 @@
 """Unittest module for media downloader."""
+
 import asyncio
 import os
 import platform
@@ -918,9 +919,7 @@ class MediaDownloaderTestCase(unittest.TestCase):
         self.assertEqual(_can_download("video", {"video": "['all']"}, "mp4"), True)
         self.assertEqual(_can_download("video", {}, "mp4"), True)
         self.assertEqual(_can_download("video", {"video": []}, "mp4"), True)
-        self.assertEqual(
-            _can_download("video", {"video": ["mp4"]}, "mkv"), False
-        )
+        self.assertEqual(_can_download("video", {"video": ["mp4"]}, "mkv"), False)
 
         # The configured value is an extension ("mov", "docx") while the mime
         # type only exposes the subtype ("quicktime", the long vendor string).
@@ -1245,9 +1244,15 @@ class RetryFailedMessagesTestCase(unittest.IsolatedAsyncioTestCase):
         message.id = 5
         failed = {-100: {5: {"file_name": "", "time": 1, "reason": ""}}}
 
-        with mock.patch.object(md, "_retry_client", self._client(message)),                 mock.patch.object(md, "get_failed_downloads", return_value=failed),                 mock.patch.object(md.app, "chat_download_config", {}),                 mock.patch.object(
-                    md, "add_download_task", new=mock.AsyncMock(return_value=True)
-                ),                 mock.patch.object(md, "mark_download_retried") as marked:
+        with (
+            mock.patch.object(md, "_retry_client", self._client(message)),
+            mock.patch.object(md, "get_failed_downloads", return_value=failed),
+            mock.patch.object(md.app, "chat_download_config", {}),
+            mock.patch.object(
+                md, "add_download_task", new=mock.AsyncMock(return_value=True)
+            ),
+            mock.patch.object(md, "mark_download_retried") as marked,
+        ):
             retried, reasons = await md.retry_failed_messages("-100", 5)
 
         self.assertEqual(retried, 1)
@@ -1261,9 +1266,14 @@ class RetryFailedMessagesTestCase(unittest.IsolatedAsyncioTestCase):
         message.empty = True
         failed = {-100: {9: {"file_name": "", "time": 1, "reason": ""}}}
 
-        with mock.patch.object(md, "_retry_client", self._client(message)),                 mock.patch.object(md, "get_failed_downloads", return_value=failed),                 mock.patch.object(md.app, "chat_download_config", {}),                 mock.patch.object(
-                    md, "add_download_task", new=mock.AsyncMock(return_value=True)
-                ):
+        with (
+            mock.patch.object(md, "_retry_client", self._client(message)),
+            mock.patch.object(md, "get_failed_downloads", return_value=failed),
+            mock.patch.object(md.app, "chat_download_config", {}),
+            mock.patch.object(
+                md, "add_download_task", new=mock.AsyncMock(return_value=True)
+            ),
+        ):
             retried, reasons = await md.retry_failed_messages(-100, 9)
 
         self.assertEqual(retried, 0)
@@ -1273,7 +1283,10 @@ class RetryFailedMessagesTestCase(unittest.IsolatedAsyncioTestCase):
     async def test_retry_reports_missing_failed_record(self):
         import media_downloader as md
 
-        with mock.patch.object(md, "_retry_client", mock.Mock()),                 mock.patch.object(md, "get_failed_downloads", return_value={}):
+        with (
+            mock.patch.object(md, "_retry_client", mock.Mock()),
+            mock.patch.object(md, "get_failed_downloads", return_value={}),
+        ):
             retried, reasons = await md.retry_failed_messages(-100, 9)
 
         self.assertEqual(retried, 0)
@@ -1291,11 +1304,22 @@ class RetryFailedMessagesTestCase(unittest.IsolatedAsyncioTestCase):
 
         client = mock.Mock()
         client.get_messages = mock.AsyncMock(side_effect=get_messages)
-        failed = {-100: {one_id: {"file_name": "", "time": 1, "reason": ""} for one_id in range(450)}}
+        failed = {
+            -100: {
+                one_id: {"file_name": "", "time": 1, "reason": ""}
+                for one_id in range(450)
+            }
+        }
 
-        with mock.patch.object(md, "_retry_client", client),                 mock.patch.object(md, "get_failed_downloads", return_value=failed),                 mock.patch.object(md.app, "chat_download_config", {}),                 mock.patch.object(
-                    md, "add_download_task", new=mock.AsyncMock(return_value=True)
-                ),                 mock.patch.object(md, "mark_download_retried"):
+        with (
+            mock.patch.object(md, "_retry_client", client),
+            mock.patch.object(md, "get_failed_downloads", return_value=failed),
+            mock.patch.object(md.app, "chat_download_config", {}),
+            mock.patch.object(
+                md, "add_download_task", new=mock.AsyncMock(return_value=True)
+            ),
+            mock.patch.object(md, "mark_download_retried"),
+        ):
             retried, reasons = await md.retry_failed_messages(-100)
 
         self.assertEqual(batches, [200, 200, 50])
@@ -1309,9 +1333,7 @@ class ReuploadFileTestCase(unittest.IsolatedAsyncioTestCase):
     async def test_reupload_requires_the_upload_target(self):
         import media_downloader as md
 
-        with mock.patch.object(
-            md.app.cloud_drive_config, "enable_upload_file", False
-        ):
+        with mock.patch.object(md.app.cloud_drive_config, "enable_upload_file", False):
             ok, reason = await md.reupload_file(-100, 9)
 
         self.assertFalse(ok)
@@ -1320,9 +1342,10 @@ class ReuploadFileTestCase(unittest.IsolatedAsyncioTestCase):
     async def test_reupload_reports_a_missing_record(self):
         import media_downloader as md
 
-        with mock.patch.object(
-            md.app.cloud_drive_config, "enable_upload_file", True
-        ), mock.patch.object(md, "get_completed_download", return_value=None):
+        with (
+            mock.patch.object(md.app.cloud_drive_config, "enable_upload_file", True),
+            mock.patch.object(md, "get_completed_download", return_value=None),
+        ):
             ok, reason = await md.reupload_file(-100, 9)
 
         self.assertFalse(ok)
@@ -1332,9 +1355,10 @@ class ReuploadFileTestCase(unittest.IsolatedAsyncioTestCase):
         import media_downloader as md
 
         record = {"file_name": "/nonexistent/definitely-missing.mp4"}
-        with mock.patch.object(
-            md.app.cloud_drive_config, "enable_upload_file", True
-        ), mock.patch.object(md, "get_completed_download", return_value=record):
+        with (
+            mock.patch.object(md.app.cloud_drive_config, "enable_upload_file", True),
+            mock.patch.object(md, "get_completed_download", return_value=record),
+        ):
             ok, reason = await md.reupload_file(-100, 9)
 
         self.assertFalse(ok)
@@ -1346,17 +1370,20 @@ class ReuploadFileTestCase(unittest.IsolatedAsyncioTestCase):
         with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as handle:
             file_path = handle.name
         try:
-            with mock.patch.object(
-                md.app.cloud_drive_config, "enable_upload_file", True
-            ), mock.patch.object(
-                md,
-                "get_completed_download",
-                return_value={"file_name": file_path, "upload_state": None},
-            ), mock.patch.object(
-                md.app, "upload_file", new=mock.AsyncMock(return_value="uploaded")
-            ), mock.patch.object(
-                md, "update_completed_upload_state"
-            ) as updated:
+            with (
+                mock.patch.object(
+                    md.app.cloud_drive_config, "enable_upload_file", True
+                ),
+                mock.patch.object(
+                    md,
+                    "get_completed_download",
+                    return_value={"file_name": file_path, "upload_state": None},
+                ),
+                mock.patch.object(
+                    md.app, "upload_file", new=mock.AsyncMock(return_value="uploaded")
+                ),
+                mock.patch.object(md, "update_completed_upload_state") as updated,
+            ):
                 ok, state = await md.reupload_file(-100, 9)
 
             self.assertTrue(ok)
@@ -1374,15 +1401,19 @@ class ReuploadFileTestCase(unittest.IsolatedAsyncioTestCase):
             file_path = handle.name
         try:
             upload_stat.try_start(-100, 9, file_name=file_path)
-            with mock.patch.object(
-                md.app.cloud_drive_config, "enable_upload_file", True
-            ), mock.patch.object(
-                md,
-                "get_completed_download",
-                return_value={"file_name": file_path, "upload_state": None},
-            ), mock.patch.object(
-                md.app, "upload_file", new=mock.AsyncMock()
-            ) as upload_mock:
+            with (
+                mock.patch.object(
+                    md.app.cloud_drive_config, "enable_upload_file", True
+                ),
+                mock.patch.object(
+                    md,
+                    "get_completed_download",
+                    return_value={"file_name": file_path, "upload_state": None},
+                ),
+                mock.patch.object(
+                    md.app, "upload_file", new=mock.AsyncMock()
+                ) as upload_mock,
+            ):
                 ok, reason = await md.reupload_file(-100, 9)
 
             self.assertFalse(ok)
@@ -1409,11 +1440,15 @@ class ReuploadFileTestCase(unittest.IsolatedAsyncioTestCase):
                 }
             download_stat.mark_download_completed(-100, 15, file_path, 10, None)
 
-            with mock.patch.object(md.app, "hide_file_name", True), mock.patch.object(
-                md.app.cloud_drive_config, "enable_upload_file", True
-            ), mock.patch.object(
-                md.app, "upload_file", new=mock.AsyncMock(return_value="uploaded")
-            ) as upload_mock:
+            with (
+                mock.patch.object(md.app, "hide_file_name", True),
+                mock.patch.object(
+                    md.app.cloud_drive_config, "enable_upload_file", True
+                ),
+                mock.patch.object(
+                    md.app, "upload_file", new=mock.AsyncMock(return_value="uploaded")
+                ) as upload_mock,
+            ):
                 ok, state = await md.reupload_file(-100, 15)
 
             self.assertTrue(ok)
@@ -1492,6 +1527,27 @@ class FloodErrorDescriptionTestCase(unittest.TestCase):
             self.assertFalse(os.path.exists(orphan_json))
             self.assertTrue(os.path.exists(fresh))
             self.assertTrue(os.path.exists(fresh_json))
+
+    def test_cleanup_removes_only_old_atomic_write_temp_files(self):
+        import media_downloader as md
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            fresh = os.path.join(tmp_dir, ".tgdl-tmp-fresh.tmp")
+            stale = os.path.join(tmp_dir, ".tgdl-tmp-stale.tmp")
+            # A similarly named file that is not ours must be left alone.
+            other = os.path.join(tmp_dir, "keep.tmp")
+            for path in (fresh, stale, other):
+                open(path, "wb").close()
+
+            old_time = time.time() - md.STALE_ATOMIC_TEMP_AGE - 10
+            os.utime(stale, (old_time, old_time))
+
+            removed = _cleanup_stale_temp_files(tmp_dir)
+
+            self.assertEqual(removed, 1)
+            self.assertFalse(os.path.exists(stale))
+            self.assertTrue(os.path.exists(fresh))
+            self.assertTrue(os.path.exists(other))
 
 
 class RelativeSaveMsgAndRetryErrorTestCase(unittest.IsolatedAsyncioTestCase):
@@ -1617,10 +1673,10 @@ class UnknownFileSizeTestCase(unittest.IsolatedAsyncioTestCase):
 
         message = MockMessage(id=317, media=True, video=NoSizeVideo())
 
-        with mock.patch(
-            "media_downloader.os.path.getsize", new=lambda _: 512
-        ), mock.patch("media_downloader.fetch_message", new=new_fetch_message), mock.patch(
-            "media_downloader._is_exist", new=lambda _: True
+        with (
+            mock.patch("media_downloader.os.path.getsize", new=lambda _: 512),
+            mock.patch("media_downloader.fetch_message", new=new_fetch_message),
+            mock.patch("media_downloader._is_exist", new=lambda _: True),
         ):
             res = await async_download_media(
                 client, message, ["video"], {"video": ["all"]}

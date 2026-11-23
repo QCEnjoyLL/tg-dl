@@ -57,7 +57,11 @@ def _redact_secrets(text: str) -> str:
 
 def _open_request(request: urllib.request.Request, proxy: Optional[dict]):
     """Open ``request``, routing via ``proxy`` when configured."""
-    if not isinstance(proxy, dict) or not proxy.get("hostname") or not proxy.get("port"):
+    if (
+        not isinstance(proxy, dict)
+        or not proxy.get("hostname")
+        or not proxy.get("port")
+    ):
         return urllib.request.urlopen(request, timeout=TIMEOUT)
 
     scheme = str(proxy.get("scheme") or "http").strip().lower()
@@ -72,7 +76,11 @@ def _open_request(request: urllib.request.Request, proxy: Optional[dict]):
             user_enc = urllib.parse.quote(username, safe="")
             pass_enc = urllib.parse.quote(password, safe="")
             auth = f"{user_enc}:{pass_enc}@"
-        host_fmt = f"[{hostname}]" if ":" in hostname and not hostname.startswith("[") else hostname
+        host_fmt = (
+            f"[{hostname}]"
+            if ":" in hostname and not hostname.startswith("[")
+            else hostname
+        )
         proxy_url = f"{scheme}://{auth}{host_fmt}:{port}"
         opener = urllib.request.build_opener(
             urllib.request.ProxyHandler({"http": proxy_url, "https": proxy_url})
@@ -109,9 +117,7 @@ def _open_request(request: urllib.request.Request, proxy: Optional[dict]):
 
         class _SocksHTTPSHandler(urllib.request.HTTPSHandler):
             def https_open(self, req):
-                return self.do_open(
-                    _SocksHTTPSConnection, req, context=self._context
-                )
+                return self.do_open(_SocksHTTPSConnection, req, context=self._context)
 
         opener = urllib.request.build_opener(_SocksHTTPSHandler())
         return opener.open(request, timeout=TIMEOUT)
@@ -203,9 +209,7 @@ def update_info() -> Dict[str, object]:
     }
 
 
-def start_background_check(
-    interval: int = TTL, proxy: Optional[dict] = None
-) -> None:
+def start_background_check(interval: int = TTL, proxy: Optional[dict] = None) -> None:
     """Start the daemon refresher; repeated calls are ignored."""
     global _thread_started  # pylint: disable = W0603
     if proxy is not None:

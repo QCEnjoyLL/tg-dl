@@ -2,6 +2,27 @@
 
 版本号规则：MAJOR（破坏性改动或核心重写）/ MINOR（新增功能）/ PATCH（修复、依赖、文档、UI 打磨）。
 
+## v2.16.3
+
+### 修复
+
+- **`hide_file_name: true` 时复制路径只有 `****.mp4`**：列表里继续掩码文件名/路径，但「复制」按钮改为
+  复制真实路径（接口新增 `copy_path`），方便去磁盘上找文件
+- **崩溃残留的原子写临时文件没人清理**：`utils.atomic_write` 通过 `.tgdl-tmp-*.tmp` 落盘，进程被强杀
+  会在目标目录留下这些文件；启动清理现在会删除超过 1 小时的残留（`.temp` / `.temp.json` 规则不变）
+- **移动端截图被裁切**：`preview/screenshots.ps1` 用的 Chrome `--window-size` 有最小窗口宽度，390px
+  实际按 512px 渲染再裁剪；改为 `preview/screenshots.py` 走 DevTools 协议 `Emulation.setDeviceMetricsOverride`
+  截真正的 390×760，重新生成全部 6 张 README 截图
+
+### 变更
+
+- 全仓执行 `ruff format`（纯格式化，无逻辑改动），与 `.pre-commit-config.yaml` 里新增的 `ruff-format`
+  钩子对齐；`make format` 现在能直接通过
+
+### 测试
+
+- 新增 `hide_file_name` 掩码 + 真实复制路径、原子写临时文件清理的回归测试
+
 ## v2.16.2
 
 ### 修复

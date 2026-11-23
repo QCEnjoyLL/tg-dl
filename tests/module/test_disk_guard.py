@@ -40,9 +40,10 @@ class DiskSpaceGateTestCase(unittest.IsolatedAsyncioTestCase):
             ["/dl"], 2 * GB, poll_seconds=0.01, usage_fn=volume
         )
 
-        with mock.patch.object(
-            disk_guard.logger, "warning"
-        ) as warn_mock, mock.patch.object(disk_guard.logger, "info") as info_mock:
+        with (
+            mock.patch.object(disk_guard.logger, "warning") as warn_mock,
+            mock.patch.object(disk_guard.logger, "info") as info_mock,
+        ):
             await gate.wait_for(GB)
 
         warn_mock.assert_called()  # paused

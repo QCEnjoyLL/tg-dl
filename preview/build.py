@@ -502,9 +502,7 @@ MOCK_JS = """
 
 def render(name: str, state: str = "pause") -> str:
     html = (TEMPLATES / name).read_text(encoding="utf-8")
-    html = URL_FOR.sub(
-        lambda m: f"../module/static/{m.group(1)}?v={VERSION}", html
-    )
+    html = URL_FOR.sub(lambda m: f"../module/static/{m.group(1)}?v={VERSION}", html)
     html = html.replace("{{ version }}", VERSION)
     html = html.replace("{{ download_state }}", state)
     # The preview has no session, so pretend the login is enabled to show the
@@ -514,9 +512,7 @@ def render(name: str, state: str = "pause") -> str:
 
     # Inject the mocked fetch layer before the application script runs. The tag
     # carries a ?v=<version> cache-buster, so match it loosely.
-    marker = re.compile(
-        r'(<script src="\.\./module/static/js/app\.js[^"]*"></script>)'
-    )
+    marker = re.compile(r'(<script src="\.\./module/static/js/app\.js[^"]*"></script>)')
     html = marker.sub(lambda m: MOCK_JS + m.group(1), html, count=1)
     return html
 

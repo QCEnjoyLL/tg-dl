@@ -718,9 +718,8 @@ async def _wait_until_runnable(node: TaskNode, client: Client, message_id: int):
         if is_task_cancelled(chat_id, message_id):
             raise TaskCancelled(f"message {message_id} deleted")
 
-        if (
-            get_download_state() is DownloadState.Downloading
-            and not is_task_paused(chat_id, message_id)
+        if get_download_state() is DownloadState.Downloading and not is_task_paused(
+            chat_id, message_id
         ):
             return
 

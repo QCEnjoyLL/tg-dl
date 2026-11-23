@@ -684,7 +684,9 @@ async def process_caption(
     return truncated_caption
 
 
-def convert_message_entity(client, entity: "pyrogram.raw.base.MessageEntity") -> Optional["pyrogram.types.MessageEntity"]:
+def convert_message_entity(
+    client, entity: "pyrogram.raw.base.MessageEntity"
+) -> Optional["pyrogram.types.MessageEntity"]:
     # Special case for InputMessageEntityMentionName -> MessageEntityType.TEXT_MENTION
     # This happens in case of UpdateShortSentMessage inside send_message() where entities are parsed from the input
     if isinstance(entity, pyrogram.raw.types.InputMessageEntityMentionName):
@@ -703,8 +705,9 @@ def convert_message_entity(client, entity: "pyrogram.raw.base.MessageEntity") ->
         language=getattr(entity, "language", None),
         custom_emoji_id=getattr(entity, "document_id", None),
         expandable=getattr(entity, "collapsed", None),
-        client=client
+        client=client,
     )
+
 
 def convert_entities(
     entities: List[pyrogram.raw.base.MessageEntity],
@@ -714,9 +717,7 @@ def convert_entities(
         return []
 
     try:
-        return [
-            convert_message_entity(None, entity) for entity in entities
-        ]
+        return [convert_message_entity(None, entity) for entity in entities]
     except Exception as e:
         logger.warning(f"Failed to convert entities: {e}")
         return []
@@ -1190,7 +1191,7 @@ async def _report_bot_status(
                 f" │   ├─ 📏 : {value.total}\n"
                 f" │   ├─ ⏫ : {value.speed}\n"
                 f" │   └─ 📊 : ["
-                f'{create_progress_bar(_percentage_value(value.percentage))}]'
+                f"{create_progress_bar(_percentage_value(value.percentage))}]"
                 f" ({value.percentage})%\n"
             )
         if len(pending_cloud_uploads) > MAX_PROGRESS_ITEMS:
@@ -1254,9 +1255,7 @@ async def _report_bot_status(
                 f" ({progress}%)\n"
             )
         if len(pending_uploads) > MAX_PROGRESS_ITEMS:
-            upload_result_str += (
-                f" └─ … +{len(pending_uploads) - MAX_PROGRESS_ITEMS}\n"
-            )
+            upload_result_str += f" └─ … +{len(pending_uploads) - MAX_PROGRESS_ITEMS}\n"
 
         if upload_result_str:
             upload_result_str = f"\n📤 {_t('Upload Progresses')}:\n" + upload_result_str
@@ -1294,10 +1293,9 @@ async def _report_bot_status(
             except Exception as e:
                 # Treat "content unchanged" as success; anything else is retried
                 # on the next render because the cache is only updated above.
-                if (
-                    type(e).__name__ == "MessageNotModified"
-                    or "MESSAGE_NOT_MODIFIED" in str(e)
-                ):
+                if type(
+                    e
+                ).__name__ == "MessageNotModified" or "MESSAGE_NOT_MODIFIED" in str(e):
                     node.last_edit_msg = new_msg_str
                 else:
                     logger.warning(f"edit progress message failed: {e}")

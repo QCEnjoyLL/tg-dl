@@ -373,9 +373,7 @@ def parallel_handle_download(original):
                 default=0,
             )
             on_disk = (
-                os.path.getsize(temp_file_path)
-                if os.path.exists(temp_file_path)
-                else 0
+                os.path.getsize(temp_file_path) if os.path.exists(temp_file_path) else 0
             )
             if on_disk < written:
                 # The file is shorter than the sidecar claims (crash, cleanup,

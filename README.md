@@ -3,7 +3,7 @@
 > 基于 [tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader) 的修复分支。
 > 保留原项目的全部功能（Telegram bot 指令、Web UI、rclone 上传、受保护内容下载），并持续修复实际使用中的问题。
 
-当前版本：**v2.16.2**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
+当前版本：**v2.16.3**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
 
 [![Docker](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml)
 [![Release](https://img.shields.io/github/v/release/QCEnjoyLL/tg-dl?label=release&color=blue)](https://github.com/QCEnjoyLL/tg-dl/releases/latest)
@@ -342,19 +342,19 @@ systemctl stop tg-dl         # 服务里配置 KillSignal=SIGINT
 - 推送到 `master` / `main`、推送 `v*` tag、或在 Actions 页面手动触发时构建
 - 推送前先运行 `compileall` 语法检查和完整 `Tests` 测试套件，通过后才构建并推送到 **GHCR**：`ghcr.io/qcenjoyll/tg-dl`
 - 版本号只有一处来源：`utils/__init__.py` 的 `__version__`。镜像标签、git tag、GitHub Release 全部由它校验并生成，不会互相对不上
-- 标签规则：普通分支推送只更新 `latest`、分支名、`sha-xxxxxxx`；仅当推送 `v*` tag（如 `v2.16.0`）时才发布版本标签 `2.16.0`、`2.16`
+- 标签规则：普通分支推送只更新 `latest`、分支名、`sha-xxxxxxx`；仅当推送 `v*` tag（如 `v2.16.3`）时才发布版本标签 `2.16.3`、`2.16`
 - 镜像内注入 `org.opencontainers.image.version` / `.revision`，并在 tag 构建推送后通过 `docker inspect` 校验标签一致
-- tag 构建且镜像推送成功后自动创建 **GitHub Release**：标题 `v2.16.0`，正文取自 `CHANGELOG.md` 同名章节 + 拉取命令；已存在的 Release 会直接失败（版本号不可变，不会静默覆盖）
+- tag 构建且镜像推送成功后自动创建 **GitHub Release**：标题 `v2.16.3`，正文取自 `CHANGELOG.md` 同名章节 + 拉取命令；已存在的 Release 会直接失败（版本号不可变，不会静默覆盖）
 - Pull Request 只构建不推送，也不会创建 Release
 
 ### 发布新版本
 
-1. 改 `utils/__init__.py` 里的 `__version__`（如 `2.16.1`）
-2. 在 `CHANGELOG.md` 顶部加 `## v2.16.1` 章节（Release 正文就是这段内容，工作流会先校验章节存在）
-3. 提交、打 tag 并推送到远端：
+1. 改 `utils/__init__.py` 里的 `__version__`（如 `2.16.4`）
+2. 在 `CHANGELOG.md` 顶部加 `## v2.16.4` 章节（Release 正文就是这段内容，工作流会先校验章节存在）
+3. 提交、打 tag 并把提交和 tag 一起推送到远端：
    ```bash
-   git push origin master
-   git tag v2.16.1 && git push origin v2.16.1
+   git tag v2.16.4
+   git push origin master v2.16.4
    ```
 
 > `v*` tag 必须与 `utils/__init__.py` 中的 `__version__` 完全一致，且同名 Release 不能已存在，否则工作流会直接失败——避免发布说明、镜像标签与实际运行代码对不上。
@@ -554,6 +554,17 @@ v2.13.0 起存在 `sessions/history.db`（SQLite，可用环境变量 `TDL_HISTO
 > Docker / compose 用户不受影响（配置本来就是挂载进容器的，从未进过镜像）。
 
 逐条历史记录见 [CHANGELOG.md](CHANGELOG.md)；当前版本见顶部的 Release 徽章。
+
+<details>
+<summary><b>v2.16.3</b> — 复制真实路径、清理原子写残留、移动端截图与全仓格式化</summary>
+
+- `hide_file_name: true` 时列表继续掩码，但「复制」按钮复制真实路径（新增 `copy_path` 字段）
+- 启动清理顺带删除崩溃残留的 `.tgdl-tmp-*.tmp`（超过 1 小时）
+- `preview/screenshots.ps1` 改为调用 `preview/screenshots.py`（DevTools 协议），移动端截图不再被
+  Chrome 最小窗口宽度裁切，6 张 README 截图全部重拍
+- 全仓 `ruff format` 一次性格式化，与 pre-commit 的 ruff-format 对齐
+
+</details>
 
 <details>
 <summary><b>v2.16.2</b> — 未启用开关配色修复、/add_filter 提示与 Bot 回归测试</summary>

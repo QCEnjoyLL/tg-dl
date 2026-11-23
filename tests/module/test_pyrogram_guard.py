@@ -116,8 +116,9 @@ class GuardGetFileTestCase(unittest.IsolatedAsyncioTestCase):
         data = b"f" * (2 * CHUNK_SIZE)
         stream = FloodingStream(data, error)
 
-        with mock.patch.object(pyrogram_guard, "RESUME_SLEEP", 0), mock.patch.object(
-            pyrogram_guard, "FLOOD_WAIT_MARGIN", 0
+        with (
+            mock.patch.object(pyrogram_guard, "RESUME_SLEEP", 0),
+            mock.patch.object(pyrogram_guard, "FLOOD_WAIT_MARGIN", 0),
         ):
             result = await self.collect(stream, len(data))
 
@@ -128,9 +129,11 @@ class GuardGetFileTestCase(unittest.IsolatedAsyncioTestCase):
         error = pyrogram.errors.exceptions.flood_420.FloodPremiumWait(value=0)
         stream = FloodingStream(b"g" * CHUNK_SIZE, error, failures=99)
 
-        with mock.patch.object(pyrogram_guard, "RESUME_SLEEP", 0), mock.patch.object(
-            pyrogram_guard, "FLOOD_WAIT_MARGIN", 0
-        ), mock.patch.object(pyrogram_guard, "MAX_FLOOD_WAITS_PER_STREAM", 2):
+        with (
+            mock.patch.object(pyrogram_guard, "RESUME_SLEEP", 0),
+            mock.patch.object(pyrogram_guard, "FLOOD_WAIT_MARGIN", 0),
+            mock.patch.object(pyrogram_guard, "MAX_FLOOD_WAITS_PER_STREAM", 2),
+        ):
             with self.assertRaises(DownloadIncomplete) as caught:
                 await self.collect(stream, CHUNK_SIZE)
 

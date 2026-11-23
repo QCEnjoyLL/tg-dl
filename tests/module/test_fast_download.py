@@ -366,9 +366,10 @@ class ParallelDownloadTestCase(unittest.IsolatedAsyncioTestCase):
         handle = parallel_handle_download(self.fail_original)
         _captured_error.set(None)
 
-        with mock.patch.object(
-            pyrogram_guard, "FLOOD_WAIT_MARGIN", 0
-        ), mock.patch.object(pyrogram_guard, "MAX_FLOOD_WAITS_PER_STREAM", 2):
+        with (
+            mock.patch.object(pyrogram_guard, "FLOOD_WAIT_MARGIN", 0),
+            mock.patch.object(pyrogram_guard, "MAX_FLOOD_WAITS_PER_STREAM", 2),
+        ):
             result = await handle(AlwaysFlooding(error), self.packet(CHUNK_SIZE))
 
         self.assertIsNone(result)

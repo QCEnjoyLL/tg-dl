@@ -40,8 +40,18 @@ FILE_NAME_PREFIX_OPTIONS = [
     ("caption", "标题/文案"),
 ]
 
-LANGUAGE_OPTIONS = [("EN", "English"), ("ZH", "中文"), ("RU", "Русский"), ("UA", "Українська")]
-LOG_LEVEL_OPTIONS = [("DEBUG", "DEBUG"), ("INFO", "INFO"), ("WARNING", "WARNING"), ("ERROR", "ERROR")]
+LANGUAGE_OPTIONS = [
+    ("EN", "English"),
+    ("ZH", "中文"),
+    ("RU", "Русский"),
+    ("UA", "Українська"),
+]
+LOG_LEVEL_OPTIONS = [
+    ("DEBUG", "DEBUG"),
+    ("INFO", "INFO"),
+    ("WARNING", "WARNING"),
+    ("ERROR", "ERROR"),
+]
 UPLOAD_ADAPTER_OPTIONS = [("rclone", "rclone"), ("aligo", "aligo")]
 
 FIELDS: List[Dict[str, Any]] = [
@@ -707,9 +717,7 @@ def apply_values(config: dict, values: Dict[str, Any]) -> None:
                 if existing is not None:
                     new_chats.append(existing)
                 else:
-                    new_chats.append(
-                        {"chat_id": chat_id, "last_read_message_id": 0}
-                    )
+                    new_chats.append({"chat_id": chat_id, "last_read_message_id": 0})
             if not new_chats:
                 config.pop("chat", None)
                 continue

@@ -129,6 +129,22 @@ class WebApiTestCase(unittest.TestCase):
         self.assertEqual(rows[0]["filename"], "done.mp4")
         self.assertTrue(rows[0]["upload_success"])
         self.assertEqual(rows[0]["upload_state"], "uploaded")
+        # The copy button uses this field; a masked row must still copy the
+        # real path (see the hide_file_name test below).
+        self.assertEqual(rows[0]["copy_path"], "/tmp/done.mp4")
+
+    def test_hide_file_name_masks_the_list_but_keeps_the_copy_path(self):
+        app = mock.Mock(hide_file_name=True)
+        download_stat.mark_download_completed(
+            -100123, 5, "/tmp/secret/private-name.mp4", 10
+        )
+
+        with mock.patch.object(web, "_application", app):
+            rows = self.client.get("/get_download_list?already_down=true").get_json()
+
+        self.assertEqual(rows[0]["filename"], "****.mp4")
+        self.assertEqual(rows[0]["save_path"], "****.mp4")
+        self.assertEqual(rows[0]["copy_path"], "/tmp/secret/private-name.mp4")
 
     def test_download_list_defaults_to_progress(self):
         # Without an explicit filter the API returns what is in flight.
@@ -213,7 +229,9 @@ class WebApiTestCase(unittest.TestCase):
         self.assertEqual(payload["pages"], 2)
         self.assertEqual(len(payload["rows"]), 1)
 
-        searched = self.client.get("/get_failed_list?page=1&page_size=25&q=flood").get_json()
+        searched = self.client.get(
+            "/get_failed_list?page=1&page_size=25&q=flood"
+        ).get_json()
         self.assertEqual(searched["total"], 1)
         self.assertEqual(searched["rows"][0]["id"], 21)
 
@@ -277,10 +295,9 @@ class WebApiTestCase(unittest.TestCase):
             "checked_at": 1,
             "error": "",
         }
-        with mock.patch.object(
-            web.version_check, "refresh"
-        ) as refresh, mock.patch.object(
-            web.version_check, "update_info", return_value=info
+        with (
+            mock.patch.object(web.version_check, "refresh") as refresh,
+            mock.patch.object(web.version_check, "update_info", return_value=info),
         ):
             payload = self.client.get("/get_latest_version?force=1").get_json()
 
@@ -407,24 +424,18 @@ class WebApiTestCase(unittest.TestCase):
 
     def test_pause_and_resume_task(self):
         with mock.patch.object(web, "set_task_paused", return_value=True) as pause:
-            response = self.client.post(
-                "/pause_task?chat_id=-100123&message_id=7"
-            )
+            response = self.client.post("/pause_task?chat_id=-100123&message_id=7")
         self.assertEqual(response.get_json()["code"], "1")
         pause.assert_called_once_with(-100123, 7, True)
 
         with mock.patch.object(web, "set_task_paused", return_value=True) as resume:
-            response = self.client.post(
-                "/resume_task?chat_id=-100123&message_id=7"
-            )
+            response = self.client.post("/resume_task?chat_id=-100123&message_id=7")
         self.assertEqual(response.get_json()["code"], "1")
         resume.assert_called_once_with(-100123, 7, False)
 
     def test_delete_task(self):
         with mock.patch.object(web, "delete_task") as delete:
-            response = self.client.post(
-                "/delete_task?chat_id=-100123&message_id=7"
-            )
+            response = self.client.post("/delete_task?chat_id=-100123&message_id=7")
         self.assertEqual(response.get_json()["code"], "1")
         delete.assert_called_once_with(-100123, 7)
 
@@ -465,9 +476,7 @@ class WebApiTestCase(unittest.TestCase):
         future = mock.Mock()
         future.result.return_value = (0, ["消息 132 已不可访问"])
         with mock.patch.object(web, "_retry_handler", return_value=future):
-            response = self.client.post(
-                "/retry_failed?chat_id=-100123&message_id=132"
-            )
+            response = self.client.post("/retry_failed?chat_id=-100123&message_id=132")
 
         payload = response.get_json()
         self.assertEqual(payload["code"], "0")
@@ -477,9 +486,7 @@ class WebApiTestCase(unittest.TestCase):
         """A typo used to fall back to "retry every failed message"."""
         handler = mock.Mock()
         with mock.patch.object(web, "_retry_handler", handler):
-            response = self.client.post(
-                "/retry_failed?chat_id=-100123&message_id=abc"
-            )
+            response = self.client.post("/retry_failed?chat_id=-100123&message_id=abc")
 
         payload = response.get_json()
         self.assertEqual(payload["code"], "0")
@@ -558,7 +565,6 @@ class _ConfigFixture(unittest.TestCase):
 
 
 class WebConfigTestCase(_ConfigFixture):
-
     def test_get_config_masks_secrets(self):
         response = self.client.get("/get_config")
         payload = response.get_json()
@@ -874,9 +880,7 @@ class WebLoginTestCase(unittest.TestCase):
     def test_repeated_failures_lock_the_client_out(self):
         try:
             web._login_failures.clear()  # pylint: disable = W0212
-            with mock.patch.dict(
-                web.web_login_users, {"root": "s3cret"}, clear=True
-            ):
+            with mock.patch.dict(web.web_login_users, {"root": "s3cret"}, clear=True):
                 for _ in range(web._LOGIN_MAX_FAILURES):  # pylint: disable = W0212
                     self.client.post("/login", data={"password": "wrong"})
                 # Even the right password must not be accepted while locked out.
@@ -891,9 +895,7 @@ class WebLoginTestCase(unittest.TestCase):
     def test_successful_login_clears_the_failure_counter(self):
         try:
             web._login_failures.clear()  # pylint: disable = W0212
-            with mock.patch.dict(
-                web.web_login_users, {"root": "s3cret"}, clear=True
-            ):
+            with mock.patch.dict(web.web_login_users, {"root": "s3cret"}, clear=True):
                 self.client.post("/login", data={"password": "wrong"})
                 response = self.client.post("/login", data={"password": "s3cret"})
 
@@ -918,13 +920,12 @@ class WebLoginTestCase(unittest.TestCase):
                 -web._LOGIN_FAILURE_WINDOW_SECONDS * 2,  # pylint: disable = W0212
                 0.0,
             )
-            with mock.patch.dict(
-                web.web_login_users, {"root": "s3cret"}, clear=True
-            ):
+            with mock.patch.dict(web.web_login_users, {"root": "s3cret"}, clear=True):
                 self.client.post("/login", data={"password": "wrong"})
 
             self.assertNotIn(
-                "203.0.113.7", web._login_failures  # pylint: disable = W0212
+                "203.0.113.7",
+                web._login_failures,  # pylint: disable = W0212
             )
             # The current client is still counted, so pruning is not a bypass.
             self.assertEqual(len(web._login_failures), 1)  # pylint: disable = W0212
@@ -936,9 +937,7 @@ class WebLoginTestCase(unittest.TestCase):
         try:
             web._login_failures.clear()  # pylint: disable = W0212
             web._login_last_prune = float("-inf")  # pylint: disable = W0212
-            with mock.patch.dict(
-                web.web_login_users, {"root": "s3cret"}, clear=True
-            ):
+            with mock.patch.dict(web.web_login_users, {"root": "s3cret"}, clear=True):
                 for _ in range(web._LOGIN_MAX_FAILURES):  # pylint: disable = W0212
                     self.client.post("/login", data={"password": "wrong"})
 
@@ -1012,10 +1011,15 @@ class WriteConfigAtomicTestCase(unittest.TestCase):
         """A failing fallback write surfaces the error instead of hiding it."""
         with tempfile.TemporaryDirectory() as tmp_dir:
             path = self._write_old(tmp_dir)
-            with mock.patch.object(
-                atomic_write.os, "replace", side_effect=OSError(errno.EBUSY, "busy")
-            ), mock.patch.object(
-                atomic_write.shutil, "copyfile", side_effect=OSError(errno.ENOSPC, "full")
+            with (
+                mock.patch.object(
+                    atomic_write.os, "replace", side_effect=OSError(errno.EBUSY, "busy")
+                ),
+                mock.patch.object(
+                    atomic_write.shutil,
+                    "copyfile",
+                    side_effect=OSError(errno.ENOSPC, "full"),
+                ),
             ):
                 with self.assertRaises(OSError):
                     atomic_write.write_text_atomic(path, "new: value\n")

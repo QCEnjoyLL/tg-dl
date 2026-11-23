@@ -68,9 +68,7 @@ class RefreshTestCase(unittest.TestCase):
     def test_refresh_swallows_network_errors(self):
         # Offline, DNS-blocked or rate limited: the app must keep working, but
         # the reason is exposed so the UI can explain a failed manual check.
-        with mock.patch.object(
-            version_check, "_fetch", side_effect=OSError("offline")
-        ):
+        with mock.patch.object(version_check, "_fetch", side_effect=OSError("offline")):
             version_check.refresh(force=True)
 
         self.assertIsNone(version_check._latest)
@@ -126,7 +124,9 @@ class RefreshTestCase(unittest.TestCase):
         )
         with (
             mock.patch.object(
-                version_check.urllib.request, "ProxyHandler", wraps=version_check.urllib.request.ProxyHandler
+                version_check.urllib.request,
+                "ProxyHandler",
+                wraps=version_check.urllib.request.ProxyHandler,
             ) as handler_mock,
             mock.patch.object(
                 version_check.urllib.request, "build_opener", return_value=opener
@@ -135,9 +135,7 @@ class RefreshTestCase(unittest.TestCase):
             version_check.refresh(force=True)
 
         proxies = handler_mock.call_args.args[0]
-        self.assertEqual(
-            proxies["https"], "http://u%3Aname:p%40ss@127.0.0.1:8080"
-        )
+        self.assertEqual(proxies["https"], "http://u%3Aname:p%40ss@127.0.0.1:8080")
         self.assertEqual(version_check.update_info()["latest"], "99.2.0")
 
     def test_socks5_proxy_uses_socks_connection_with_rdns(self):
@@ -154,9 +152,7 @@ class RefreshTestCase(unittest.TestCase):
 
         def fake_do_open(conn_cls, req, context=None):
             conn = conn_cls("api.github.com", context=context)
-            with mock.patch.object(
-                conn._context, "wrap_socket", return_value=raw_sock
-            ):
+            with mock.patch.object(conn._context, "wrap_socket", return_value=raw_sock):
                 conn.connect()
             resp = mock.MagicMock()
             resp.code = 200

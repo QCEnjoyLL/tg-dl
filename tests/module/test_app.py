@@ -42,24 +42,24 @@ class AppTestCase(unittest.TestCase):
 
         app.chat_download_config[123] = ChatDownloadConfig()
         app.chat_download_config[123].last_read_message_id = 13
-        app.chat_download_config[123].node.download_status[
-            6
-        ] = DownloadStatus.Downloading
+        app.chat_download_config[123].node.download_status[6] = (
+            DownloadStatus.Downloading
+        )
         app.chat_download_config[123].ids_to_retry.append(7)
         # download success
-        app.chat_download_config[123].node.download_status[
-            8
-        ] = DownloadStatus.SuccessDownload
+        app.chat_download_config[123].node.download_status[8] = (
+            DownloadStatus.SuccessDownload
+        )
         app.chat_download_config[123].finish_task += 1
         # download success
-        app.chat_download_config[123].node.download_status[
-            10
-        ] = DownloadStatus.SuccessDownload
+        app.chat_download_config[123].node.download_status[10] = (
+            DownloadStatus.SuccessDownload
+        )
         app.chat_download_config[123].finish_task += 1
         # not exist message
-        app.chat_download_config[123].node.download_status[
-            13
-        ] = DownloadStatus.SuccessDownload
+        app.chat_download_config[123].node.download_status[13] = (
+            DownloadStatus.SuccessDownload
+        )
         app.config["chat"] = [{"chat_id": 123, "last_read_message_id": 5}]
 
         app.update_config(False)
@@ -116,9 +116,7 @@ class AppTestCase(unittest.TestCase):
         self.assertEqual(app.config["chat"][0]["last_read_message_id"], 201)
         self.assertEqual(app.config["chat"][1]["chat_id"], 333)
         self.assertEqual(app.config["chat"][1]["last_read_message_id"], 0)
-        self.assertTrue(
-            all("chat_id" in entry for entry in app.config["chat"])
-        )
+        self.assertTrue(all("chat_id" in entry for entry in app.config["chat"]))
 
     def test_update_config_without_config_chat_key_does_not_raise(self):
         app = Application("", "")
@@ -186,9 +184,7 @@ class AppTestCase(unittest.TestCase):
         self.assertNotIn(None, app.chat_download_config)
         self.assertIn("-100123", app.chat_download_config)
         # A missing last_read_message_id must not become None (TypeError later).
-        self.assertEqual(
-            app.chat_download_config["-100123"].last_read_message_id, 0
-        )
+        self.assertEqual(app.chat_download_config["-100123"].last_read_message_id, 0)
 
     def test_reload_hot_config(self):
         app = Application("", "")
@@ -209,9 +205,7 @@ class AppTestCase(unittest.TestCase):
         # The raw YAML editor can save `media_types: video`; iterating that
         # string downloads nothing at all.
         app = Application("", "")
-        app.assign_config(
-            {"api_id": 1, "api_hash": "hash", "media_types": "video"}
-        )
+        app.assign_config({"api_id": 1, "api_hash": "hash", "media_types": "video"})
         self.assertEqual(app.media_types, ["video"])
 
     def test_unknown_media_types_fall_back_to_all(self):
@@ -292,9 +286,7 @@ class AppTestCase(unittest.TestCase):
             app.get_caption_name(-100, f"group-{newest}"),
             f"caption-{newest}",
         )
-        self.assertEqual(
-            app.get_caption_entities(-100, f"group-{newest}"), [newest]
-        )
+        self.assertEqual(app.get_caption_entities(-100, f"group-{newest}"), [newest])
         # The oldest group was evicted.
         self.assertIsNone(app.get_caption_name(-100, "group-0"))
         self.assertIsNone(app.get_caption_entities(-100, "group-0"))

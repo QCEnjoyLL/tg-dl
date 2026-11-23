@@ -1,4 +1,5 @@
 """Downloads media from telegram."""
+
 import asyncio
 import logging
 import os
@@ -658,7 +659,9 @@ async def download_task(
                 file_size,
             )
         except Exception as report_err:  # pylint: disable = W0703
-            logger.exception(f"Message[{message.id}] report status failed: {report_err}")
+            logger.exception(
+                f"Message[{message.id}] report status failed: {report_err}"
+            )
 
 
 # pylint: disable = R0915,R0914
@@ -1067,9 +1070,7 @@ async def retry_failed_messages(
     for cid, messages in failed.items():
         if chat_id is not None and str(cid) != str(chat_id):
             continue
-        ids = [
-            mid for mid in messages if message_id is None or mid == message_id
-        ]
+        ids = [mid for mid in messages if message_id is None or mid == message_id]
         if ids:
             targets.append((normalize_chat_id(cid), ids))
 
@@ -1112,12 +1113,9 @@ async def retry_failed_messages(
                         if len(batch_ids) <= 5
                         else f"{len(batch_ids)} 条消息"
                     )
-                    logger.warning(
-                        f"retry: message {label} in {cid} is not accessible"
-                    )
+                    logger.warning(f"retry: message {label} in {cid} is not accessible")
                     reasons.append(
-                        f"消息 {label} 已不可访问"
-                        "（可能被删除或当前账号没有权限）"
+                        f"消息 {label} 已不可访问（可能被删除或当前账号没有权限）"
                     )
                     continue
                 if await add_download_task(message, node):
@@ -1219,11 +1217,16 @@ async def stop_server(client: pyrogram.Client):
 #: this old is treated as abandoned and removed at startup.
 STALE_TEMP_MAX_AGE = 7 * 24 * 60 * 60
 
+#: ``utils.atomic_write`` writes through ``.tgdl-tmp-*.tmp`` next to the target.
+#: The write takes milliseconds, so anything this old was left by a crash and is
+#: safe to delete (otherwise config saves slowly litter the directory).
+STALE_ATOMIC_TEMP_AGE = 60 * 60
+
 
 def _cleanup_stale_temp_files(
     directory: str, max_age: float = STALE_TEMP_MAX_AGE
 ) -> int:
-    """Remove abandoned ``.temp`` and ``.temp.json`` files left behind."""
+    """Remove abandoned ``.temp`` / ``.temp.json`` / atomic-write temp files."""
     if not directory or not os.path.isdir(directory):
         return 0
     removed = 0
@@ -1261,6 +1264,14 @@ def _cleanup_stale_temp_files(
                     removed += 1
                 except FileNotFoundError:
                     continue
+                except OSError:
+                    continue
+            elif name.startswith(".tgdl-tmp-") and name.endswith(".tmp"):
+                try:
+                    if now - os.path.getmtime(path) < STALE_ATOMIC_TEMP_AGE:
+                        continue
+                    os.remove(path)
+                    removed += 1
                 except OSError:
                     continue
     return removed

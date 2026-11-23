@@ -1,4 +1,5 @@
 """Unittest module for media downloader."""
+
 import sys
 import unittest
 from datetime import datetime
@@ -314,7 +315,9 @@ class FilterTestCase(unittest.TestCase):
 
         self.assertEqual(filter_exec(download_filter, "caption == r'.*#中文.*'"), True)
 
-        self.assertEqual(filter_exec(download_filter, "caption == r'.*#中文啊.*'"), False)
+        self.assertEqual(
+            filter_exec(download_filter, "caption == r'.*#中文啊.*'"), False
+        )
 
         self.assertEqual(filter_exec(download_filter, "reply_to_message_id == 4"), True)
         self.assertEqual(
@@ -354,7 +357,8 @@ class FilterTestCase(unittest.TestCase):
             (False, "Syntax error at '.*#中文啊.*'"),
         )
         self.assertEqual(
-            check_filter_exec(download_filter, "caption == r'.*#中文啊.*'"), (True, None)
+            check_filter_exec(download_filter, "caption == r'.*#中文啊.*'"),
+            (True, None),
         )
         self.assertEqual(
             check_filter_exec(download_filter, "caption tis r'.*#中文啊.*'"),

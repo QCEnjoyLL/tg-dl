@@ -28,15 +28,19 @@ class DownloadTaskFinalizeTestCase(unittest.IsolatedAsyncioTestCase):
         message.text = None
         message.media = None
 
-        with mock.patch.object(
-            md, "download_media", new=mock.AsyncMock(side_effect=RuntimeError("boom"))
-        ), mock.patch.object(md, "remove_download_result") as remove_mock, mock.patch.object(
-            md, "mark_download_failed"
-        ) as mark_mock, mock.patch.object(
-            md, "report_bot_download_status", new=mock.AsyncMock()
-        ) as report_mock, mock.patch.object(
-            md.app, "set_download_id"
-        ) as set_id_mock:
+        with (
+            mock.patch.object(
+                md,
+                "download_media",
+                new=mock.AsyncMock(side_effect=RuntimeError("boom")),
+            ),
+            mock.patch.object(md, "remove_download_result") as remove_mock,
+            mock.patch.object(md, "mark_download_failed") as mark_mock,
+            mock.patch.object(
+                md, "report_bot_download_status", new=mock.AsyncMock()
+            ) as report_mock,
+            mock.patch.object(md.app, "set_download_id") as set_id_mock,
+        ):
             await md.download_task(mock.Mock(), message, node)
 
         self.assertIs(node.download_status[42], DownloadStatus.FailedDownload)
@@ -59,22 +63,23 @@ class DownloadTaskFinalizeTestCase(unittest.IsolatedAsyncioTestCase):
         message.text = None
         message.media = mock.Mock()
 
-        with mock.patch.object(
-            md,
-            "download_media",
-            new=mock.AsyncMock(
-                return_value=(DownloadStatus.SuccessDownload, "/tmp/finished.mp4")
+        with (
+            mock.patch.object(
+                md,
+                "download_media",
+                new=mock.AsyncMock(
+                    return_value=(DownloadStatus.SuccessDownload, "/tmp/finished.mp4")
+                ),
             ),
-        ), mock.patch.object(
-            md, "upload_telegram_chat", new=mock.AsyncMock(side_effect=RuntimeError("up"))
-        ), mock.patch.object(
-            md, "report_bot_download_status", new=mock.AsyncMock()
-        ), mock.patch.object(
-            md, "mark_download_completed"
-        ) as completed_mock, mock.patch.object(
-            md.app, "set_download_id"
-        ), mock.patch.object(
-            md.os.path, "getsize", return_value=123
+            mock.patch.object(
+                md,
+                "upload_telegram_chat",
+                new=mock.AsyncMock(side_effect=RuntimeError("up")),
+            ),
+            mock.patch.object(md, "report_bot_download_status", new=mock.AsyncMock()),
+            mock.patch.object(md, "mark_download_completed") as completed_mock,
+            mock.patch.object(md.app, "set_download_id"),
+            mock.patch.object(md.os.path, "getsize", return_value=123),
         ):
             await md.download_task(mock.Mock(), message, node)
 
@@ -102,34 +107,27 @@ class DownloadTaskFinalizeTestCase(unittest.IsolatedAsyncioTestCase):
         message.media = mock.Mock()
 
         dispatcher = mock.Mock()
-        with mock.patch.object(
-            md.app.cloud_drive_config, "enable_upload_file", True
-        ), mock.patch.object(
-            md,
-            "download_media",
-            new=mock.AsyncMock(
-                return_value=(DownloadStatus.SuccessDownload, "/tmp/cloud.mp4")
+        with (
+            mock.patch.object(md.app.cloud_drive_config, "enable_upload_file", True),
+            mock.patch.object(
+                md,
+                "download_media",
+                new=mock.AsyncMock(
+                    return_value=(DownloadStatus.SuccessDownload, "/tmp/cloud.mp4")
+                ),
             ),
-        ), mock.patch.object(
-            md, "upload_telegram_chat", new=mock.AsyncMock()
-        ), mock.patch.object(
-            md, "upload_dispatcher", dispatcher
-        ), mock.patch.object(
-            md, "report_bot_download_status", new=mock.AsyncMock()
-        ), mock.patch.object(
-            md, "mark_download_completed"
-        ) as completed_mock, mock.patch.object(
-            md.app, "set_download_id"
-        ), mock.patch.object(
-            md.os.path, "getsize", return_value=10
+            mock.patch.object(md, "upload_telegram_chat", new=mock.AsyncMock()),
+            mock.patch.object(md, "upload_dispatcher", dispatcher),
+            mock.patch.object(md, "report_bot_download_status", new=mock.AsyncMock()),
+            mock.patch.object(md, "mark_download_completed") as completed_mock,
+            mock.patch.object(md.app, "set_download_id"),
+            mock.patch.object(md.os.path, "getsize", return_value=10),
         ):
             await md.download_task(mock.Mock(), message, node)
 
         # The download row is recorded as "仅本地" first; the upload job fills in
         # the state later, so the worker can fetch the next message right away.
-        completed_mock.assert_called_once_with(
-            -100123, 44, "/tmp/cloud.mp4", 10, None
-        )
+        completed_mock.assert_called_once_with(-100123, 44, "/tmp/cloud.mp4", 10, None)
         dispatcher.submit.assert_called_once()
 
     async def test_background_upload_records_the_upload_state(self):
@@ -140,13 +138,13 @@ class DownloadTaskFinalizeTestCase(unittest.IsolatedAsyncioTestCase):
         node.upload_success_count = 0
         node.upload_skipped_count = 0
 
-        with mock.patch.object(
-            md.app, "upload_file", new=mock.AsyncMock(return_value=UPLOAD_EXISTS)
-        ), mock.patch.object(
-            md, "update_completed_upload_state"
-        ) as update_mock, mock.patch.object(
-            md.upload_stat, "remove"
-        ) as remove_mock:
+        with (
+            mock.patch.object(
+                md.app, "upload_file", new=mock.AsyncMock(return_value=UPLOAD_EXISTS)
+            ),
+            mock.patch.object(md, "update_completed_upload_state") as update_mock,
+            mock.patch.object(md.upload_stat, "remove") as remove_mock,
+        ):
             await md._run_cloud_upload(  # pylint: disable = W0212
                 node, 44, "/tmp/cloud.mp4", "cloud.mp4"
             )
@@ -162,11 +160,12 @@ class DownloadTaskFinalizeTestCase(unittest.IsolatedAsyncioTestCase):
         node.upload_success_count = 0
         node.upload_skipped_count = 0
 
-        with mock.patch.object(
-            md.app, "upload_file", new=mock.AsyncMock(return_value=None)
-        ), mock.patch.object(
-            md, "update_completed_upload_state"
-        ) as update_mock:
+        with (
+            mock.patch.object(
+                md.app, "upload_file", new=mock.AsyncMock(return_value=None)
+            ),
+            mock.patch.object(md, "update_completed_upload_state") as update_mock,
+        ):
             await md._run_cloud_upload(  # pylint: disable = W0212
                 node, 44, "/tmp/cloud.mp4", "cloud.mp4"
             )
@@ -179,11 +178,14 @@ class DownloadTaskFinalizeTestCase(unittest.IsolatedAsyncioTestCase):
         node = mock.Mock()
         node.chat_id = -100123
 
-        with mock.patch.object(
-            md.app,
-            "upload_file",
-            new=mock.AsyncMock(side_effect=RuntimeError("drive offline")),
-        ), mock.patch.object(md, "update_completed_upload_state") as update_mock:
+        with (
+            mock.patch.object(
+                md.app,
+                "upload_file",
+                new=mock.AsyncMock(side_effect=RuntimeError("drive offline")),
+            ),
+            mock.patch.object(md, "update_completed_upload_state") as update_mock,
+        ):
             await md._run_cloud_upload(  # pylint: disable = W0212
                 node, 44, "/tmp/cloud.mp4", "cloud.mp4"
             )
@@ -213,11 +215,15 @@ class DownloadTaskFinalizeTestCase(unittest.IsolatedAsyncioTestCase):
         node.pending_upload_count = 1
         node.cloud_drive_upload_stat_dict[44] = mock.Mock()
 
-        with mock.patch.object(
-            md.app, "upload_file", new=mock.AsyncMock(return_value="uploaded")
-        ), mock.patch.object(md, "update_completed_upload_state"), mock.patch.object(
-            md, "report_bot_status", new=mock.AsyncMock()
-        ) as report_mock:
+        with (
+            mock.patch.object(
+                md.app, "upload_file", new=mock.AsyncMock(return_value="uploaded")
+            ),
+            mock.patch.object(md, "update_completed_upload_state"),
+            mock.patch.object(
+                md, "report_bot_status", new=mock.AsyncMock()
+            ) as report_mock,
+        ):
             await md._run_cloud_upload(  # pylint: disable = W0212
                 node, 44, "/tmp/cloud.mp4", "cloud.mp4"
             )

@@ -396,7 +396,7 @@ def build_help_text() -> str:
             "(1 = oldest, 0 = newest)",
         ),
         (
-            "/download https://t.me/c/1234567890/500 0 0 " f"[{_t('Filter')}]",
+            f"/download https://t.me/c/1234567890/500 0 0 [{_t('Filter')}]",
             "Download only messages of group 1234567890 that match [Filter]",
         ),
         (
@@ -405,8 +405,7 @@ def build_help_text() -> str:
         ),
         (
             "/listen_forward https://t.me/c/1111111111 https://t.me/c/2222222222",
-            "Keep forwarding new messages from group 1111111111 "
-            "to group 2222222222",
+            "Keep forwarding new messages from group 1111111111 to group 2222222222",
         ),
         (
             "/forward_to_comments https://t.me/c/1111111111 "
@@ -473,9 +472,7 @@ async def send_help_str(client: pyrogram.Client, chat_id):
         its version, the available commands and one example per command.
     """
 
-    await client.send_message(
-        chat_id, build_help_text(), reply_markup=help_keyboard()
-    )
+    await client.send_message(chat_id, build_help_text(), reply_markup=help_keyboard())
 
 
 async def help_command(client: pyrogram.Client, message: pyrogram.types.Message):
@@ -1113,7 +1110,9 @@ async def check_new_messages(
         # Only get the most recent message if last_message_id is 0
         if last_message_id == 0:
             async for message in get_chat_history_v2(  # type: ignore
-                client, chat_id, limit=1  # Get only the latest message
+                client,
+                chat_id,
+                limit=1,  # Get only the latest message
             ):
                 last_message_id = message.id
                 return last_message_id

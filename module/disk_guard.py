@@ -133,9 +133,7 @@ class DiskSpaceGate:
             "paths": list(self._paths),
         }
 
-    async def _sleep_poll(
-        self, should_cancel: Optional[Callable[[], bool]]
-    ) -> None:
+    async def _sleep_poll(self, should_cancel: Optional[Callable[[], bool]]) -> None:
         if should_cancel is None:
             await asyncio.sleep(self._poll_seconds)
             return

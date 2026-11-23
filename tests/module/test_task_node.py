@@ -81,20 +81,16 @@ class DownloadChatTaskScanningTestCase(unittest.IsolatedAsyncioTestCase):
             task_node.total_task += 1
             return True
 
-        with mock.patch.object(md, "get_chat_history_v2", history), mock.patch.object(
-            md, "add_download_task", add_task
-        ), mock.patch.object(md, "set_meta_data"), mock.patch.object(
-            md, "MetaData"
-        ), mock.patch.object(
-            md.app, "exec_filter", return_value=True
-        ), mock.patch.object(
-            md.app, "need_skip_message", return_value=False
-        ), mock.patch.object(
-            md.app, "set_caption_name"
-        ), mock.patch.object(
-            md.app, "set_caption_entities"
-        ), mock.patch.object(
-            md.app, "get_caption_name", return_value=""
+        with (
+            mock.patch.object(md, "get_chat_history_v2", history),
+            mock.patch.object(md, "add_download_task", add_task),
+            mock.patch.object(md, "set_meta_data"),
+            mock.patch.object(md, "MetaData"),
+            mock.patch.object(md.app, "exec_filter", return_value=True),
+            mock.patch.object(md.app, "need_skip_message", return_value=False),
+            mock.patch.object(md.app, "set_caption_name"),
+            mock.patch.object(md.app, "set_caption_entities"),
+            mock.patch.object(md.app, "get_caption_name", return_value=""),
         ):
             await md.download_chat_task(mock.Mock(), config, node)
 

@@ -32,10 +32,13 @@ class UploadTelegramChatTestCase(unittest.IsolatedAsyncioTestCase):
         self.file_name = "/tmp/keep-me.mp4"
 
     async def test_failed_upload_keeps_local_file(self):
-        with mock.patch(
-            "module.pyrogram_extension.upload_telegram_chat_message",
-            new=mock.AsyncMock(return_value=ForwardStatus.FailedForward),
-        ), mock.patch("module.pyrogram_extension.os.remove") as remove_mock:
+        with (
+            mock.patch(
+                "module.pyrogram_extension.upload_telegram_chat_message",
+                new=mock.AsyncMock(return_value=ForwardStatus.FailedForward),
+            ),
+            mock.patch("module.pyrogram_extension.os.remove") as remove_mock,
+        ):
             await upload_telegram_chat(
                 self.client,
                 self.client,
@@ -49,10 +52,13 @@ class UploadTelegramChatTestCase(unittest.IsolatedAsyncioTestCase):
         remove_mock.assert_not_called()
 
     async def test_successful_upload_deletes_local_file(self):
-        with mock.patch(
-            "module.pyrogram_extension.upload_telegram_chat_message",
-            new=mock.AsyncMock(return_value=ForwardStatus.SuccessForward),
-        ), mock.patch("module.pyrogram_extension.os.remove") as remove_mock:
+        with (
+            mock.patch(
+                "module.pyrogram_extension.upload_telegram_chat_message",
+                new=mock.AsyncMock(return_value=ForwardStatus.SuccessForward),
+            ),
+            mock.patch("module.pyrogram_extension.os.remove") as remove_mock,
+        ):
             await upload_telegram_chat(
                 self.client,
                 self.client,
@@ -83,9 +89,7 @@ class RecordDownloadStatusTestCase(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(BoomError):
             await failing(None, message, None, None, node)
 
-        self.assertIs(
-            _download_cache[(-100999, 987654)], DownloadStatus.FailedDownload
-        )
+        self.assertIs(_download_cache[(-100999, 987654)], DownloadStatus.FailedDownload)
 
 
 class CaptionEntityAndCacheForwardTestCase(unittest.IsolatedAsyncioTestCase):
@@ -108,8 +112,12 @@ class CaptionEntityAndCacheForwardTestCase(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(truncated_text, "😀abcde")
         self.assertEqual(len(truncated_entities), 2)
-        self.assertEqual((truncated_entities[0].offset, truncated_entities[0].length), (6, 1))
-        self.assertEqual((truncated_entities[1].offset, truncated_entities[1].length), (2, 5))
+        self.assertEqual(
+            (truncated_entities[0].offset, truncated_entities[0].length), (6, 1)
+        )
+        self.assertEqual(
+            (truncated_entities[1].offset, truncated_entities[1].length), (2, 5)
+        )
 
     def test_convert_message_entity_only_sets_user_when_present(self):
         bold = convert_message_entity(

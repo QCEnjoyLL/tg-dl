@@ -68,9 +68,9 @@ _flask_app = Flask(__name__)
 # per process is fine: it invalidates old sessions on restart, which is
 # preferable to forgeable cookies. Set TDL_WEB_SECRET_KEY to keep sessions
 # across restarts behind a stable deployment.
-_flask_app.config["SECRET_KEY"] = (
-    os.environ.get("TDL_WEB_SECRET_KEY") or secrets.token_hex(32)
-)
+_flask_app.config["SECRET_KEY"] = os.environ.get(
+    "TDL_WEB_SECRET_KEY"
+) or secrets.token_hex(32)
 _flask_app.config["SESSION_COOKIE_HTTPONLY"] = True
 _flask_app.config["SESSION_COOKIE_SAMESITE"] = "Strict"
 if os.environ.get("TDL_WEB_COOKIE_SECURE", "").lower() in ("1", "true", "yes"):
@@ -499,6 +499,9 @@ def _format_completed_row(value: dict) -> dict:
         "filename": display_name,
         "total_size": format_byte(value.get("total_size") or 0),
         "save_path": display_path,
+        # The copy button wants the real path even when hide_file_name masks the
+        # list: the row is already visible, only the name must not be printed.
+        "copy_path": norm_path,
         "completed_time": value.get("completed_time") or 0,
         "upload_success": bool(value.get("upload_success")),
         # "uploaded" (new) / "exists" (already on the remote) / None
@@ -1006,16 +1009,12 @@ def set_config_form():
 
     values, errors = config_form.parse_form(request.form, config)
     if errors:
-        return jsonify(
-            {"code": "0", "errors": errors, "msg": "请检查标红的设置项"}
-        )
+        return jsonify({"code": "0", "errors": errors, "msg": "请检查标红的设置项"})
 
     config_form.apply_values(config, values)
     errors = config_form.validate(config)
     if errors:
-        return jsonify(
-            {"code": "0", "errors": errors, "msg": "请检查标红的设置项"}
-        )
+        return jsonify({"code": "0", "errors": errors, "msg": "请检查标红的设置项"})
 
     stream = io.StringIO()
     try:
@@ -1071,7 +1070,9 @@ def set_config():
     if not isinstance(parsed, dict):
         return jsonify({"code": "0", "msg": "配置必须是 YAML 映射（key: value）"})
 
-    missing = [key for key in ("api_id", "api_hash", "media_types") if key not in parsed]
+    missing = [
+        key for key in ("api_id", "api_hash", "media_types") if key not in parsed
+    ]
     if missing:
         return jsonify({"code": "0", "msg": "缺少必填项：" + ", ".join(missing)})
 

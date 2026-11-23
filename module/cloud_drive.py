@@ -1,4 +1,5 @@
 """provide upload cloud drive"""
+
 import asyncio
 import functools
 import hashlib
@@ -152,9 +153,7 @@ class CloudDrive:
         elif save_dir:
             relative_dir = local_dir.replace(save_dir, "").strip("/")
 
-        remote_dir = _posix(
-            drive_config.remote_dir + "/" + relative_dir + "/"
-        )
+        remote_dir = _posix(drive_config.remote_dir + "/" + relative_dir + "/")
         # A bare remote ("115:") plus the join above yields "115:/": collapse
         # repeated slashes but keep the single separator after the scheme.
         return re.sub(r"/{2,}", "/", remote_dir)
@@ -350,9 +349,7 @@ class CloudDrive:
         proc = None
         try:
             proc = await asyncio.create_subprocess_exec(
-                *CloudDrive.hashsum_args(
-                    drive_config.rclone_path, remote_file_path
-                ),
+                *CloudDrive.hashsum_args(drive_config.rclone_path, remote_file_path),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
@@ -488,9 +485,7 @@ class CloudDrive:
                 # The file vanished or the path is virtual; fall back to letting
                 # rclone decide instead of failing the whole upload.
                 local_size = None
-            remote_file_path = (
-                f"{remote_dir.rstrip('/')}/{os.path.basename(file_path)}"
-            )
+            remote_file_path = f"{remote_dir.rstrip('/')}/{os.path.basename(file_path)}"
 
             existing = await CloudDrive.rclone_remote_stat(
                 drive_config, remote_file_path
@@ -607,8 +602,7 @@ class CloudDrive:
                 suffix = f" (rclone: {verdict})" if verdict else ""
                 if upload_state == UPLOAD_EXISTS:
                     logger.info(
-                        f"remote already has {remote_file_path}, upload skipped"
-                        f"{suffix}"
+                        f"remote already has {remote_file_path}, upload skipped{suffix}"
                     )
                 else:
                     logger.info(

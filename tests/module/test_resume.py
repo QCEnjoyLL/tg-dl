@@ -118,7 +118,9 @@ class ResumeOffsetTestCase(unittest.TestCase):
 
 
 class ParallelToSequentialFallbackTestCase(unittest.IsolatedAsyncioTestCase):
-    async def test_switching_to_sequential_after_parallel_sparse_file_restarts_cleanly(self):
+    async def test_switching_to_sequential_after_parallel_sparse_file_restarts_cleanly(
+        self,
+    ):
         saved = fast_download.get_chunk_concurrency()
         try:
             with tempfile.TemporaryDirectory() as tmp_dir:

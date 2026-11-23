@@ -665,9 +665,7 @@ class Application:
                     continue
                 last_read = item.get("last_read_message_id") or 0
                 self.chat_download_config[chat_id] = ChatDownloadConfig()
-                self.chat_download_config[chat_id].last_read_message_id = int(
-                    last_read
-                )
+                self.chat_download_config[chat_id].last_read_message_id = int(last_read)
                 self.chat_download_config[chat_id].download_filter = (
                     item.get("download_filter") or ""
                 )
@@ -685,9 +683,9 @@ class Application:
                     "ids_to_retry"
                 ]
                 for it in self.chat_download_config[self._chat_id].ids_to_retry:
-                    self.chat_download_config[self._chat_id].ids_to_retry_dict[
-                        it
-                    ] = True
+                    self.chat_download_config[self._chat_id].ids_to_retry_dict[it] = (
+                        True
+                    )
 
             self.chat_download_config[self._chat_id].last_read_message_id = _config[
                 "last_read_message_id"
@@ -742,9 +740,9 @@ class Application:
                     "ids_to_retry"
                 ]
                 for it in self.chat_download_config[self._chat_id].ids_to_retry:
-                    self.chat_download_config[self._chat_id].ids_to_retry_dict[
-                        it
-                    ] = True
+                    self.chat_download_config[self._chat_id].ids_to_retry_dict[it] = (
+                        True
+                    )
                 self.app_data.pop("ids_to_retry")
         else:
             if app_data.get("chat"):
@@ -759,9 +757,9 @@ class Application:
                             "ids_to_retry", []
                         )
                         for it in self.chat_download_config[chat_id].ids_to_retry:
-                            self.chat_download_config[chat_id].ids_to_retry_dict[
-                                it
-                            ] = True
+                            self.chat_download_config[chat_id].ids_to_retry_dict[it] = (
+                                True
+                            )
         return True
 
     @staticmethod
@@ -1011,9 +1009,7 @@ class Application:
                 # reorder, add, or remove chats while the downloader is running.
                 cfg_entry = config_by_id.get(key_str)
                 if cfg_entry is not None:
-                    cfg_entry["last_read_message_id"] = (
-                        value.last_read_message_id + 1
-                    )
+                    cfg_entry["last_read_message_id"] = value.last_read_message_id + 1
 
             data_entry = data_by_id.get(key_str)
             if data_entry is None:
@@ -1090,9 +1086,7 @@ class Application:
                 )
             return known
 
-        logger.warning(
-            f"media_types 配置无效（{raw!r}），已按全部媒体类型处理。"
-        )
+        logger.warning(f"media_types 配置无效（{raw!r}），已按全部媒体类型处理。")
         return list(cls.MEDIA_TYPES)
 
     @staticmethod
@@ -1106,9 +1100,7 @@ class Application:
         """
         formats: dict = {"audio": ["all"], "document": ["all"], "video": ["all"]}
         if not isinstance(raw, dict):
-            logger.warning(
-                "config.yaml 缺少 file_formats，已按全部格式处理。"
-            )
+            logger.warning("config.yaml 缺少 file_formats，已按全部格式处理。")
             return formats
 
         repaired = False

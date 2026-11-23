@@ -105,10 +105,14 @@ class HelpTextTestCase(unittest.TestCase):
         language.set_language(Language.ZH)
         examples = self.examples_block("命令示例：")
 
-        self.assertIn("从群组 1111111111 转发第 1~400 条消息到群组 2222222222", examples)
+        self.assertIn(
+            "从群组 1111111111 转发第 1~400 条消息到群组 2222222222", examples
+        )
         self.assertIn("从频道 example_channel 下载全部消息", examples)
         self.assertIn("从群组 1234567890 只下载符合 [过滤器] 的消息", examples)
-        self.assertIn("把群组 1111111111 的第 100~200 条消息转发到群组 2222222222", examples)
+        self.assertIn(
+            "把群组 1111111111 的第 100~200 条消息转发到群组 2222222222", examples
+        )
         self.assertIn("停止当前下载或转发任务", examples)
 
 
@@ -148,9 +152,7 @@ class HelpUpdateHintTestCase(unittest.TestCase):
         with mock.patch.object(bot, "update_info", return_value=self.NEWER):
             text = bot.build_help_text()
 
-        self.assertIn(
-            "New version v2.14.0 is available (current v2.13.2)", text
-        )
+        self.assertIn("New version v2.14.0 is available (current v2.13.2)", text)
         self.assertIn(self.NEWER["url"], text)
 
     def test_hint_is_translated(self):

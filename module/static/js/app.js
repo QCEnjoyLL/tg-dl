@@ -1500,7 +1500,7 @@
       else if (action === "resume") await setTaskPaused(row, false);
       else if (action === "retry") await retryRow(row);
       else if (action === "upload") await retryUpload(row);
-      else if (action === "copy") await copyPath(row.save_path);
+      else if (action === "copy") await copyPath(row.copy_path || row.save_path);
     } catch (err) {
       toast("操作失败：" + err.message, "error");
     } finally {
