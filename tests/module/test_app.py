@@ -430,6 +430,57 @@ class DiskReserveConfigTestCase(unittest.TestCase):
         self.assertEqual(app.min_free_space_bytes, 7 * 1024**3)
 
 
+class UploadConcurrencyConfigTestCase(unittest.TestCase):
+    """The background upload cap is configurable and hot-reloadable."""
+
+    BASE = {"api_id": 1, "api_hash": "hash", "media_types": ["video"]}
+
+    def tearDown(self):
+        from module import upload_dispatch
+
+        upload_dispatch.set_limit(0)
+
+    def _app(self, **extra):
+        app = Application("", "")
+        config = dict(self.BASE)
+        config.update(extra)
+        app.assign_config(config)
+        return app
+
+    def test_default_is_unlimited(self):
+        app = self._app()
+
+        from module import upload_dispatch
+
+        self.assertEqual(app.upload_concurrency, 0)
+        self.assertEqual(upload_dispatch.get_limit(), 0)
+
+    def test_explicit_value_is_used(self):
+        app = self._app(upload_concurrency=4)
+
+        from module import upload_dispatch
+
+        self.assertEqual(app.upload_concurrency, 4)
+        self.assertEqual(upload_dispatch.get_limit(), 4)
+
+    def test_invalid_and_negative_values_mean_unlimited(self):
+        from module import upload_dispatch
+
+        self.assertEqual(self._app(upload_concurrency="many").upload_concurrency, 0)
+        self.assertEqual(upload_dispatch.get_limit(), 0)
+        self.assertEqual(self._app(upload_concurrency=-3).upload_concurrency, 0)
+
+    def test_hot_reload_applies_the_new_limit(self):
+        app = self._app()
+
+        from module import upload_dispatch
+
+        applied, _restart = app.reload_hot_config({"upload_concurrency": 2})
+
+        self.assertIn("upload_concurrency", applied)
+        self.assertEqual(upload_dispatch.get_limit(), 2)
+
+
 class HotReloadAccuracyTestCase(unittest.TestCase):
     BASE = {
         "api_id": 12345,

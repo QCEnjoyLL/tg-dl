@@ -473,18 +473,11 @@ async def _run_cloud_upload(
     Runs outside the download worker so a slow drive cannot hold a download
     slot. The history row is written as "仅本地" by ``download_task`` first and
     updated here; a failed upload leaves it that way so the Web UI's re-upload
-    button still works and the local file is kept.
+    button still works and the local file is kept. The upload slot is claimed by
+    the caller at submission time so a queued upload already shows as "上传中"
+    and cannot be submitted twice.
     """
-    started = False
     try:
-        started = upload_stat.try_start(
-            node.chat_id, message_id, file_name=ui_file_name
-        )
-        if not started:
-            logger.info(
-                f"Message[{message_id}] upload already in progress, skipping duplicate"
-            )
-            return
         state = await app.upload_file(
             file_name, update_cloud_upload_stat, (node, message_id, ui_file_name)
         )
@@ -500,9 +493,8 @@ async def _run_cloud_upload(
     except Exception as error:  # pylint: disable = W0703
         logger.exception(f"Message[{message_id}] upload failed: {error}")
     finally:
-        if started:
-            # The upload row lives only while rclone reports progress.
-            upload_stat.remove(node.chat_id, message_id)
+        # The upload row lives while the job is queued, running, or finishing.
+        upload_stat.remove(node.chat_id, message_id)
         cloud_dict = getattr(node, "cloud_drive_upload_stat_dict", None)
         if isinstance(cloud_dict, dict):
             cloud_dict.pop(message_id, None)
@@ -538,6 +530,7 @@ async def download_task(
     file_name = None
     file_size = 0
     pending_upload = None
+    upload_queued = False
 
     try:
         download_status, file_name = await download_media(
@@ -584,12 +577,16 @@ async def download_task(
             ui_file_name = file_name
             if app.hide_file_name:
                 ui_file_name = f"****{os.path.splitext(file_name)[-1]}"
-            pending_upload = (
-                node,
-                message.id,
-                file_name,
-                ui_file_name,
-            )
+            # Claim the upload slot at submission time: a job waiting behind
+            # ``upload_concurrency`` must already look "上传中" to the Web UI, or
+            # its re-upload button would queue the same file a second time.
+            if upload_stat.try_start(node.chat_id, message.id, file_name=ui_file_name):
+                pending_upload = (
+                    node,
+                    message.id,
+                    file_name,
+                    ui_file_name,
+                )
     except Exception as e:  # pylint: disable = W0703
         logger.exception(f"Message[{message.id}] task failed: {e}")
         # If the download itself completed, keep Success: the file exists and
@@ -643,10 +640,16 @@ async def download_task(
                 if upload_dispatcher.submit(
                     lambda job=pending_upload: _run_cloud_upload(*job)
                 ):
+                    upload_queued = True
                     if isinstance(getattr(node, "pending_upload_count", None), int):
                         node.pending_upload_count += 1
         else:
             remove_download_result(node.chat_id, message.id)
+
+        if pending_upload is not None and not upload_queued:
+            # The task was cancelled, failed later, or the dispatcher refused
+            # the job: drop the claimed "上传中" slot so it cannot go stale.
+            upload_stat.remove(node.chat_id, message.id)
 
         if not node.bot:
             app.set_download_id(node, message.id, download_status)

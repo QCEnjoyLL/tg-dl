@@ -58,6 +58,10 @@ upload_drive:
   # 后端不支持哈希（如部分网盘无 MD5）时会告警并退回只比大小
   # hash_check: true
 
+# 后台上传并发：0 = 不限（默认，有多少传多少）；填 N 则最多同时上传 N 个
+# 文件，其余排队等待（适合网盘限连接数或机器较弱时）；改完保存即生效。
+# upload_concurrency: 0
+
 # bot_token: "your_bot_token"
 # allowed_user_ids:
 # - "me"

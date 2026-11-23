@@ -357,6 +357,17 @@ FIELDS: List[Dict[str, Any]] = [
         "default": True,
         "hint": "远端同名同大小时再比一次 MD5，内容不同则重新上传，避免误判后删掉本地。后端不支持哈希时自动退回只比大小。",
     },
+    {
+        "name": "upload_concurrency",
+        "path": ["upload_concurrency"],
+        "label": "同时上传文件数",
+        "group": "上传到网盘",
+        "type": "number",
+        "min": 0,
+        "max": 64,
+        "default": 0,
+        "hint": "0 = 不限并发（默认，有多少传多少）；填 N 则最多同时上传 N 个文件，其余排队等待，适合网盘限连接数或机器较弱时。",
+    },
     # ------------------------------------------------------------------ 网络
     {
         "name": "proxy.scheme",

@@ -192,19 +192,44 @@ class DownloadTaskFinalizeTestCase(unittest.IsolatedAsyncioTestCase):
 
         update_mock.assert_not_called()
 
-    async def test_background_upload_skips_duplicate_active_upload(self):
-        node = TaskNode(chat_id=-100123)
+    async def test_duplicate_active_upload_is_not_submitted(self):
+        node = mock.Mock()
+        node.chat_id = -100123
+        node.bot = None
+        node.upload_user = None
+        node.upload_telegram_chat_id = None
+        node.upload_success_count = 0
+        node.upload_skipped_count = 0
+        node.download_status = {}
+        message = mock.Mock()
+        message.id = 44
+        message.text = None
+        message.media = mock.Mock()
+
+        # Somebody already holds the upload slot (queued or running).
         upload_stat.try_start(-100123, 44, file_name="cloud.mp4")
+        dispatcher = mock.Mock()
 
-        with mock.patch.object(
-            md.app, "upload_file", new=mock.AsyncMock(return_value="uploaded")
-        ) as upload_mock:
-            await md._run_cloud_upload(  # pylint: disable = W0212
-                node, 44, "/tmp/cloud.mp4", "cloud.mp4"
-            )
+        with (
+            mock.patch.object(md.app.cloud_drive_config, "enable_upload_file", True),
+            mock.patch.object(
+                md,
+                "download_media",
+                new=mock.AsyncMock(
+                    return_value=(DownloadStatus.SuccessDownload, "/tmp/cloud.mp4")
+                ),
+            ),
+            mock.patch.object(md, "upload_telegram_chat", new=mock.AsyncMock()),
+            mock.patch.object(md, "upload_dispatcher", dispatcher),
+            mock.patch.object(md, "report_bot_download_status", new=mock.AsyncMock()),
+            mock.patch.object(md, "mark_download_completed"),
+            mock.patch.object(md.app, "set_download_id"),
+            mock.patch.object(md.os.path, "getsize", return_value=10),
+        ):
+            await md.download_task(mock.Mock(), message, node)
 
-        upload_mock.assert_not_awaited()
-        # Rejecting the duplicate must leave the in-progress slot intact.
+        dispatcher.submit.assert_not_called()
+        # The claim belongs to whoever started it first and must not be dropped.
         self.assertTrue(upload_stat.is_uploading(-100123, 44))
 
     async def test_background_upload_updates_node_counters_and_bot_card(self):

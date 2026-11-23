@@ -221,6 +221,7 @@ max_download_task: 2
 max_concurrent_transmissions: 4
 max_concurrent_chunks: 4
 min_free_space_gb: 2
+upload_concurrency: 0
 
 upload_drive:
   enable_upload_file: true
@@ -248,6 +249,7 @@ FORM_VALUES = {
     "max_concurrent_transmissions": "4",
     "max_concurrent_chunks": "4",
     "min_free_space_gb": "2",
+    "upload_concurrency": "0",
     "start_timeout": "60",
     "forward_limit": "33",
     "file_formats.audio": "all",

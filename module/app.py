@@ -437,6 +437,8 @@ class Application:
         self.max_concurrent_chunks: int = 1
         #: GB of free space to keep on the download volumes (0 = no guard).
         self.min_free_space_gb: float = DEFAULT_MIN_FREE_SPACE_GB
+        #: How many cloud uploads may run at once (0 = unlimited).
+        self.upload_concurrency: int = 0
         self.language = Language.EN
         self.after_upload_telegram_delete: bool = True
         self.web_login_secret: str = ""
@@ -569,6 +571,14 @@ class Application:
         self.min_free_space_gb = self._parse_min_free_space_gb(
             _config.get("min_free_space_gb", self.min_free_space_gb)
         )
+
+        self.upload_concurrency = self._parse_upload_concurrency(
+            _config.get("upload_concurrency", self.upload_concurrency)
+        )
+        # Lazily imported: the dispatcher belongs to the runtime, not the config.
+        from module import upload_dispatch  # pylint: disable = C0415
+
+        upload_dispatch.set_limit(self.upload_concurrency)
 
         language = _config.get("language", "EN")
 
@@ -776,6 +786,21 @@ class Application:
             logger.warning(f"min_free_space_gb={gb} 非法，已按 0 处理（关闭磁盘保护）")
             return 0.0
         return gb
+
+    @staticmethod
+    def _parse_upload_concurrency(value) -> int:
+        """Parse the upload cap; unusable input means unlimited (``0``)."""
+        try:
+            count = int(value)
+        except (TypeError, ValueError):
+            logger.warning(
+                f"upload_concurrency 不是整数（{value!r}），已按 0 处理（不限并发）"
+            )
+            return 0
+        if count < 0:
+            logger.warning(f"upload_concurrency={count} 非法，已按 0 处理（不限并发）")
+            return 0
+        return count
 
     @property
     def min_free_space_bytes(self) -> int:
@@ -1268,6 +1293,19 @@ class Application:
                 from module import disk_guard  # pylint: disable = C0415
 
                 disk_guard.set_reserve(self.min_free_space_bytes)
+
+        if "upload_concurrency" in config:
+            # The dispatcher rebuilds its semaphore on the next submit, so this
+            # is live: queued uploads keep waiting, running ones are unaffected.
+            new_concurrency = self._parse_upload_concurrency(
+                config["upload_concurrency"]
+            )
+            if new_concurrency != self.upload_concurrency:
+                self.upload_concurrency = new_concurrency
+                from module import upload_dispatch  # pylint: disable = C0415
+
+                upload_dispatch.set_limit(new_concurrency)
+                applied.append("upload_concurrency")
 
         if "forward_limit" in config:
             try:

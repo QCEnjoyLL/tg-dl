@@ -3,7 +3,7 @@
 > 基于 [tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader) 的修复分支。
 > 保留原项目的全部功能（Telegram bot 指令、Web UI、rclone 上传、受保护内容下载），并持续修复实际使用中的问题。
 
-当前版本：**v2.16.3**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
+当前版本：**v2.17.0**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
 
 [![Docker](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml)
 [![Release](https://img.shields.io/github/v/release/QCEnjoyLL/tg-dl?label=release&color=blue)](https://github.com/QCEnjoyLL/tg-dl/releases/latest)
@@ -158,8 +158,16 @@ upload_drive:
 
 ### 下载与上传解耦、磁盘空间保护
 
-上传在后台进行，不占用下载 worker：下载完一个文件就交给后台上传器（并发不设上限），
-worker 立即去取下一个队列项，所以 `max_download_task` 的并发不会被慢网盘拖成一条一条。
+上传在后台进行，不占用下载 worker：下载完一个文件就交给后台上传器，worker 立即去取下一个
+队列项，所以 `max_download_task` 的并发不会被慢网盘拖成一条一条。
+
+默认上传不设并发上限（有多少传多少）。如果网盘限制连接数、或者机器/带宽扛不住同时传太多，
+可以加一个上限，超出的文件排队等待（在 Web UI「上传到网盘」分组里也能改，保存即生效）：
+
+```yaml
+# 后台上传并发：0 = 不限（默认）；N = 最多同时上传 N 个文件，其余排队
+upload_concurrency: 0
+```
 
 上传成功后自动删除本地文件；上传失败则保留本地文件，历史记录保持「仅本地」，
 可以点「上传」重试。代价是**下载可能跑在上传前面**，所以有一个磁盘闸门：
@@ -303,7 +311,7 @@ web_login_secret: "改成你的密码"
 
 ### 配置热更新说明
 
-保存配置后，以下项**立即生效**：`media_types`、`file_formats`、`file_path_prefix`、`file_name_prefix`、`file_name_prefix_split`、`hide_file_name`、`enable_download_txt`、`after_upload_telegram_delete`、`drop_no_audio_video`、`log_level`、`date_format`、`max_concurrent_chunks`、`min_free_space_gb`、`forward_limit`、`language`、广告过滤相关项、`upload_drive.*`、`web_login_secret`。
+保存配置后，以下项**立即生效**：`media_types`、`file_formats`、`file_path_prefix`、`file_name_prefix`、`file_name_prefix_split`、`hide_file_name`、`enable_download_txt`、`after_upload_telegram_delete`、`drop_no_audio_video`、`log_level`、`date_format`、`max_concurrent_chunks`、`min_free_space_gb`、`upload_concurrency`、`forward_limit`、`language`、广告过滤相关项、`upload_drive.*`、`web_login_secret`。
 
 以下项需要**重启进程**：`api_id`、`api_hash`、`bot_token`、`chat`、`proxy`、`save_path`、`web_host`、`web_port`、`max_download_task`、`max_concurrent_transmissions`、`allowed_user_ids`、`start_timeout`。
 
@@ -342,19 +350,19 @@ systemctl stop tg-dl         # 服务里配置 KillSignal=SIGINT
 - 推送到 `master` / `main`、推送 `v*` tag、或在 Actions 页面手动触发时构建
 - 推送前先运行 `compileall` 语法检查和完整 `Tests` 测试套件，通过后才构建并推送到 **GHCR**：`ghcr.io/qcenjoyll/tg-dl`
 - 版本号只有一处来源：`utils/__init__.py` 的 `__version__`。镜像标签、git tag、GitHub Release 全部由它校验并生成，不会互相对不上
-- 标签规则：普通分支推送只更新 `latest`、分支名、`sha-xxxxxxx`；仅当推送 `v*` tag（如 `v2.16.3`）时才发布版本标签 `2.16.3`、`2.16`
+- 标签规则：普通分支推送只更新 `latest`、分支名、`sha-xxxxxxx`；仅当推送 `v*` tag（如 `v2.17.0`）时才发布版本标签 `2.17.0`、`2.17`
 - 镜像内注入 `org.opencontainers.image.version` / `.revision`，并在 tag 构建推送后通过 `docker inspect` 校验标签一致
-- tag 构建且镜像推送成功后自动创建 **GitHub Release**：标题 `v2.16.3`，正文取自 `CHANGELOG.md` 同名章节 + 拉取命令；已存在的 Release 会直接失败（版本号不可变，不会静默覆盖）
+- tag 构建且镜像推送成功后自动创建 **GitHub Release**：标题 `v2.17.0`，正文取自 `CHANGELOG.md` 同名章节 + 拉取命令；已存在的 Release 会直接失败（版本号不可变，不会静默覆盖）
 - Pull Request 只构建不推送，也不会创建 Release
 
 ### 发布新版本
 
-1. 改 `utils/__init__.py` 里的 `__version__`（如 `2.16.4`）
-2. 在 `CHANGELOG.md` 顶部加 `## v2.16.4` 章节（Release 正文就是这段内容，工作流会先校验章节存在）
+1. 改 `utils/__init__.py` 里的 `__version__`（如 `2.17.1`）
+2. 在 `CHANGELOG.md` 顶部加 `## v2.17.1` 章节（Release 正文就是这段内容，工作流会先校验章节存在）
 3. 提交、打 tag 并把提交和 tag 一起推送到远端：
    ```bash
-   git tag v2.16.4
-   git push origin master v2.16.4
+   git tag v2.17.1
+   git push origin master v2.17.1
    ```
 
 > `v*` tag 必须与 `utils/__init__.py` 中的 `__version__` 完全一致，且同名 Release 不能已存在，否则工作流会直接失败——避免发布说明、镜像标签与实际运行代码对不上。
@@ -554,6 +562,15 @@ v2.13.0 起存在 `sessions/history.db`（SQLite，可用环境变量 `TDL_HISTO
 > Docker / compose 用户不受影响（配置本来就是挂载进容器的，从未进过镜像）。
 
 逐条历史记录见 [CHANGELOG.md](CHANGELOG.md)；当前版本见顶部的 Release 徽章。
+
+<details>
+<summary><b>v2.17.0</b> — 新增 upload_concurrency 后台上传并发上限</summary>
+
+- 新增 `upload_concurrency`：0 = 不限并发（默认，保持原行为）；N = 最多同时上传 N 个文件，其余按提交顺序排队
+- Web UI「上传到网盘」分组可直接修改，保存即热更新；排队中的文件提前显示「上传中」并禁用重新上传
+- 手动「重新上传」是单文件操作，不受上限影响
+
+</details>
 
 <details>
 <summary><b>v2.16.3</b> — 复制真实路径、清理原子写残留、移动端截图与全仓格式化</summary>
