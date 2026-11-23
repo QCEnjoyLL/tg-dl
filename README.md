@@ -3,7 +3,7 @@
 > 基于 [tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader) 的修复分支。
 > 保留原项目的全部功能（Telegram bot 指令、Web UI、rclone 上传、受保护内容下载），并持续修复实际使用中的问题。
 
-当前版本：**v2.16.0**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
+当前版本：**v2.16.1**（版本号规则：MAJOR 表示破坏性改动或核心重写，MINOR 表示新增功能，PATCH 表示修复/打磨）
 
 [![Docker](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/QCEnjoyLL/tg-dl/actions/workflows/docker-publish.yml)
 [![Release](https://img.shields.io/github/v/release/QCEnjoyLL/tg-dl?label=release&color=blue)](https://github.com/QCEnjoyLL/tg-dl/releases/latest)
@@ -554,6 +554,16 @@ v2.13.0 起存在 `sessions/history.db`（SQLite，可用环境变量 `TDL_HISTO
 > Docker / compose 用户不受影响（配置本来就是挂载进容器的，从未进过镜像）。
 
 逐条历史记录见 [CHANGELOG.md](CHANGELOG.md)；当前版本见顶部的 Release 徽章。
+
+<details>
+<summary><b>v2.16.1</b> — 续传/上传解耦/磁盘闸门/Bot/热更新集中修复与仓库整理</summary>
+
+- 修复并行分片切回单流续传的稀疏文件损坏风险，`.temp.json` 改为原子写入并纳入启动残留清理
+- 修复解耦上传与「重新上传」并发互斥、`rclone` 子进程取消终止、Bot 进度卡片过早结束及 `hide_file_name: true` 重传失败
+- 磁盘闸门增加并发空间预占与取消唤醒，Web UI 新增磁盘暂停横幅、修复服务端筛选空态与轮询竞态
+- 修复 Bot 多个遗留命令缺陷；配置热更新精确 diff，支持 `log_level` / `forward_limit` 实时生效与 `min_free_space_gb` 小数输入；版本检测支持代理；清理无用依赖与遗留文件
+
+</details>
 
 <details>
 <summary><b>v2.16.0</b> — 下载与上传解耦、磁盘空间保护</summary>

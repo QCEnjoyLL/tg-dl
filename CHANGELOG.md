@@ -2,6 +2,22 @@
 
 版本号规则：MAJOR（破坏性改动或核心重写）/ MINOR（新增功能）/ PATCH（修复、依赖、文档、UI 打磨）。
 
+## v2.16.1
+
+### 修复
+
+- **并行分片切回单流时的文件损坏风险**：`max_concurrent_chunks > 1` 失败后会留下稀疏 `.temp` 与 `.temp.json`，切回单流顺序续传时不再盲信文件长度，检测到 `.temp.json` 会丢弃稀疏临时文件从头下载；分片状态 sidecar 改为原子写入，且进度上报严格单调递增；启动清理同步回收过期/孤立的 `.temp.json`
+- **解耦上传并发与生命周期问题**：为后台上传与 Web UI「重新上传」增加按 `(chat_id, message_id)` 互斥锁并在「已完成」页签显示「上传中」状态；任务取消或退出时主动终止 `rclone` 子进程并清理临时 zip；Bot 进度卡片等待后台上传完成后再结束；修复 `hide_file_name: true` 时「已完成」重新上传路径被掩码覆盖的问题
+- **磁盘空间闸门与 Web UI 横幅**：预留阈值钳位至磁盘总容量、并发下载前预占空间避免超额放行、支持任务取消/关闭保护时立即唤醒等待；Web UI 新增顶部磁盘空间不足暂停横幅，并修复服务端筛选无结果时不显示「清空筛选」以及后台轮询静默丢弃搜索/翻页请求的问题
+- **Bot 遗留命令与配置热更新**：修复 `download_from_link`、`download_from_bot`、`stop_task`、`add_filter` 的多处缺陷并清理未注册的废弃广告指令，`bot.yaml` 改为按需原子写入；`Application.update_config` 改为按 `chat_id` 匹配；`reload_hot_config` 改为按实际变更 diff 报告 `applied` / `restart`，支持 `log_level`、`forward_limit` 实时热更新及 `min_free_space_gb` 表单小数输入
+- **云盘、版本检测、日志与上游边界问题**：`rclone_mkdir` 增加按目录并发锁、`zip_file` 移至后台线程、`aligo_upload_file` 增加目录缺失防护；`version_check` 支持透传代理配置并脱敏错误中的凭据；业务日志统一迁移至 `loguru`；修复 `LogFilter`、`BaseFilter.check_type`、`replace_date_time`、`truncate_caption`（UTF-16 偏移）、`convert_message_entity`、`forward_multi_media`、`proc_cache_forward`、`save_msg_to_file` 等多处边界缺陷
+
+### 变更
+
+- 清理未使用的运行时依赖（`PyYAML`、`requests`）及遗留文件（`utils/updates.py`、旧版截图、`media_downloader.spec`、`gen_filter_cache.py`、`pylintrc`）
+- 开发工具链升级至 Python 3.9–3.13 兼容版本，统一使用 `ruff` + `mypy` + `pytest`
+- 对齐 `setup.py`、`CONTRIBUTING.md`、`CODE_OF_CONDUCT.md`、`README.md` 与 `preview/build.py` 预览配置字段
+
 ## v2.16.0
 
 ### 新增
